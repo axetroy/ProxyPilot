@@ -33,7 +33,7 @@ func newTestPoolWithChecker(t *testing.T, checker *mockChecker) *pool.Manager {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return pool.NewManager(st, checker, bus.New(), 4)
 }
 

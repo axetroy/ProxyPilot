@@ -17,7 +17,7 @@ func TestSOCKS5ProxyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen target: %v", err)
 	}
-	defer targetListener.Close()
+	defer func() { _ = targetListener.Close() }()
 
 	accepted := make(chan net.Conn, 1)
 	go func() {
@@ -43,10 +43,10 @@ func TestSOCKS5ProxyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial through socks proxy: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	remoteConn := <-accepted
-	defer remoteConn.Close()
+	defer func() { _ = remoteConn.Close() }()
 
 	if _, err := conn.Write([]byte("ping")); err != nil {
 		t.Fatalf("write to proxied conn: %v", err)
@@ -92,13 +92,13 @@ func TestSOCKS5ProxyTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial through socks proxy: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, ServerName: "example.com"})
 	if err := tlsConn.Handshake(); err != nil {
 		t.Fatalf("tls handshake through SOCKS5 failed: %v", err)
 	}
-	defer tlsConn.Close()
+	defer func() { _ = tlsConn.Close() }()
 }
 
 func TestSOCKS5ProxyHTTPClientHTTPS(t *testing.T) {
@@ -126,7 +126,7 @@ func TestSOCKS5ProxyHTTPClientHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("http client over SOCKS5 failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

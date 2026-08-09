@@ -61,7 +61,7 @@ func (c *Checker) Check(node *model.ProxyNode) (model.CheckResult, error) {
 	if err != nil {
 		return model.CheckResult{OK: false, Error: err.Error(), Latency: time.Since(start).Milliseconds()}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 
 	latency := time.Since(start).Milliseconds()
@@ -117,7 +117,7 @@ func ConnectTCP(node *model.ProxyNode, addr string, timeout time.Duration) (net.
 		handshakeErr = fmt.Errorf("unsupported protocol %q", node.Protocol)
 	}
 	if handshakeErr != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, handshakeErr
 	}
 	return conn, nil
@@ -142,7 +142,7 @@ func httpConnect(conn net.Conn, node *model.ProxyNode, addr string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("CONNECT handshake failed: %s", resp.Status)
 	}

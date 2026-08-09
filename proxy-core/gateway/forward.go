@@ -46,7 +46,7 @@ func (h *httpServer) forward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	removeHopByHop(resp.Header)
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
@@ -55,8 +55,8 @@ func (h *httpServer) forward(w http.ResponseWriter, r *http.Request) {
 
 func relay(a, b net.Conn) {
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(b, a); b.Close(); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(a, b); a.Close(); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(b, a); _ = b.Close(); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(a, b); _ = a.Close(); done <- struct{}{} }()
 	<-done
 	<-done
 }

@@ -225,7 +225,7 @@ func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*model.ProxyNode
 	for rows.Next() {
 		n, err := scanNode(rows)
@@ -244,7 +244,7 @@ func (s *Store) ListNodesByStatus(status model.ProxyStatus) ([]*model.ProxyNode,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*model.ProxyNode
 	for rows.Next() {
 		n, err := scanNode(rows)
@@ -313,7 +313,7 @@ func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*model.Subscription
 	for rows.Next() {
 		var sub model.Subscription
@@ -347,7 +347,7 @@ func (s *Store) DeleteSubscription(id int64) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proxyID int64
 		if err := rows.Scan(&proxyID); err != nil {
@@ -395,7 +395,7 @@ func (s *Store) RecentHistory(proxyID int64, limit int) ([]model.CheckHistory, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []model.CheckHistory
 	for rows.Next() {
 		var h model.CheckHistory

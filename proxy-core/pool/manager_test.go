@@ -18,7 +18,7 @@ func newTestManager(t *testing.T) *Manager {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return NewManager(st, validator.NewChecker("", 0), bus.New(), 4)
 }
 
@@ -36,7 +36,7 @@ func TestCheckNowIgnoresCanceledContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	checker := &fakeChecker{}
 	m := NewManager(st, checker, bus.New(), 4)
@@ -108,7 +108,7 @@ func newTestManagerWithChecker(t *testing.T, checker nodeChecker) (*Manager, *st
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return NewManager(st, checker, bus.New(), 4), st
 }
 
@@ -126,7 +126,7 @@ func TestNewManagerConcurrencyDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	m := NewManager(st, &mockChecker{}, bus.New(), 0)
 	if m.concur != 1 {
 		t.Fatalf("concurrency = %d, want 1", m.concur)

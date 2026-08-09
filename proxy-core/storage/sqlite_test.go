@@ -12,7 +12,7 @@ func TestDeleteSubscriptionRemovesNodesFromThatSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	sub := &model.Subscription{Name: "sub-a", URL: "https://example.com", Enabled: true, CreatedAt: time.Now().UTC()}
 	if err := st.UpsertSubscription(sub); err != nil {
@@ -50,7 +50,7 @@ func newTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
 

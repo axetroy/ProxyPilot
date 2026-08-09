@@ -42,7 +42,7 @@ func (s *socksServer) Start() error {
 
 func (s *socksServer) Stop() {
 	if s.ln != nil {
-		s.ln.Close()
+		_ = s.ln.Close()
 	}
 	if s.done != nil {
 		<-s.done
@@ -50,7 +50,7 @@ func (s *socksServer) Stop() {
 }
 
 func (s *socksServer) handleConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if s.g != nil && s.g.bus != nil {
 		s.g.bus.Debug(fmt.Sprintf("SOCKS5 connection accepted from %s", conn.RemoteAddr()))
@@ -96,7 +96,7 @@ func (s *socksServer) handleConn(conn net.Conn) {
 		_ = writeReply(conn, 0x04)
 		return
 	}
-	defer remote.Close()
+	defer func() { _ = remote.Close() }()
 
 	if err := writeReply(conn, 0x00); err != nil {
 		return

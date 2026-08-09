@@ -29,7 +29,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "storage: %v\n", err)
 		os.Exit(1)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	poolMgr := pool.NewManager(st, validator.NewChecker(cfg.CheckTarget, cfg.CheckTimeout), busc, cfg.CheckConcurrency)
 	if err := poolMgr.Load(); err != nil {

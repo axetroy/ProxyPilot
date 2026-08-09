@@ -50,6 +50,7 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           working-directory: proxy-core
+          version: v2.12.2
           args: --timeout=5m
 
       # ---------- app (Electron / React) ----------

@@ -33,7 +33,7 @@ func newTestManager(t *testing.T) (*Manager, *storage.Store, *mockSink) {
 	if err != nil {
 		t.Fatalf("storage: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	sink := &mockSink{}
 	m := NewManager(st, bus.New(), sink, 5*time.Second)
 	t.Cleanup(m.Stop)

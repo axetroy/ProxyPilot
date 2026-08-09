@@ -59,15 +59,15 @@ func TestApplyEnvOverrides(t *testing.T) {
 	unsetEnv(t)
 	defer restoreEnv(t)
 
-	os.Setenv("PROXYPILOT_API_BIND", "0.0.0.0:9999")
-	os.Setenv("PROXYPILOT_DB_PATH", "/tmp/test.db")
-	os.Setenv("PROXYPILOT_HTTP_BIND", "0.0.0.0:8888")
-	os.Setenv("PROXYPILOT_SOCKS5_BIND", "0.0.0.0:8889")
-	os.Setenv("PROXYPILOT_TOKEN", "my-token")
-	os.Setenv("PROXYPILOT_CHECK_TARGET", "http://example.com/204")
-	os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "3s")
-	os.Setenv("PROXYPILOT_CHECK_CONCURRENCY", "8")
-	os.Setenv("PROXYPILOT_REFRESH_INTERVAL", "1m")
+	_ = os.Setenv("PROXYPILOT_API_BIND", "0.0.0.0:9999")
+	_ = os.Setenv("PROXYPILOT_DB_PATH", "/tmp/test.db")
+	_ = os.Setenv("PROXYPILOT_HTTP_BIND", "0.0.0.0:8888")
+	_ = os.Setenv("PROXYPILOT_SOCKS5_BIND", "0.0.0.0:8889")
+	_ = os.Setenv("PROXYPILOT_TOKEN", "my-token")
+	_ = os.Setenv("PROXYPILOT_CHECK_TARGET", "http://example.com/204")
+	_ = os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "3s")
+	_ = os.Setenv("PROXYPILOT_CHECK_CONCURRENCY", "8")
+	_ = os.Setenv("PROXYPILOT_REFRESH_INTERVAL", "1m")
 
 	c := New()
 	if c.APIBind != "0.0.0.0:9999" {
@@ -103,9 +103,9 @@ func TestApplyEnvIgnoresInvalidValues(t *testing.T) {
 	unsetEnv(t)
 	defer restoreEnv(t)
 
-	os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "not-a-duration")
-	os.Setenv("PROXYPILOT_CHECK_CONCURRENCY", "-5")
-	os.Setenv("PROXYPILOT_REFRESH_INTERVAL", "garbage")
+	_ = os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "not-a-duration")
+	_ = os.Setenv("PROXYPILOT_CHECK_CONCURRENCY", "-5")
+	_ = os.Setenv("PROXYPILOT_REFRESH_INTERVAL", "garbage")
 
 	c := New()
 	if c.CheckTimeout != 10*time.Second {
@@ -123,8 +123,8 @@ func TestApplyEnvEmptyValuesKeepDefaults(t *testing.T) {
 	unsetEnv(t)
 	defer restoreEnv(t)
 
-	os.Setenv("PROXYPILOT_API_BIND", "")
-	os.Setenv("PROXYPILOT_TOKEN", "")
+	_ = os.Setenv("PROXYPILOT_API_BIND", "")
+	_ = os.Setenv("PROXYPILOT_TOKEN", "")
 
 	c := New()
 	if c.APIBind != "127.0.0.1:17890" {
@@ -149,7 +149,7 @@ func unsetEnv(t *testing.T) {
 	for _, k := range keys {
 		if v, ok := os.LookupEnv(k); ok {
 			savedEnv[k] = v
-			os.Unsetenv(k)
+			_ = os.Unsetenv(k)
 		}
 	}
 }
@@ -157,7 +157,7 @@ func unsetEnv(t *testing.T) {
 func restoreEnv(t *testing.T) {
 	t.Helper()
 	for k, v := range savedEnv {
-		os.Setenv(k, v)
+		_ = os.Setenv(k, v)
 	}
 	savedEnv = map[string]string{}
 }

@@ -28,7 +28,7 @@ func (s *Services) websocket(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ctx := c.Request.Context()
 	sub := s.Bus.Subscribe()
