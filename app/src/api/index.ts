@@ -1,0 +1,192 @@
+import axios, { type AxiosInstance } from 'axios'
+import type { ApiResponse, CheckResult, LogEvent, ProxyNode, Subscription, SystemStatus } from '@/types'
+
+const API_BASE = 'http://127.0.0.1:17890'
+
+let token = ''
+let apiReadyPromise: Promise<void> | null = null
+let resolveApiReady: (() => void) | null = null
+
+declare global {
+  interface Window {
+    proxypilot?: {
+      getToken: () => Promise<string>
+      getApiBase: () => Promise<string>
+      onCoreExit: (cb: () => void) => void
+      onCoreError: (cb: (msg: string) => void) => void
+    }
+  }
+}
+
+export async function initApi(): Promise<void> {
+  if (!apiReadyPromise) {
+    apiReadyPromise = new Promise<void>((resolve) => {
+      resolveApiReady = resolve
+    })
+  }
+  if (window.proxypilot) {
+    token = await window.proxypilot.getToken()
+  }
+  resolveApiReady?.()
+  resolveApiReady = null
+}
+
+async function refreshToken(): Promise<void> {
+  if (window.proxypilot) {
+    token = await window.proxypilot.getToken()
+  }
+}
+
+export async function ensureApiReady(): Promise<void> {
+  if (!apiReadyPromise) {
+    await initApi()
+    return
+  }
+  await apiReadyPromise
+  await refreshToken()
+}
+
+export function getToken(): string {
+  return token
+}
+
+export function getErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { msg?: string; error?: string } | string | undefined
+    if (typeof data === 'string' && data) return data
+    if (data && typeof data === 'object') {
+      if (typeof data.msg === 'string' && data.msg) return data.msg
+      if (typeof data.error === 'string' && data.error) return data.error
+    }
+    if (error.message) return error.message
+  }
+
+  if (error && typeof error === 'object') {
+    const maybe = error as { message?: string; response?: { data?: { msg?: string; error?: string } } }
+    if (typeof maybe.message === 'string' && maybe.message) return maybe.message
+    if (maybe.response?.data && typeof maybe.response.data === 'object') {
+      if (typeof maybe.response.data.msg === 'string' && maybe.response.data.msg) return maybe.response.data.msg
+      if (typeof maybe.response.data.error === 'string' && maybe.response.data.error) return maybe.response.data.error
+    }
+  }
+
+  return '请求失败'
+}
+
+export const http: AxiosInstance = axios.create({
+  baseURL: API_BASE,
+  timeout: 15000,
+})
+
+http.interceptors.request.use(async (config) => {
+  await ensureApiReady()
+  config.headers['X-Token'] = token
+  return config
+})
+
+export async function getStatus(): Promise<ApiResponse<SystemStatus>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<SystemStatus>>('/api/status')
+  return data
+}
+
+export async function listProxies(status?: string): Promise<ApiResponse<ProxyNode[]>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<ProxyNode[]>>('/api/proxies', {
+    params: status ? { status } : {},
+  })
+  return data
+}
+
+export async function deleteProxy(id: number): Promise<ApiResponse<void>> {
+  await ensureApiReady()
+  const { data } = await http.delete<ApiResponse<void>>(`/api/proxy/${id}`)
+  return data
+}
+
+export async function checkProxy(id?: number): Promise<ApiResponse<CheckResult | { started: boolean }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<CheckResult | { started: boolean }>>(
+    '/api/proxy/check',
+    id ? { id } : {},
+  )
+  return data
+}
+
+export async function listSubscriptions(): Promise<ApiResponse<Subscription[]>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<Subscription[]>>('/api/subscriptions')
+  return data
+}
+
+export async function addSubscription(name: string, url: string, interval: number): Promise<ApiResponse<Subscription>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<Subscription>>('/api/subscription', { name, url, interval })
+  return data
+}
+
+export async function deleteSubscription(id: number): Promise<ApiResponse<void>> {
+  await ensureApiReady()
+  const { data } = await http.delete<ApiResponse<void>>(`/api/subscription/${id}`)
+  return data
+}
+
+export async function refreshSubscription(id: number): Promise<ApiResponse<Subscription>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<Subscription>>(`/api/subscription/${id}/refresh`)
+  return data
+}
+
+export async function updateSubscription(id: number, name: string, url: string, interval: number, enabled: boolean): Promise<ApiResponse<void>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<void>>(`/api/subscription/${id}`, { name, url, interval, enabled })
+  return data
+}
+
+export async function startGateway(): Promise<ApiResponse<{ http: string; socks5: string }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ http: string; socks5: string }>>('/api/gateway/start')
+  return data
+}
+
+export async function stopGateway(): Promise<ApiResponse<void>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<void>>('/api/gateway/stop')
+  return data
+}
+
+export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {
+  let ws: WebSocket | null = null
+  let closed = false
+  let retryTimer: number | null = null
+  let retryDelay = 1000
+
+  const connect = () => {
+    if (closed) return
+    ws = new WebSocket(`ws://127.0.0.1:17890/ws?token=${encodeURIComponent(token)}`)
+    ws.onmessage = (msg) => {
+      try {
+        onEvent(JSON.parse(msg.data as string) as LogEvent)
+      } catch {
+        /* ignore malformed */
+      }
+    }
+    // 连接断开后自动重连，避免长时间运行后日志流静默中断。
+    ws.onclose = () => {
+      if (closed) return
+      retryTimer = window.setTimeout(connect, retryDelay)
+      retryDelay = Math.min(retryDelay * 2, 15000)
+    }
+    ws.onerror = () => {
+      ws?.close()
+    }
+  }
+
+  connect()
+
+  return () => {
+    closed = true
+    if (retryTimer !== null) window.clearTimeout(retryTimer)
+    ws?.close()
+  }
+}

@@ -1,0 +1,21 @@
+# Windows
+*.exe
+*.db
+*.db-shm
+*.db-wal
+pic.db
+proxypilot.db
+
+# Node
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+
+# Go
+proxy-core/proxy-core.exe
+
+# Editor
+.vscode/
+.idea/

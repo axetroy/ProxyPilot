@@ -1,0 +1,101 @@
+{
+  "name": "proxypilot",
+  "productName": "ProxyPilot",
+  "version": "0.1.0",
+  "description": "ProxyPilot - desktop proxy manager",
+  "main": "dist-electron/main/index.js",
+  "author": "axetroy",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "npm run electron:dev",
+    "build": "npm run electron:build",
+    "preview": "vite preview",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json && electron .",
+    "build:core": "cd ../proxy-core && go build -buildmode=exe -o proxy-core.exe .",
+    "electron:dev": "npm run build:core && concurrently -k \"npm run dev:renderer\" \"wait-on tcp:5173 && npm run dev:electron\"",
+    "electron:main": "tsc -p tsconfig.electron.json && electron .",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "electron:build": "npm run build:renderer && npm run build:electron",
+    "dist": "npm run build:core && npm run electron:build && electron-builder",
+    "dist:win": "npm run build:core && npm run electron:build && electron-builder --win",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.5.1",
+    "@mantine/form": "^9.5.1",
+    "@mantine/hooks": "^9.5.1",
+    "@mantine/notifications": "^9.5.1",
+    "@radix-ui/react-alert-dialog": "^1.1.4",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-slot": "^1.1.1",
+    "@tabler/icons-react": "^3.46.0",
+    "axios": "^1.7.9",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^6.28.1",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss-animate": "^1.0.7",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "com.axetroy.proxypilot",
+    "productName": "ProxyPilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../proxy-core/proxy-core.exe",
+        "to": "proxy-core.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

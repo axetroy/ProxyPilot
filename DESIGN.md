@@ -1,4 +1,4 @@
-# Proxy Intelligence Client（PIC）
+# ProxyPilot
 
 # Golang + Electron 架构设计白皮书
 
@@ -11,7 +11,7 @@
 
 ## 1.1 产品定义
 
-Proxy Intelligence Client（以下简称 PIC）是一款桌面端代理管理软件。
+ProxyPilot 是一款桌面端代理管理软件。
 
 核心能力：
 
@@ -44,7 +44,7 @@ localhost Proxy
         |
         v
 
-PIC Client
+ProxyPilot Client
 
         |
         |
@@ -65,7 +65,7 @@ Internet Proxy Pool
 ┌──────────────────────────────────────┐
 │             Electron UI               │
 │                                      │
-│ Vue3 + TypeScript                    │
+│ React + TypeScript                   │
 │                                      │
 │ - Dashboard                          │
 │ - Proxy Pool                         │
@@ -115,7 +115,7 @@ Internet Proxy Pool
 Electron
 
 +
-Vue3
+React 18
 
 +
 TypeScript
@@ -124,10 +124,13 @@ TypeScript
 Vite
 
 +
-Pinia
+Zustand
 
 +
-Element Plus
+Tailwind CSS
+
++
+Radix UI
 
 ```
 
@@ -189,7 +192,7 @@ sync
 最终运行：
 
 ```
-PIC.exe
+ProxyPilot.exe
 
  |
  |
@@ -743,7 +746,7 @@ CONNECT host:443
 SQLite：
 
 ```
-pic.db
+proxypilot.db
 
 ```
 
@@ -897,13 +900,13 @@ ERROR
 Windows：
 
 ```
-PIC.exe
+ProxyPilot.exe
 
 resources/
 
     proxy-core.exe
 
-    pic.db
+    proxypilot.db
 
 ```
 
@@ -912,7 +915,7 @@ resources/
 Mac：
 
 ```
-PIC.app
+ProxyPilot.app
 
 Contents/
 
@@ -927,7 +930,7 @@ Contents/
 Linux：
 
 ```
-PIC.AppImage
+ProxyPilot.AppImage
 
 ```
 
@@ -996,7 +999,7 @@ API服务
 ```
               Electron
 
-        Vue3 + TypeScript
+        React + TypeScript
 
 
                  |

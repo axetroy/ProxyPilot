@@ -1,0 +1,226 @@
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, Search, Trash2, Zap } from 'lucide-react'
+import { Alert, Badge, Box, Button, Card, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
+import { usePoolStore } from '@/stores/pool'
+import type { ProxyNode } from '@/types'
+
+type NoticeData = { type: 'success' | 'error'; text: string }
+
+function statusColor(n: ProxyNode) {
+  switch (n.status) {
+    case 'alive':
+      return 'green'
+    case 'checking':
+      return 'yellow'
+    case 'dead':
+      return 'red'
+    default:
+      return 'gray'
+  }
+}
+
+function statusLabel(n: ProxyNode) {
+  switch (n.status) {
+    case 'alive':
+      return '存活'
+    case 'checking':
+      return '检测中'
+    case 'dead':
+      return '失效'
+    default:
+      return '新节点'
+  }
+}
+
+export default function ProxyPool() {
+  const nodes = usePoolStore((s) => s.nodes)
+  const loading = usePoolStore((s) => s.loading)
+  const checkingIds = usePoolStore((s) => s.checkingIds)
+  const checkingAll = usePoolStore((s) => s.checkingAll)
+  const notice = usePoolStore((s) => s.notice)
+  const refresh = usePoolStore((s) => s.refresh)
+  const remove = usePoolStore((s) => s.remove)
+  const check = usePoolStore((s) => s.check)
+  const clearNotice = usePoolStore((s) => s.clearNotice)
+
+  const [filter, setFilter] = useState('')
+  const deferredFilter = useDeferredValue(filter)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [pending, setPending] = useState<ProxyNode | null>(null)
+  const [localNotice, setLocalNotice] = useState<NoticeData | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const ROW_HEIGHT = 56
+  const VIEWPORT_HEIGHT = 520
+  const OVERSCAN = 8
+
+  useEffect(() => {
+    // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
+    refresh()
+    const timer = window.setInterval(() => refresh(undefined, true), 5000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(clearNotice, 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice, clearNotice])
+
+  useEffect(() => {
+    setScrollTop(0)
+    viewportRef.current?.scrollTo({ top: 0 })
+  }, [deferredFilter])
+
+  const list = useMemo(() => {
+    const normalizedFilter = deferredFilter.trim().toLowerCase()
+    const filtered = normalizedFilter ? nodes.filter((n) => n.host.toLowerCase().includes(normalizedFilter)) : nodes
+    return [...filtered].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (a.id !== b.id) return a.id - b.id
+      return a.host.localeCompare(b.host)
+    })
+  }, [nodes, deferredFilter])
+
+  const totalHeight = list.length * ROW_HEIGHT
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
+  const endIndex = Math.min(list.length, Math.ceil((scrollTop + VIEWPORT_HEIGHT) / ROW_HEIGHT) + OVERSCAN)
+  const visibleRows = useMemo(() => list.slice(startIndex, endIndex), [list, startIndex, endIndex])
+
+  async function onCheck(n: ProxyNode) {
+    await check(n.id)
+    window.setTimeout(() => refresh(), 1500)
+  }
+
+  async function onCheckAll() {
+    await check()
+    window.setTimeout(() => refresh(), 1500)
+  }
+
+  return (
+    <Stack gap="md">
+      <Card padding="lg" radius="md" withBorder>
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <div>
+            <Text fw={700}>代理池管理</Text>
+            <Text size="sm" c="dimmed" mt={4}>按评分、状态和主机名快速筛选和管理节点</Text>
+          </div>
+          <Group gap="sm" wrap="wrap">
+            <TextInput
+              leftSection={<Search size={16} />}
+              placeholder="筛选主机"
+              value={filter}
+              onChange={(e) => setFilter(e.currentTarget.value)}
+              style={{ width: 260 }}
+            />
+            <Button leftSection={<Zap size={16} />} variant="light" loading={checkingAll} onClick={onCheckAll}>
+              {checkingAll ? '检测中...' : '检测新节点'}
+            </Button>
+            <Button leftSection={<RefreshCw size={16} />} variant="default" loading={loading} onClick={() => refresh()}>
+              {loading ? '刷新中...' : '刷新'}
+            </Button>
+          </Group>
+        </Group>
+      </Card>
+
+      {(notice || localNotice) && (
+        <Alert color={notice?.type === 'success' || localNotice?.type === 'success' ? 'green' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }}>
+          {(notice || localNotice)?.text}
+        </Alert>
+      )}
+
+      <Card padding="md" radius="md" withBorder>
+        <Group justify="space-between" mb="sm">
+          <Text size="sm" c="dimmed">共 {list.length} 个节点 · 当前仅渲染可见区域</Text>
+        </Group>
+        <Box
+          ref={viewportRef}
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          style={{ maxHeight: VIEWPORT_HEIGHT, overflowY: 'auto', borderRadius: 12, border: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}
+        >
+          <Box style={{ height: totalHeight, minHeight: VIEWPORT_HEIGHT, position: 'relative' }}>
+            <Box
+              style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 2,
+                display: 'grid',
+                gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 140px',
+                alignItems: 'center',
+                gap: 8,
+                padding: '0 12px',
+                height: ROW_HEIGHT,
+                fontSize: 12,
+                fontWeight: 700,
+                color: 'var(--mantine-color-dimmed)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                background: 'var(--mantine-color-default-hover)',
+                borderBottom: '1px solid var(--mantine-color-default-border)',
+              }}
+            >
+              <Text size="xs">ID</Text>
+              <Text size="xs">主机</Text>
+              <Text size="xs">协议</Text>
+              <Text size="xs">延迟</Text>
+              <Text size="xs">评分</Text>
+              <Text size="xs">状态</Text>
+              <Text size="xs" style={{ textAlign: 'right' }}>操作</Text>
+            </Box>
+
+            <Box style={{ transform: `translateY(${startIndex * ROW_HEIGHT}px)` }}>
+              {list.length === 0 ? (
+                <Box style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mantine-color-dimmed)' }}>
+                  {loading ? '加载中...' : '暂无代理'}
+                </Box>
+              ) : (
+                visibleRows.map((n) => (
+                  <Box
+                    key={n.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 140px',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '0 12px',
+                      height: ROW_HEIGHT,
+                      borderBottom: '1px solid var(--mantine-color-default-border)',
+                    }}
+                  >
+                    <Text size="sm">{n.id}</Text>
+                    <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
+                    <Badge variant="light">{n.protocol}</Badge>
+                    <Text size="sm">{n.latency}ms</Text>
+                    <Text size="sm">{n.score}</Text>
+                    <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
+                    <Group justify="flex-end" gap="xs">
+                      <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)}>
+                        检测
+                      </Button>
+                      <Button size="xs" color="red" variant="subtle" onClick={() => setPending(n)}>
+                        <Trash2 size={14} />
+                      </Button>
+                    </Group>
+                  </Box>
+                ))
+              )}
+            </Box>
+          </Box>
+        </Box>
+      </Card>
+
+      <Modal opened={pending !== null} onClose={() => setPending(null)} title="删除代理">
+        <Stack gap="md">
+          <Text>确定删除 {pending?.host}:{pending?.port}？此操作不可撤销。</Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setPending(null)}>
+              取消
+            </Button>
+            <Button color="red" onClick={async () => { if (pending) await remove(pending.id); setPending(null) }}>
+              删除
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Stack>
+  )
+}

@@ -1,0 +1,124 @@
+# AGENTS.md
+
+ProxyPilot 是桌面端智能代理管理与代理网关系统：自动收集代理订阅 → 检测可用性 →
+质量评分 → 维护代理池 → 为本机应用提供统一的 HTTP / HTTPS / SOCKS5 代理出口。
+
+仓库由两个独立子项目组成（monorepo）：
+
+- `proxy-core/` — Golang 核心引擎（API + 订阅采集 + 检测 + 评分 + 本地代理网关）
+- `app/` — Electron 桌面端 UI（React 19 + TypeScript + Vite + Mantine）
+
+详细架构见 [DESIGN.md](./DESIGN.md)。
+
+---
+
+## 常用命令
+
+### proxy-core（Go 后端）
+
+```bash
+cd proxy-core
+
+go build ./...        # 编译
+go run .              # 本地运行（默认监听 127.0.0.1:17890）
+go test ./... -count=1      # 运行全部测试
+go vet ./...          # 静态检查
+golangci-lint run ./...     # Lint（需安装 golangci-lint）
+```
+
+### app（Electron 前端）
+
+```bash
+cd app
+
+npm install           # 安装依赖
+npm run dev           # 开发模式（自动编译 proxy-core.exe + 启动 Vite + Electron）
+npm run build         # 构建（vite build + tsc 编译 electron）
+npm run typecheck     # TypeScript 类型检查
+npm run dist:win      # 打包 Windows 安装包（electron-builder）
+```
+
+`npm run dev` 会先执行 `build:core` 编译 `proxy-core.exe`，请勿在 Go 代码
+有编译错误时运行前端开发命令。
+
+---
+
+## 项目结构
+
+```
+proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPilot/proxy-core）
+  main.go              # 入口：装配各模块，spawn 后输出 PROXYPILOT_TOKEN 供前端鉴权
+  api/                 # Gin REST 路由 + X-Token 鉴权中间件 + WebSocket 实时推送
+  bus/                 # 日志/进度事件 pub/sub（回放历史，非阻塞发布）
+  collector/           # 订阅抓取（fetcher.go）与定时调度（subscription.go）
+  config/              # 配置：默认值 + PROXYPILOT_* 环境变量覆盖
+  gateway/             # 本地 HTTP / HTTPS CONNECT / SOCKS5 代理出口
+  model/               # 数据模型（ProxyNode / Subscription / CheckResult 等）
+  parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）
+  pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
+  scheduler/           # 出口选择：weight = score/latency，失败惩罚窗口 30s，粘性绑定 10min
+  storage/             # SQLite（modernc.org/sqlite，无 CGO）
+  validator/           # 节点连通性检测（HTTP 探测 + TCP 隧道）
+
+app/                   # Electron UI
+  electron/main/       # 主进程：spawn proxy-core.exe、读取 token、窗口管理
+  electron/preload.ts  # 预加载脚本
+  src/                 # React 渲染进程
+    api/               # 后端 HTTP + WebSocket 客户端封装
+    stores/            # Zustand 状态（pool / logs / status / subscriptions）
+    views/             # 页面：Dashboard / ProxyPool / Subscriptions / Logs / Settings
+```
+
+---
+
+## 测试规范
+
+- Go 测试文件与源码同目录（如 `pool/manager_test.go`），包内测试（`package pool`）。
+- 提交代码前必须运行 `go test ./... -count=1` 且全部通过。
+- 测试**不得依赖真实网络**：外部 HTTP 用 `httptest`，节点检测用 `mockChecker` 代替
+  `validator.NewChecker`（否则会真实联网，测试不稳定）。
+- 涉及时间窗口/定时器的测试要快速收敛，避免真实等待。
+- Windows + CGO 未启用：**不要**使用 `go test -race`（会报 "requires cgo"）。
+- 修改功能后补充相应回归测试，例如存储层的关键 bug 已有专门回归测试
+  （`TestUpsertSubscriptionUpdatesWithoutNewRow` 等）。
+
+## 代码规范
+
+### Go（proxy-core）
+
+- 标准库优先，模块职责单一；新模块放入 `proxy-core/<name>/` 独立包。
+- 注释与日志使用中文，与现有代码保持一致。
+- 错误必须显式处理：lint 开启 errcheck，`io.Copy`、`Shutdown` 等返回值
+  未使用时应写 `_, _ = ...` 或 `_ = ...`。
+- 未使用的导出函数/字段会被 `unused` 检查报告，删除或补上真实调用。
+- 提交前运行 `go vet ./...` 与 `golangci-lint run ./...`，两者都必须无输出/通过。
+
+### TypeScript / React（app）
+
+- TypeScript 严格模式；用 `npm run typecheck` 验证。
+- 组件优先使用 `src/components/ui/` 下的 shadcn/ui 风格基础组件，而非重复造轮子。
+- 状态管理用 Zustand（`src/stores/`），API 调用走 `src/api/` 统一封装。
+- 支持暗黑模式：颜色必须用 Mantine 主题变量（如 `var(--mantine-color-default-hover)`），
+  不要写死灰度值（如 `#f1f3f5`），否则深色模式下不随主题变化。
+- 路由使用 react-router-dom HashRouter。
+
+---
+
+## 安全注意事项
+
+- API 仅监听 `127.0.0.1:17890`，所有请求必须带 `X-Token` header
+  （token 由 proxy-core 启动时随机生成并通过 stdout 输出给 Electron）。
+- 不要把 session token、订阅 URL 等敏感信息写进日志或提交到仓库。
+- 代理网关默认出口 `127.0.0.1:7890`（HTTP）/ `127.0.0.1:7891`（SOCKS5），
+  仅绑定本机，不要修改为对外暴露。
+
+---
+
+## 运行流程备忘
+
+1. `cd proxy-core && go build -buildmode=exe -o proxy-core.exe .`
+2. `cd app && npm run dev`（内部会执行第 1 步）
+3. Electron 主进程 spawn `proxy-core.exe`，解析 stdout 的
+   `PROXYPILOT_TOKEN=<hex>` 与 `PROXYPILOT_API=http://127.0.0.1:17890`，
+   之后的 API 请求都带该 token。
+4. 退出时 Electron 通知 Go 停止，释放代理端口。
