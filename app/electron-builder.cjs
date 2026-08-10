@@ -15,6 +15,10 @@ module.exports = () => {
   return {
     appId: 'com.axetroy.proxypilot',
     productName: 'ProxyPilot',
+    // 禁用 electron-builder 自动发布：检测到 GITHUB_TOKEN 时它会在 tag 构建
+    // 尝试自行上传到 GitHub（runner 代理下报 self-signed certificate 错误）。
+    // 上传统一由 CI 的 softprops/action-gh-release 负责。
+    publish: null,
     directories: {
       output: 'release',
     },
