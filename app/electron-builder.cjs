@@ -41,6 +41,10 @@ module.exports = () => {
     mac: {
       target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
       category: 'public.app-category.utilities',
+      // 未配置 Apple Developer 证书：明确不签名（identity: null），
+      // 否则 electron-builder 会尝试自动发现证书导致构建失败。
+      // 有证书后改为 identity: 'Developer ID Application: <你的名字>' 并配置公证。
+      identity: null,
     },
   }
 }

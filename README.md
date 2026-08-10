@@ -299,6 +299,20 @@ npm run dist:mac    # 指定 macOS 平台
 
 > 打包配置见 `app/electron-builder.cjs`（通过环境变量 `PP_CORE_BIN` 指定随包分发的 proxy-core 二进制：Windows 为 `proxy-core.exe`，Linux/macOS 为 `proxy-core`）。
 
+### macOS 签名与公证
+
+当前未配置 Apple Developer 证书，macOS 产物为**未签名、未公证**的 dmg。macOS 的 Gatekeeper 会拦截未签名应用，首次打开时请：
+
+1. 右键点击 `ProxyPilot.app` → 选择「打开」→ 再次确认「打开」；或
+2. 终端执行 `xattr -dr com.apple.quarantine /Applications/ProxyPilot.app` 去除隔离属性
+
+> 若已购买 Apple Developer Program（$99/年），可配置自动签名 + 公证，用户即可直接双击打开：
+>
+> 1. 在 Apple Developer 后台生成 **Developer ID Application** 证书，导出为 `.p12`
+> 2. 在 GitHub 仓库 Settings → Secrets 配置：`CSC_LINK`（p12 的 base64）、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`（App 专用密码）、`APPLE_TEAM_ID`
+> 3. 将 `app/electron-builder.cjs` 中 `mac.identity` 改为 `'Developer ID Application: <你的名字>'`，并添加 `notarize: true`
+> 4. CI 的 `build-app` job 中移除 `CSC_IDENTITY_AUTO_DISCOVERY: 'false'`，electron-builder 会自动读取上述 secrets 完成签名与公证
+
 ---
 
 ## 路线图（DESIGN.md §17）
