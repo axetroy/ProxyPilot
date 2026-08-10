@@ -1,0 +1,54 @@
+# goreleaser 配置：构建 proxy-core 跨平台二进制
+# 用法：
+#   goreleaser build --snapshot --clean   # 本地验证构建
+#   goreleaser release --clean            # 发布（需 GITHUB_TOKEN）
+version: 2
+
+project_name: proxy-core
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: proxy-core
+    main: .
+    binary: proxy-core
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/axetroy/ProxyPilot/proxy-core/config.Version={{.Version}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - none*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: '{{ .Tag }}-SNAPSHOT-{{ .ShortCommit }}'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'

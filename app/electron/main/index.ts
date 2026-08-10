@@ -13,16 +13,19 @@ let resolveTokenReady: (() => void) | null = null
 let tokenReady = false
 
 function resolveCorePath(): string {
-  // 打包后：<resources>/proxy-core.exe（extraResources 放置位置，与 app.asar 同级）
-  const packaged = path.join(process.resourcesPath, 'proxy-core.exe')
+  // Windows 下 Go 构建产物为 proxy-core.exe，其他平台为 proxy-core
+  const coreBin = process.platform === 'win32' ? 'proxy-core.exe' : 'proxy-core'
+
+  // 打包后：<resources>/proxy-core（extraResources 放置位置，与 app.asar 同级）
+  const packaged = path.join(process.resourcesPath, coreBin)
   if (existsSync(packaged)) return packaged
 
-  // 开发模式：<repo>/proxy-core/proxy-core.exe
-  const dev = path.join(app.getAppPath(), '..', 'proxy-core', 'proxy-core.exe')
+  // 开发模式：<repo>/proxy-core/proxy-core
+  const dev = path.join(app.getAppPath(), '..', 'proxy-core', coreBin)
   if (existsSync(dev)) return dev
 
   // 兜底：app 目录下
-  const fallback = path.join(app.getAppPath(), 'proxy-core.exe')
+  const fallback = path.join(app.getAppPath(), coreBin)
   if (existsSync(fallback)) return fallback
 
   return packaged
@@ -49,9 +52,9 @@ async function startCore(): Promise<void> {
   })
   const exe = resolveCorePath()
   if (!existsSync(exe)) {
-    console.error(`[core] proxy-core.exe not found at: ${exe}`)
+    console.error(`[core] proxy-core not found at: ${exe}`)
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('core:error', `proxy-core.exe not found: ${exe}`)
+      mainWindow.webContents.send('core:error', `proxy-core not found: ${exe}`)
     }
     return
   } else {
@@ -130,7 +133,7 @@ async function waitForCore(timeoutMs = 20000): Promise<void> {
   throw new Error(
     `proxy-core 未在 ${timeoutMs}ms 内就绪（最后错误: ${lastErr}）。` +
       `请确认端口 ${API_BASE.replace('http://', '')} 未被其他进程占用，` +
-      `且 proxy-core.exe 可正常运行。`,
+      `且 proxy-core 可正常运行。`,
   )
 }
 

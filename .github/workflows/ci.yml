@@ -53,6 +53,16 @@ jobs:
           version: v2.12.2
           args: --timeout=5m
 
+      - name: Goreleaser cross-build (snapshot)
+        # 仅在 ubuntu + node 20 组合上执行一次，避免矩阵重复
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '20'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: build --snapshot --clean
+          workdir: proxy-core
+
       # ---------- app (Electron / React) ----------
 
       - name: Install dependencies

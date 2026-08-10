@@ -1,6 +1,5 @@
 {
   "name": "proxypilot",
-  "productName": "ProxyPilot",
   "version": "0.1.0",
   "description": "ProxyPilot - desktop proxy manager",
   "main": "dist-electron/main/index.js",
@@ -13,14 +12,16 @@
     "preview": "vite preview",
     "dev:renderer": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json && electron .",
-    "build:core": "cd ../proxy-core && go build -buildmode=exe -o proxy-core.exe .",
+    "build:core": "cd ../proxy-core && go build -o proxy-core .",
     "electron:dev": "npm run build:core && concurrently -k \"npm run dev:renderer\" \"wait-on tcp:5173 && npm run dev:electron\"",
     "electron:main": "tsc -p tsconfig.electron.json && electron .",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "electron:build": "npm run build:renderer && npm run build:electron",
     "dist": "npm run build:core && npm run electron:build && electron-builder",
-    "dist:win": "npm run build:core && npm run electron:build && electron-builder --win",
+    "dist:win": "npm run build:core && npm run electron:build && cross-env PP_CORE_BIN=proxy-core.exe electron-builder --win",
+    "dist:linux": "npm run build:core && npm run electron:build && cross-env PP_CORE_BIN=proxy-core electron-builder --linux",
+    "dist:mac": "npm run build:core && npm run electron:build && cross-env PP_CORE_BIN=proxy-core electron-builder --mac",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.2",
+    "cross-env": "^10.1.0",
     "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
     "postcss": "^8.4.49",

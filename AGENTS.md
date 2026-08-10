@@ -24,7 +24,15 @@ go run .              # 本地运行（默认监听 127.0.0.1:17890）
 go test ./... -count=1      # 运行全部测试
 go vet ./...          # 静态检查
 golangci-lint run ./...     # Lint（需安装 golangci-lint）
+goreleaser build --snapshot --clean   # 跨平台构建验证（win/linux/macOS × amd64/arm64/386/arm）
+goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .goreleaser.yml）
 ```
+
+跨平台构建使用 [goreleaser](https://goreleaser.com)（配置 `proxy-core/.goreleaser.yml`）：
+- 支持 windows / linux / darwin，架构 amd64 / arm64
+- 纯 Go 无 CGO（`modernc.org/sqlite`），可交叉编译
+- 版本号通过 ldflags 注入 `config.Version`（`-X ...config.Version={{.Version}}`），
+  本地开发时使用默认值 `0.1.0`
 
 ### app（Electron 前端）
 
@@ -32,14 +40,23 @@ golangci-lint run ./...     # Lint（需安装 golangci-lint）
 cd app
 
 npm install           # 安装依赖
-npm run dev           # 开发模式（自动编译 proxy-core.exe + 启动 Vite + Electron）
+npm run dev           # 开发模式（自动编译 proxy-core + 启动 Vite + Electron）
 npm run build         # 构建（vite build + tsc 编译 electron）
 npm run typecheck     # TypeScript 类型检查
-npm run dist:win      # 打包 Windows 安装包（electron-builder）
+npm run dist:win      # 打包 Windows 安装包（electron-builder，含 proxy-core.exe）
+npm run dist:linux    # 打包 Linux 包（含 proxy-core）
+npm run dist:mac      # 打包 macOS 包（含 proxy-core）
 ```
 
-`npm run dev` 会先执行 `build:core` 编译 `proxy-core.exe`，请勿在 Go 代码
-有编译错误时运行前端开发命令。
+`npm run dev` 会先执行 `build:core` 编译 proxy-core（Windows 下 Go 自动生成
+`proxy-core.exe`，其他平台生成 `proxy-core`），请勿在 Go 代码有编译错误时运行
+前端开发命令。
+
+electron-builder 配置在 `app/electron-builder.cjs`（函数形式，electron-builder
+自动查找该文件名）：通过环境变量 `PP_CORE_BIN` 指定打包进 extraResources 的
+proxy-core 二进制（`dist:win` 为 `proxy-core.exe`，`dist:linux`/`dist:mac` 为
+`proxy-core`，`dist` 未指定时按构建机平台推断）。Electron 主进程
+`resolveCorePath()` 按 `process.platform` 查找对应二进制。
 
 ---
 
