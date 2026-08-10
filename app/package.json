@@ -5,6 +5,14 @@
   "main": "dist-electron/main/index.js",
   "author": "axetroy",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/axetroy/ProxyPilot.git"
+  },
+  "homepage": "https://github.com/axetroy/ProxyPilot",
+  "bugs": {
+    "url": "https://github.com/axetroy/ProxyPilot/issues"
+  },
   "private": true,
   "scripts": {
     "dev": "npm run electron:dev",

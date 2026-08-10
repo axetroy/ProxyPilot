@@ -276,14 +276,16 @@ curl --socks5 127.0.0.1:7891 https://ifconfig.me
 
 ## 打包与发布
 
-使用 [electron-builder](https://www.electron.build/) 打包桌面应用，`proxy-core.exe` 会随包分发到 `resources/` 目录，Electron 启动时自动 spawn。
+使用 [electron-builder](https://www.electron.build/) 打包桌面应用，proxy-core 二进制会随包分发到 `resources/` 目录，Electron 启动时自动 spawn。
 
 ### 打包命令
 
 ```bash
 cd app
 npm run dist        # 编译 Go 核心 + 构建渲染层 + 打包当前平台
-npm run dist:win    # 指定 Windows 平台（NSIS 安装包 + portable 便携版）
+npm run dist:win    # 指定 Windows 平台（NSIS 安装包）
+npm run dist:linux  # 指定 Linux 平台
+npm run dist:mac    # 指定 macOS 平台
 ```
 
 产物输出到 `app/release/`：
@@ -291,10 +293,11 @@ npm run dist:win    # 指定 Windows 平台（NSIS 安装包 + portable 便携�
 | 平台 | 产物 | 说明 |
 | --- | --- | --- |
 | Windows | `ProxyPilot Setup <version>.exe` | NSIS 安装包（可选安装目录、桌面/开始菜单快捷方式） |
-| Windows | `ProxyPilot <version>.exe` | portable 便携版（免安装） |
 | Windows | `win-unpacked/` | 解包目录（`ProxyPilot.exe` + `resources/proxy-core.exe`） |
+| Linux | `ProxyPilot-<version>.AppImage` 等 | 按 electron-builder 默认目标生成 |
+| macOS | `ProxyPilot-<version>.dmg` 等 | 按 electron-builder 默认目标生成 |
 
-> 打包配置见 `app/package.json` 的 `build` 字段；macOS / Linux 目标可在 `build.win` 之外按需补充。
+> 打包配置见 `app/electron-builder.cjs`（通过环境变量 `PP_CORE_BIN` 指定随包分发的 proxy-core 二进制：Windows 为 `proxy-core.exe`，Linux/macOS 为 `proxy-core`）。
 
 ---
 
@@ -340,4 +343,4 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 ## License
 
-MIT（待补 LICENSE 文件）
+[MIT](./LICENSE)
