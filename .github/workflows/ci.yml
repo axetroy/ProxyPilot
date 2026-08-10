@@ -117,6 +117,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -154,6 +156,8 @@ jobs:
         env:
           # CI 无签名证书：禁用自动发现，避免 macOS 签名失败
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # electron-builder 下载 AppImage 等工具时需要 GitHub token，避免 rate limit 报错
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to GitHub Release
         uses: softprops/action-gh-release@v3
