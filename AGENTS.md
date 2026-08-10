@@ -24,7 +24,7 @@ go run .              # 本地运行（默认监听 127.0.0.1:17890）
 go test ./... -count=1      # 运行全部测试
 go vet ./...          # 静态检查
 golangci-lint run ./...     # Lint（需安装 golangci-lint）
-goreleaser build --snapshot --clean   # 跨平台构建验证（win/linux/macOS × amd64/arm64/386/arm）
+goreleaser build --snapshot --clean   # 跨平台构建验证（win/linux/macOS × amd64/arm64）
 goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .goreleaser.yml）
 ```
 
@@ -33,6 +33,15 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
 - 纯 Go 无 CGO（`modernc.org/sqlite`），可交叉编译
 - 版本号通过 ldflags 注入 `config.Version`（`-X ...config.Version={{.Version}}`），
   本地开发时使用默认值 `0.1.0`
+
+### CI 发布流程（`.github/workflows/ci.yml`）
+
+- 推送 `v*` tag（如 `v0.1.0`）触发发布，先跑 `test` 矩阵（Go vet/test/lint + 前端 typecheck/build）
+- `release` job（ubuntu）：`goreleaser release` 构建 proxy-core 六目标并创建 GitHub Release
+- `build-app` job（win/linux/mac 矩阵）：`npm run dist:<platform>` 构建安装包
+  （Windows NSIS x64 / Linux AppImage x64+arm64 / macOS dmg x64+arm64），
+  通过 `softprops/action-gh-release` 上传到同一 Release
+- 发布需 `GITHUB_TOKEN`（仓库默认提供，`contents: write` 权限）
 
 ### app（Electron 前端）
 

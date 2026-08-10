@@ -34,5 +34,13 @@ module.exports = () => {
       createDesktopShortcut: true,
       createStartMenuShortcut: true,
     },
+    linux: {
+      target: [{ target: 'AppImage', arch: ['x64', 'arm64'] }],
+      category: 'Network',
+    },
+    mac: {
+      target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
+      category: 'public.app-category.utilities',
+    },
   }
 }
