@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "npm --prefix app run dev",
     "build": "npm --prefix app run build",
-    "typecheck": "npm --prefix app run typecheck"
+    "typecheck": "npm --prefix app run typecheck",
+    "bump": "node scripts/bump-version.mjs"
   }
 }
