@@ -13,3 +13,17 @@ body {
   min-height: 100vh;
   background: var(--mantine-color-body, #ffffff);
 }
+
+/* 刷新按钮旋转动画：点击后图标持续旋转，避免 loading 状态切换造成的闪烁 */
+@keyframes pp-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pp-spin {
+  animation: pp-spin 1s linear infinite;
+}

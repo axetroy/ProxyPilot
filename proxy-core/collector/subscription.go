@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,10 +176,57 @@ func (m *Manager) refresh(ctx context.Context, sub *model.Subscription) error {
 	if m.sink != nil {
 		added := m.sink.AddNodes(nodes)
 		m.bus.Info(fmt.Sprintf("subscription %s: %d nodes (new %d)", sub.Name, len(nodes), added))
+		// 同步清理：移除该订阅下已不在本次抓取结果中的旧节点，
+		// 避免订阅节点减少或变化时代理数只增不减
+		if err := m.syncStaleNodes(sub.ID, nodes); err != nil {
+			m.bus.Warn(fmt.Sprintf("subscription %s cleanup failed: %v", sub.Name, err))
+		}
 	}
 	if err := m.store.UpdateSubscriptionFetch(sub.ID, time.Now()); err != nil {
 		return err
 	}
 	sub.LastFetch = time.Now()
+	return nil
+}
+
+// syncStaleNodes 找出该订阅下已不在本次抓取结果中的旧节点并清理。
+// 节点可能被多个订阅共享：先解除与当前订阅的关联，
+// 若不再被任何订阅引用则从池中删除。
+func (m *Manager) syncStaleNodes(subID int64, nodes []*model.ProxyNode) error {
+	existing, err := m.store.ListNodesBySubscription(subID)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	keep := make(map[string]struct{}, len(nodes))
+	for _, n := range nodes {
+		keep[strings.ToLower(n.Key())] = struct{}{}
+	}
+	var removed []int64
+	for _, n := range existing {
+		if _, ok := keep[strings.ToLower(n.Key())]; ok {
+			continue
+		}
+		// 解除与当前订阅的关联
+		if err := m.store.DetachNodeFromSubscription(n.ID, subID); err != nil {
+			m.bus.Debug(fmt.Sprintf("detach node %d failed: %v", n.ID, err))
+			continue
+		}
+		// 若不再被其他订阅引用，则从池中删除
+		refs, err := m.store.CountSubscriptionRefs(n.ID)
+		if err != nil {
+			m.bus.Debug(fmt.Sprintf("count refs failed: %v", err))
+			continue
+		}
+		if refs == 0 {
+			removed = append(removed, n.ID)
+		}
+	}
+	if len(removed) > 0 {
+		m.sink.RemoveNodes(removed)
+		m.bus.Info(fmt.Sprintf("subscription %d: removed %d stale nodes", subID, len(removed)))
+	}
 	return nil
 }

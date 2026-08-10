@@ -169,6 +169,7 @@ ipcMain.handle('get-token', async () => {
   return sessionToken
 })
 ipcMain.handle('get-api-base', () => API_BASE)
+ipcMain.handle('get-platform', () => process.platform)
 
 app.whenReady().then(async () => {
   // 移除默认菜单栏（File/Edit/View 等），保留系统自带的窗口边框（最小化/最大化/关闭）

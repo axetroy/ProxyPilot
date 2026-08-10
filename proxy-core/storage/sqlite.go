@@ -186,6 +186,41 @@ func (s *Store) AttachNodeToSubscription(proxyID, subscriptionID int64) error {
 	return err
 }
 
+// ListNodesBySubscription 返回订阅关联的所有节点。
+func (s *Store) ListNodesBySubscription(subscriptionID int64) ([]*model.ProxyNode, error) {
+	rows, err := s.db.Query(`SELECT p.id, p.host, p.port, p.protocol, p.username, p.password,
+		p.latency, p.score, p.status, p.success_count, p.fail_count, p.last_check, p.created_at, p.updated_at
+		FROM proxy_nodes p
+		JOIN subscription_nodes sn ON sn.proxy_id = p.id
+		WHERE sn.subscription_id = ?`, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*model.ProxyNode
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// DetachNodeFromSubscription 解除节点与订阅的关联。
+func (s *Store) DetachNodeFromSubscription(proxyID, subscriptionID int64) error {
+	_, err := s.db.Exec(`DELETE FROM subscription_nodes WHERE proxy_id=? AND subscription_id=?`, proxyID, subscriptionID)
+	return err
+}
+
+// CountSubscriptionRefs 返回节点被多少个订阅引用。
+func (s *Store) CountSubscriptionRefs(proxyID int64) (int, error) {
+	var c int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscription_nodes WHERE proxy_id=?`, proxyID).Scan(&c)
+	return c, err
+}
+
 func (s *Store) UpdateNodeCheck(id int64, status model.ProxyStatus, latency, score int64, ok bool) error {
 	sqlStmt := `UPDATE proxy_nodes SET
 		status=?, latency=?, score=?,

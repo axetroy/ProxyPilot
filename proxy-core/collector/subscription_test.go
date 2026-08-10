@@ -12,19 +12,30 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 )
 
-// mockSink 记录收集到的节点。
+// mockSink 记录收集到的节点，并真实保存到存储以便验证清理逻辑。
 type mockSink struct {
+	store   *storage.Store
 	added   int
 	removed []int64
 }
 
 func (m *mockSink) AddNodes(nodes []*model.ProxyNode) int {
-	m.added += len(nodes)
-	return len(nodes)
+	added := 0
+	for _, n := range nodes {
+		isNew, err := m.store.SaveNode(n)
+		if err == nil && isNew {
+			added++
+		}
+	}
+	m.added += added
+	return added
 }
 
 func (m *mockSink) RemoveNodes(ids []int64) {
 	m.removed = append(m.removed, ids...)
+	for _, id := range ids {
+		_ = m.store.DeleteNode(id)
+	}
 }
 
 func newTestManager(t *testing.T) (*Manager, *storage.Store, *mockSink) {
@@ -34,7 +45,7 @@ func newTestManager(t *testing.T) (*Manager, *storage.Store, *mockSink) {
 		t.Fatalf("storage: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	sink := &mockSink{}
+	sink := &mockSink{store: st}
 	m := NewManager(st, bus.New(), sink, 5*time.Second)
 	t.Cleanup(m.Stop)
 	return m, st, sink
@@ -132,6 +143,93 @@ func TestFetchNowError(t *testing.T) {
 	sub, _ := m.AddSubscription("sub", "http://127.0.0.1:1", 3600)
 	if err := m.FetchNow(context.Background(), sub); err == nil {
 		t.Fatal("expected error fetching unreachable subscription")
+	}
+}
+
+func TestFetchNowRemovesStaleNodes(t *testing.T) {
+	// 第一次抓取返回 3 个节点，第二次只返回 2 个（1 个被移除），
+	// 验证旧节点会被清理，代理数不会只增不减。
+	body := "1.1.1.1:80\n2.2.2.2:443\n3.3.3.3:8080"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	m, st, sink := newTestManager(t)
+	sub, _ := m.AddSubscription("sub", srv.URL, 3600)
+
+	if err := m.FetchNow(context.Background(), sub); err != nil {
+		t.Fatalf("first fetchNow: %v", err)
+	}
+	if sink.added != 3 {
+		t.Fatalf("added = %d, want 3", sink.added)
+	}
+	nodes, _ := st.ListNodesBySubscription(sub.ID)
+	if len(nodes) != 3 {
+		t.Fatalf("nodes after first fetch = %d, want 3", len(nodes))
+	}
+
+	// 第二次抓取：3.3.3.3 从订阅中消失
+	body = "1.1.1.1:80\n2.2.2.2:443"
+	if err := m.FetchNow(context.Background(), sub); err != nil {
+		t.Fatalf("second fetchNow: %v", err)
+	}
+	if len(sink.removed) != 1 {
+		t.Fatalf("removed = %v, want 1 stale node", sink.removed)
+	}
+	nodes, _ = st.ListNodesBySubscription(sub.ID)
+	if len(nodes) != 2 {
+		t.Fatalf("nodes after second fetch = %d, want 2", len(nodes))
+	}
+	// 被移除的节点应从存储中删除
+	remaining, _ := st.ListNode()
+	if len(remaining) != 2 {
+		t.Fatalf("remaining nodes = %d, want 2", len(remaining))
+	}
+}
+
+func TestFetchNowKeepsSharedNodes(t *testing.T) {
+	// 同一节点被两个订阅共享：一个订阅移除该节点后，
+	// 节点不应被删除（仍被另一个订阅引用），只解除关联。
+	bodyA := "1.1.1.1:80\n2.2.2.2:443"
+	bodyB := "2.2.2.2:443\n3.3.3.3:8080"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/a" {
+			_, _ = w.Write([]byte(bodyA))
+		} else {
+			_, _ = w.Write([]byte(bodyB))
+		}
+	}))
+	defer srv.Close()
+
+	m, st, sink := newTestManager(t)
+	subA, _ := m.AddSubscription("a", srv.URL+"/a", 3600)
+	subB, _ := m.AddSubscription("b", srv.URL+"/b", 3600)
+
+	if err := m.FetchNow(context.Background(), subA); err != nil {
+		t.Fatalf("fetch A: %v", err)
+	}
+	if err := m.FetchNow(context.Background(), subB); err != nil {
+		t.Fatalf("fetch B: %v", err)
+	}
+
+	// 订阅 A 移除 2.2.2.2
+	bodyA = "1.1.1.1:80"
+	if err := m.FetchNow(context.Background(), subA); err != nil {
+		t.Fatalf("fetch A again: %v", err)
+	}
+	// 2.2.2.2 仍被订阅 B 引用，不应被删除
+	remaining, _ := st.ListNode()
+	if len(remaining) != 3 {
+		t.Fatalf("remaining nodes = %d, want 3 (2.2.2.2 kept by sub B)", len(remaining))
+	}
+	if len(sink.removed) != 0 {
+		t.Fatalf("removed = %v, want none (node still shared)", sink.removed)
+	}
+	// 订阅 A 的代理数应减为 1
+	nodesA, _ := st.ListNodesBySubscription(subA.ID)
+	if len(nodesA) != 1 {
+		t.Fatalf("sub A nodes = %d, want 1", len(nodesA))
 	}
 }
 

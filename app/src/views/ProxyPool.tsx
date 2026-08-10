@@ -1,7 +1,9 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Group, Modal, Stack, Text, TextInput } from '@mantine/core'
+import { Check, Copy, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
+import { Alert, Badge, Box, Button, Card, Code, Group, Modal, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
+import { getPlatform, type Platform } from '@/api'
+import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
 import type { ProxyNode } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
@@ -47,6 +49,10 @@ export default function ProxyPool() {
   const deferredFilter = useDeferredValue(filter)
   const [scrollTop, setScrollTop] = useState(0)
   const [pending, setPending] = useState<ProxyNode | null>(null)
+  const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
+  const [platform, setPlatform] = useState<Platform>('linux')
+  const [activeTab, setActiveTab] = useState<string | null>('darwin')
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [localNotice, setLocalNotice] = useState<NoticeData | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const ROW_HEIGHT = 56
@@ -59,6 +65,10 @@ export default function ProxyPool() {
     const timer = window.setInterval(() => refresh(undefined, true), 5000)
     return () => window.clearInterval(timer)
   }, [refresh])
+
+  useEffect(() => {
+    getPlatform().then(setPlatform).catch(() => setPlatform('linux'))
+  }, [])
 
   useEffect(() => {
     if (!notice) return
@@ -96,6 +106,19 @@ export default function ProxyPool() {
     window.setTimeout(() => refresh(), 1500)
   }
 
+  async function copyCommand(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedKey(key)
+      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500)
+    } catch {
+      setLocalNotice({ type: 'error', text: '复制失败，请手动复制' })
+    }
+  }
+
+  const commandSets = useMemo(() => (copyTarget ? buildCommands(copyTarget) : []), [copyTarget])
+  const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
+
   return (
     <Stack gap="md">
       <Card padding="lg" radius="md" withBorder>
@@ -115,8 +138,13 @@ export default function ProxyPool() {
             <Button leftSection={<Zap size={16} />} variant="light" loading={checkingAll} onClick={onCheckAll}>
               {checkingAll ? '检测中...' : '检测新节点'}
             </Button>
-            <Button leftSection={<RefreshCw size={16} />} variant="default" loading={loading} onClick={() => refresh()}>
-              {loading ? '刷新中...' : '刷新'}
+            <Button
+              leftSection={<RefreshCw size={16} className={loading ? 'pp-spin' : undefined} />}
+              variant="default"
+              disabled={loading}
+              onClick={() => refresh()}
+            >
+              刷新
             </Button>
           </Group>
         </Group>
@@ -144,7 +172,7 @@ export default function ProxyPool() {
                 top: 0,
                 zIndex: 2,
                 display: 'grid',
-                gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 140px',
+                gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 180px',
                 alignItems: 'center',
                 gap: 8,
                 padding: '0 12px',
@@ -178,7 +206,7 @@ export default function ProxyPool() {
                     key={n.id}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 140px',
+                      gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 180px',
                       alignItems: 'center',
                       gap: 8,
                       padding: '0 12px',
@@ -193,6 +221,11 @@ export default function ProxyPool() {
                     <Text size="sm">{n.score}</Text>
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
                     <Group justify="flex-end" gap="xs">
+                      <Tooltip label="复制代理命令">
+                        <Button size="xs" variant="subtle" onClick={() => { setCopyTarget(n); setActiveTab(defaultTab) }}>
+                          <Copy size={14} />
+                        </Button>
+                      </Tooltip>
                       <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)}>
                         检测
                       </Button>
@@ -220,6 +253,63 @@ export default function ProxyPool() {
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal opened={copyTarget !== null} onClose={() => setCopyTarget(null)} title="复制代理命令" size="lg">
+        {copyTarget && (
+          <Stack gap="md">
+            <Group gap="xs">
+              <Badge variant="light">{copyTarget.protocol}</Badge>
+              <Text size="sm" fw={600} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {proxyUrl(copyTarget)}
+              </Text>
+            </Group>
+            <Tabs value={activeTab} onChange={setActiveTab}>
+              <Tabs.List>
+                <Tabs.Tab value="win32-powershell">Windows PowerShell</Tabs.Tab>
+                <Tabs.Tab value="win32-cmd">Windows CMD</Tabs.Tab>
+                <Tabs.Tab value="darwin">macOS / Linux</Tabs.Tab>
+              </Tabs.List>
+              {commandSets.map((cs) => {
+                const tabValue = cs.platform === 'win32' ? (cs.label === 'Windows CMD' ? 'win32-cmd' : 'win32-powershell') : 'darwin'
+                return (
+                  <Tabs.Panel key={tabValue} value={tabValue} pt="md">
+                    <Stack gap="md">
+                      <div>
+                        <Group justify="space-between" mb={4}>
+                          <Text size="sm" fw={600}>设置环境变量</Text>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            leftSection={copiedKey === `${tabValue}-env` ? <Check size={14} /> : <Copy size={14} />}
+                            onClick={() => copyCommand(`${tabValue}-env`, cs.env)}
+                          >
+                            {copiedKey === `${tabValue}-env` ? '已复制' : '复制'}
+                          </Button>
+                        </Group>
+                        <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cs.env}</Code>
+                      </div>
+                      <div>
+                        <Group justify="space-between" mb={4}>
+                          <Text size="sm" fw={600}>curl 测试</Text>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            leftSection={copiedKey === `${tabValue}-curl` ? <Check size={14} /> : <Copy size={14} />}
+                            onClick={() => copyCommand(`${tabValue}-curl`, cs.curl)}
+                          >
+                            {copiedKey === `${tabValue}-curl` ? '已复制' : '复制'}
+                          </Button>
+                        </Group>
+                        <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cs.curl}</Code>
+                      </div>
+                    </Stack>
+                  </Tabs.Panel>
+                )
+              })}
+            </Tabs>
+          </Stack>
+        )}
       </Modal>
     </Stack>
   )

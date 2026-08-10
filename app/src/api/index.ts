@@ -12,6 +12,7 @@ declare global {
     proxypilot?: {
       getToken: () => Promise<string>
       getApiBase: () => Promise<string>
+      getPlatform: () => Promise<string>
       onCoreExit: (cb: () => void) => void
       onCoreError: (cb: (msg: string) => void) => void
     }
@@ -48,6 +49,20 @@ export async function ensureApiReady(): Promise<void> {
 
 export function getToken(): string {
   return token
+}
+
+export type Platform = 'win32' | 'darwin' | 'linux'
+
+export async function getPlatform(): Promise<Platform> {
+  if (window.proxypilot) {
+    const p = await window.proxypilot.getPlatform()
+    if (p === 'win32' || p === 'darwin' || p === 'linux') return p
+  }
+  // 浏览器环境兜底：根据 UA 推断
+  const ua = navigator.userAgent
+  if (/Windows/i.test(ua)) return 'win32'
+  if (/Macintosh|Mac OS X/i.test(ua)) return 'darwin'
+  return 'linux'
 }
 
 export function getErrorMessage(error: unknown): string {

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Clipboard, RefreshCw, Play, Square } from 'lucide-react'
-import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput } from '@mantine/core'
+import { Check, Clipboard, Copy, Play, RefreshCw, Square } from 'lucide-react'
+import { Alert, Badge, Button, Card, Code, Group, Modal, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import './dashboard.css'
 import { useStatusStore } from '@/stores/status'
 import { usePoolStore } from '@/stores/pool'
+import { getPlatform, type Platform } from '@/api'
+import { buildGatewayCommands, type GatewayCommandSet } from '@/lib/proxy-commands'
 import type { ProxyNode } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
@@ -16,6 +18,10 @@ export default function Dashboard() {
   const [notice, setNotice] = useState<NoticeData | null>(null)
   const [loading, setLoading] = useState<'check' | 'start' | 'stop' | null>(null)
   const [copiedKey, setCopiedKey] = useState<'http' | 'socks5' | null>(null)
+  const [gatewayModalOpen, setGatewayModalOpen] = useState(false)
+  const [platform, setPlatform] = useState<Platform>('linux')
+  const [activeTab, setActiveTab] = useState<string | null>('darwin')
+  const [copiedCmdKey, setCopiedCmdKey] = useState<string | null>(null)
 
   const aliveRate = useMemo(() => {
     if (!status.proxyCount) return '-'
@@ -57,6 +63,30 @@ export default function Dashboard() {
     const timer = window.setTimeout(() => setNotice(null), 4000)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    getPlatform()
+      .then(setPlatform)
+      .catch(() => setPlatform('linux'))
+  }, [])
+
+  const gatewaySets = useMemo<GatewayCommandSet[]>(() => {
+    const http = formatProxyValue(status.httpProxyBind, 'http')
+    const socks5 = formatProxyValue(status.socks5ProxyBind, 'socks5')
+    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7890' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7891' : socks5)
+  }, [status.httpProxyBind, status.socks5ProxyBind])
+
+  const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
+
+  async function copyCommand(key: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedCmdKey(key)
+      window.setTimeout(() => setCopiedCmdKey(null), 1500)
+    } catch {
+      setNotice({ type: 'error', text: '复制失败，请手动复制' })
+    }
+  }
 
   async function onCheckAll() {
     try {
@@ -261,6 +291,18 @@ export default function Dashboard() {
               >
                 {copiedKey === 'http' ? '已复制' : '复制地址'}
               </Button>
+              <Button
+                size="xs"
+                variant="light"
+                disabled={!status.running}
+                leftSection={<Copy size={14} />}
+                onClick={() => {
+                  setActiveTab(defaultTab)
+                  setGatewayModalOpen(true)
+                }}
+              >
+                复制命令
+              </Button>
               <Text size="xs" c="dimmed">示例：http://127.0.0.1:7890</Text>
             </Group>
             <Text size="xs" c="dimmed" mt="xs">适合系统代理、浏览器代理、HTTP 客户端</Text>
@@ -279,12 +321,97 @@ export default function Dashboard() {
               >
                 {copiedKey === 'socks5' ? '已复制' : '复制地址'}
               </Button>
+              <Button
+                size="xs"
+                variant="light"
+                disabled={!status.running}
+                leftSection={<Copy size={14} />}
+                onClick={() => {
+                  setActiveTab(defaultTab)
+                  setGatewayModalOpen(true)
+                }}
+              >
+                复制命令
+              </Button>
               <Text size="xs" c="dimmed">示例：socks5://127.0.0.1:7891</Text>
             </Group>
             <Text size="xs" c="dimmed" mt="xs">适合 Clash、Telegram、浏览器扩展等 SOCKS5 场景</Text>
           </Card>
         </SimpleGrid>
       </Card>
+
+      <Modal
+        opened={gatewayModalOpen}
+        onClose={() => setGatewayModalOpen(false)}
+        title="复制网关命令"
+        size="lg"
+      >
+        <Text size="sm" c="dimmed" mb="md">
+          网关同时提供 HTTP 与 SOCKS5 两个出口：http_proxy/https_proxy 走 HTTP 出口，all_proxy 走 SOCKS5 出口。选择你的平台复制对应命令。
+        </Text>
+        <Tabs value={activeTab} onChange={setActiveTab}>
+          <Tabs.List>
+            <Tabs.Tab value="win32-powershell">Windows PowerShell</Tabs.Tab>
+            <Tabs.Tab value="win32-cmd">Windows CMD</Tabs.Tab>
+            <Tabs.Tab value="darwin">macOS / Linux</Tabs.Tab>
+          </Tabs.List>
+
+          {gatewaySets.map((set) => {
+            const tabKey = set.platform === 'win32' ? (set.label.includes('CMD') ? 'win32-cmd' : 'win32-powershell') : 'darwin'
+            return (
+              <Tabs.Panel key={tabKey} value={tabKey} pt="md">
+                <Text size="sm" fw={600} mb={4}>设置环境变量</Text>
+                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {set.env}
+                </Code>
+                <Group justify="flex-end" mt={4}>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color={copiedCmdKey === `${tabKey}-env` ? 'green' : 'blue'}
+                    leftSection={copiedCmdKey === `${tabKey}-env` ? <Check size={14} /> : <Copy size={14} />}
+                    onClick={() => copyCommand(`${tabKey}-env`, set.env)}
+                  >
+                    {copiedCmdKey === `${tabKey}-env` ? '已复制' : '复制'}
+                  </Button>
+                </Group>
+
+                <Text size="sm" fw={600} mb={4} mt="md">通过 HTTP 出口测试</Text>
+                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {set.curlHttp}
+                </Code>
+                <Group justify="flex-end" mt={4}>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color={copiedCmdKey === `${tabKey}-curl-http` ? 'green' : 'blue'}
+                    leftSection={copiedCmdKey === `${tabKey}-curl-http` ? <Check size={14} /> : <Copy size={14} />}
+                    onClick={() => copyCommand(`${tabKey}-curl-http`, set.curlHttp)}
+                  >
+                    {copiedCmdKey === `${tabKey}-curl-http` ? '已复制' : '复制'}
+                  </Button>
+                </Group>
+
+                <Text size="sm" fw={600} mb={4} mt="md">通过 SOCKS5 出口测试</Text>
+                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {set.curlSocks5}
+                </Code>
+                <Group justify="flex-end" mt={4}>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color={copiedCmdKey === `${tabKey}-curl-socks5` ? 'green' : 'blue'}
+                    leftSection={copiedCmdKey === `${tabKey}-curl-socks5` ? <Check size={14} /> : <Copy size={14} />}
+                    onClick={() => copyCommand(`${tabKey}-curl-socks5`, set.curlSocks5)}
+                  >
+                    {copiedCmdKey === `${tabKey}-curl-socks5` ? '已复制' : '复制'}
+                  </Button>
+                </Group>
+              </Tabs.Panel>
+            )
+          })}
+        </Tabs>
+      </Modal>
     </Stack>
   )
 }
