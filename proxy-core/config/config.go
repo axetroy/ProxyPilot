@@ -10,7 +10,7 @@ import (
 
 // Version 通过 goreleaser 的 ldflags 注入（如 -X ...config.Version={{.Version}}），
 // 本地开发时使用默认值。
-var Version = "0.1.1"
+var Version = "0.1.2"
 
 type Config struct {
 	APIBind          string
