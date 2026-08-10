@@ -1,6 +1,6 @@
 module github.com/axetroy/ProxyPilot/proxy-core
 
-go 1.25.6
+go 1.26.5
 
 require (
 	github.com/gin-gonic/gin v1.12.0
