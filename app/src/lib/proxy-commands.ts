@@ -11,8 +11,10 @@ export interface ProxyCommandSet {
 export interface GatewayCommandSet {
   platform: Platform
   label: string
-  /** 设置网关环境变量的命令（HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口，ALL_PROXY 走 SOCKS5 出口） */
-  env: string
+  /** 设置 HTTP 代理环境变量的命令（HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口） */
+  httpEnv: string
+  /** 设置 SOCKS5 代理环境变量的命令（ALL_PROXY 走 SOCKS5 出口） */
+  socks5Env: string
 }
 
 /** 生成代理 URL，如 http://user:pass@host:port */
@@ -49,29 +51,34 @@ export function buildCommands(n: ProxyNode): ProxyCommandSet[] {
 
 /**
  * 根据平台生成对应的网关使用命令。
- * 网关同时提供 HTTP 与 SOCKS5 两个出口：
- * - HTTP_PROXY/HTTPS_PROXY 指向 HTTP 出口（如 http://127.0.0.1:7892）
- * - ALL_PROXY 指向 SOCKS5 出口（如 socks5://127.0.0.1:7892，与 HTTP 共用）
+ * 网关同时提供 HTTP 与 SOCKS5 两个出口，分别生成独立命令：
+ * - HTTP 命令：HTTP_PROXY/HTTPS_PROXY 指向 HTTP 出口（如 http://127.0.0.1:7892）
+ * - SOCKS5 命令：HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 全部指向 SOCKS5 出口
+ *   （如 socks5://127.0.0.1:7892，与 HTTP 共用端口；SOCKS5 同样能处理 HTTP 请求，
+ *   因此 HTTP_PROXY/HTTPS_PROXY 也一并设置，兼容只认 HTTP 环境变量的工具）
  */
 export function buildGatewayCommands(httpUrl: string, socks5Url: string): GatewayCommandSet[] {
-  const httpEnv = ['HTTP_PROXY', 'HTTPS_PROXY']
-  const socksEnv = ['ALL_PROXY']
+  const httpEnvVars = ['HTTP_PROXY', 'HTTPS_PROXY']
+  const socksEnvVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']
 
   return [
     {
       platform: 'win32',
       label: 'Windows PowerShell',
-      env: [...httpEnv.map((v) => `$env:${v} = "${httpUrl}"`), ...socksEnv.map((v) => `$env:${v} = "${socks5Url}"`)].join('; '),
+      httpEnv: httpEnvVars.map((v) => `$env:${v} = "${httpUrl}"`).join('; '),
+      socks5Env: socksEnvVars.map((v) => `$env:${v} = "${socks5Url}"`).join('; '),
     },
     {
       platform: 'win32',
       label: 'Windows CMD',
-      env: [...httpEnv.map((v) => `set ${v}=${httpUrl}`), ...socksEnv.map((v) => `set ${v}=${socks5Url}`)].join(' && '),
+      httpEnv: httpEnvVars.map((v) => `set ${v}=${httpUrl}`).join(' && '),
+      socks5Env: socksEnvVars.map((v) => `set ${v}=${socks5Url}`).join(' && '),
     },
     {
       platform: 'darwin',
       label: 'macOS / Linux (bash/zsh)',
-      env: `export ${[...httpEnv.map((v) => `${v}=${httpUrl}`), ...socksEnv.map((v) => `${v}=${socks5Url}`)].join(' ')}`,
+      httpEnv: `export ${httpEnvVars.map((v) => `${v}=${httpUrl}`).join(' ')}`,
+      socks5Env: `export ${socksEnvVars.map((v) => `${v}=${socks5Url}`).join(' ')}`,
     },
   ]
 }

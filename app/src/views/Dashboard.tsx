@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Clipboard, Copy, Play, RefreshCw, Square } from 'lucide-react'
-import { Alert, Badge, Button, Card, Code, Group, Modal, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Button, Card, Code, Divider, Group, Modal, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import './dashboard.css'
 import { useStatusStore } from '@/stores/status'
 import { usePoolStore } from '@/stores/pool'
@@ -327,7 +327,7 @@ export default function Dashboard() {
         size="lg"
       >
         <Text size="sm" c="dimmed" mb="md">
-          网关同时提供 HTTP 与 SOCKS5 两个出口：HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口，ALL_PROXY 走 SOCKS5 出口。选择你的平台复制对应命令。
+          网关同时提供 HTTP 与 SOCKS5 两个出口，可分别复制对应命令：HTTP 命令设置 HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口；SOCKS5 命令设置 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 全部走 SOCKS5 出口（SOCKS5 同样能处理 HTTP 请求）。选择你的平台复制对应命令。
         </Text>
         <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List>
@@ -340,21 +340,49 @@ export default function Dashboard() {
             const tabKey = set.platform === 'win32' ? (set.label.includes('CMD') ? 'win32-cmd' : 'win32-powershell') : 'darwin'
             return (
               <Tabs.Panel key={tabKey} value={tabKey} pt="md">
-                <Text size="sm" fw={600} mb={4}>设置环境变量</Text>
-                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {set.env}
-                </Code>
-                <Group justify="flex-end" mt={4}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color={copiedCmdKey === `${tabKey}-env` ? 'green' : 'blue'}
-                    leftSection={copiedCmdKey === `${tabKey}-env` ? <Check size={14} /> : <Copy size={14} />}
-                    onClick={() => copyCommand(`${tabKey}-env`, set.env)}
-                  >
-                    {copiedCmdKey === `${tabKey}-env` ? '已复制' : '复制'}
-                  </Button>
-                </Group>
+                <Stack gap="md">
+                  <div>
+                    <Group justify="space-between" align="center" mb={4}>
+                      <Text size="sm" fw={600}>HTTP 代理命令</Text>
+                      <Badge color="blue" variant="light" size="xs">HTTP_PROXY / HTTPS_PROXY</Badge>
+                    </Group>
+                    <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {set.httpEnv}
+                    </Code>
+                    <Group justify="flex-end" mt={4}>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color={copiedCmdKey === `${tabKey}-http` ? 'green' : 'blue'}
+                        leftSection={copiedCmdKey === `${tabKey}-http` ? <Check size={14} /> : <Copy size={14} />}
+                        onClick={() => copyCommand(`${tabKey}-http`, set.httpEnv)}
+                      >
+                        {copiedCmdKey === `${tabKey}-http` ? '已复制' : '复制 HTTP 命令'}
+                      </Button>
+                    </Group>
+                  </div>
+                  <Divider />
+                  <div>
+                    <Group justify="space-between" align="center" mb={4}>
+                      <Text size="sm" fw={600}>SOCKS5 代理命令</Text>
+                      <Badge color="grape" variant="light" size="xs">HTTP_PROXY / HTTPS_PROXY / ALL_PROXY</Badge>
+                    </Group>
+                    <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {set.socks5Env}
+                    </Code>
+                    <Group justify="flex-end" mt={4}>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color={copiedCmdKey === `${tabKey}-socks5` ? 'green' : 'blue'}
+                        leftSection={copiedCmdKey === `${tabKey}-socks5` ? <Check size={14} /> : <Copy size={14} />}
+                        onClick={() => copyCommand(`${tabKey}-socks5`, set.socks5Env)}
+                      >
+                        {copiedCmdKey === `${tabKey}-socks5` ? '已复制' : '复制 SOCKS5 命令'}
+                      </Button>
+                    </Group>
+                  </div>
+                </Stack>
               </Tabs.Panel>
             )
           })}
