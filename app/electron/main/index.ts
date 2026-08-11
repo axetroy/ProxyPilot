@@ -137,11 +137,21 @@ async function waitForCore(timeoutMs = 20000): Promise<void> {
   )
 }
 
+function resolveIconPath(): string {
+  // 打包后：<resources>/icon.png（extraResources 复制到 resources/）
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.png')
+  }
+  // 开发模式：<app>/build/icon.png（__dirname = app/dist-electron/main）
+  return path.join(__dirname, '..', '..', 'build', 'icon.png')
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'ProxyPilot',
+    icon: resolveIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

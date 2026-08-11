@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角渐变背景 -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- 纸飞机主体（机头朝右，代表代理转发/领航） -->
+  <path d="M96 256 L416 128 L320 416 L256 288 Z" fill="#ffffff"/>
+  <!-- 纸飞机折痕 -->
+  <path d="M96 256 L256 288 L416 128" fill="none" stroke="#1d4ed8" stroke-width="14" stroke-linejoin="round" stroke-linecap="round" opacity="0.3"/>
+</svg>

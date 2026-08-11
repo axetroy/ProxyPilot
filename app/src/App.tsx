@@ -56,7 +56,10 @@ function App() {
     <Box style={{ display: 'flex', height: '100vh', background: 'var(--mantine-color-body)' }}>
       <Box style={{ width: 220, borderRight: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}>
         <Box style={{ height: 72, display: 'flex', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-          <Text fw={700} size="lg">ProxyPilot</Text>
+          <Group gap="xs" wrap="nowrap">
+            <img src="./icon.png" alt="ProxyPilot" width={28} height={28} style={{ borderRadius: 6 }} />
+            <Text fw={700} size="lg">ProxyPilot</Text>
+          </Group>
         </Box>
         <Stack gap={6} p="sm">
           {navItems.map((item) => (

@@ -28,8 +28,14 @@ module.exports = () => {
         from: path.join(__dirname, '..', 'proxy-core', coreBin),
         to: coreBin,
       },
+      // 应用图标，供主进程 BrowserWindow 使用（打包后位于 resources/icon.png）
+      {
+        from: path.join(__dirname, 'build', 'icon.png'),
+        to: 'icon.png',
+      },
     ],
     win: {
+      icon: 'build/icon.ico',
       target: [{ target: 'nsis', arch: ['x64'] }],
     },
     nsis: {
@@ -39,10 +45,12 @@ module.exports = () => {
       createStartMenuShortcut: true,
     },
     linux: {
+      icon: 'build/icon.png',
       target: [{ target: 'AppImage', arch: ['x64', 'arm64'] }],
       category: 'Network',
     },
     mac: {
+      icon: 'build/icon.png',
       target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
       category: 'public.app-category.utilities',
       // 未配置 Apple Developer 证书：明确不签名（identity: null），
