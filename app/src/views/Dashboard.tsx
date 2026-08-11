@@ -73,7 +73,7 @@ export default function Dashboard() {
   const gatewaySets = useMemo<GatewayCommandSet[]>(() => {
     const http = formatProxyValue(status.httpProxyBind, 'http')
     const socks5 = formatProxyValue(status.socks5ProxyBind, 'socks5')
-    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7892' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7892' : socks5)
+    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7892' : http, socks5 === '未启动' ? 'socks5h://127.0.0.1:7892' : socks5)
   }, [status.httpProxyBind, status.socks5ProxyBind])
 
   const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
@@ -131,7 +131,12 @@ export default function Dashboard() {
     if (key === 'http') {
       return trimmed.includes('://') ? trimmed : `http://${trimmed}`
     }
-    return trimmed.includes('://') ? trimmed : `socks5://${trimmed}`
+    // SOCKS5 统一使用 socks5h 协议：让代理解析目标域名，
+    // 避免客户端本地解析出 IPv6 地址导致上游节点连接失败
+    if (trimmed.includes('://')) {
+      return trimmed.replace(/^socks5:\/\//, 'socks5h://')
+    }
+    return `socks5h://${trimmed}`
   }
 
   async function onCopy(value: string, key: 'http' | 'socks5') {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,15 +35,30 @@ type Gateway struct {
 	currentNode       *model.ProxyNode
 	currentHTTPNode   *model.ProxyNode
 	currentSOCKS5Node *model.ProxyNode
+
+	// ipv6Cache 缓存 IPv6 字面量地址的 PTR 反查结果（空串表示反查失败），
+	// 避免每次 SOCKS5 请求都阻塞在 DNS 反查上。
+	ipv6Mu    sync.Mutex
+	ipv6Cache map[string]ipv6CacheEntry
 }
+
+// ipv6CacheEntry 记录某个 IPv6 地址的 PTR 反查结果与缓存时间。
+type ipv6CacheEntry struct {
+	domain string
+	at     time.Time
+}
+
+// ipv6CacheTTL 是 PTR 反查结果的缓存有效期。
+const ipv6CacheTTL = 10 * time.Minute
 
 func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, addr string) *Gateway {
 	return &Gateway{
-		pool:     pool,
-		selector: selector,
-		bus:      bus,
-		addr:     addr,
-		limitCtx: 4,
+		pool:      pool,
+		selector:  selector,
+		bus:       bus,
+		addr:      addr,
+		limitCtx:  4,
+		ipv6Cache: make(map[string]ipv6CacheEntry),
 	}
 }
 
@@ -192,6 +208,22 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 	// 从 target（host:port）中提取纯域名，用于域名粘性选择。
 	host := targetHost(target)
 
+	// 如果目标是 IPv6 字面量，尝试 PTR 反查域名，用域名连接。
+	// 部分上游节点只支持 IPv4 目标地址，客户端本地解析出 IPv6 后
+	// 直接连接会失败；反查域名后让节点重新解析（通常得到 IPv4）。
+	// 反查失败时保持原样，按 IPv6 目标直连。结果带缓存避免重复阻塞。
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		if domain := g.ipv6Domain(ip.String()); domain != "" {
+			if _, port, err := net.SplitHostPort(target); err == nil {
+				host = domain
+				target = net.JoinHostPort(domain, port)
+				if g.bus != nil {
+					g.bus.Debug(fmt.Sprintf("ipv6 target %s resolved to domain %s via PTR", ip, domain))
+				}
+			}
+		}
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < g.limitCtx; attempt++ {
 		node := g.selector.NextForHost(protocol, host)
@@ -236,4 +268,29 @@ func targetHost(target string) string {
 		return host
 	}
 	return target
+}
+
+// ipv6Domain 对 IPv6 字面量地址做 PTR 反查，返回对应的域名（去掉末尾点）。
+// 结果缓存 ipv6CacheTTL 时长，反查失败缓存空串，避免重复阻塞在 DNS 上。
+func (g *Gateway) ipv6Domain(ip string) string {
+	g.ipv6Mu.Lock()
+	if e, ok := g.ipv6Cache[ip]; ok && time.Since(e.at) < ipv6CacheTTL {
+		g.ipv6Mu.Unlock()
+		return e.domain
+	}
+	g.ipv6Mu.Unlock()
+
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	names, err := net.DefaultResolver.LookupAddr(lookupCtx, ip)
+	cancel()
+
+	domain := ""
+	if err == nil && len(names) > 0 {
+		domain = strings.TrimSuffix(names[0], ".")
+	}
+
+	g.ipv6Mu.Lock()
+	g.ipv6Cache[ip] = ipv6CacheEntry{domain: domain, at: time.Now()}
+	g.ipv6Mu.Unlock()
+	return domain
 }
