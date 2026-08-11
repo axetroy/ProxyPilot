@@ -347,7 +347,7 @@ export default function Dashboard() {
         size="lg"
       >
         <Text size="sm" c="dimmed" mb="md">
-          网关同时提供 HTTP 与 SOCKS5 两个出口：http_proxy/https_proxy 走 HTTP 出口，all_proxy 走 SOCKS5 出口。选择你的平台复制对应命令。
+          网关同时提供 HTTP 与 SOCKS5 两个出口：HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口，ALL_PROXY 走 SOCKS5 出口。选择你的平台复制对应命令。
         </Text>
         <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List>
@@ -373,38 +373,6 @@ export default function Dashboard() {
                     onClick={() => copyCommand(`${tabKey}-env`, set.env)}
                   >
                     {copiedCmdKey === `${tabKey}-env` ? '已复制' : '复制'}
-                  </Button>
-                </Group>
-
-                <Text size="sm" fw={600} mb={4} mt="md">通过 HTTP 出口测试</Text>
-                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {set.curlHttp}
-                </Code>
-                <Group justify="flex-end" mt={4}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color={copiedCmdKey === `${tabKey}-curl-http` ? 'green' : 'blue'}
-                    leftSection={copiedCmdKey === `${tabKey}-curl-http` ? <Check size={14} /> : <Copy size={14} />}
-                    onClick={() => copyCommand(`${tabKey}-curl-http`, set.curlHttp)}
-                  >
-                    {copiedCmdKey === `${tabKey}-curl-http` ? '已复制' : '复制'}
-                  </Button>
-                </Group>
-
-                <Text size="sm" fw={600} mb={4} mt="md">通过 SOCKS5 出口测试</Text>
-                <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {set.curlSocks5}
-                </Code>
-                <Group justify="flex-end" mt={4}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color={copiedCmdKey === `${tabKey}-curl-socks5` ? 'green' : 'blue'}
-                    leftSection={copiedCmdKey === `${tabKey}-curl-socks5` ? <Check size={14} /> : <Copy size={14} />}
-                    onClick={() => copyCommand(`${tabKey}-curl-socks5`, set.curlSocks5)}
-                  >
-                    {copiedCmdKey === `${tabKey}-curl-socks5` ? '已复制' : '复制'}
                   </Button>
                 </Group>
               </Tabs.Panel>

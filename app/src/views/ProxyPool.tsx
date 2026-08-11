@@ -289,20 +289,6 @@ export default function ProxyPool() {
                         </Group>
                         <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cs.env}</Code>
                       </div>
-                      <div>
-                        <Group justify="space-between" mb={4}>
-                          <Text size="sm" fw={600}>curl 测试</Text>
-                          <Button
-                            size="xs"
-                            variant="light"
-                            leftSection={copiedKey === `${tabValue}-curl` ? <Check size={14} /> : <Copy size={14} />}
-                            onClick={() => copyCommand(`${tabValue}-curl`, cs.curl)}
-                          >
-                            {copiedKey === `${tabValue}-curl` ? '已复制' : '复制'}
-                          </Button>
-                        </Group>
-                        <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{cs.curl}</Code>
-                      </div>
                     </Stack>
                   </Tabs.Panel>
                 )
