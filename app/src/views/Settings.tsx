@@ -32,15 +32,22 @@ export default function Settings() {
   const [platform, setPlatform] = useState<Platform>('linux')
 
   const load = useCallback(async () => {
-    try {
-      const res = await listSettings()
-      if (res.code === 0 && res.data) {
-        setSettings(res.data)
-        setDraft(Object.fromEntries(res.data.map((s) => [s.key, s.value])))
+    const maxRetries = 10;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const res = await listSettings()
+        if (res.code === 0 && res.data) {
+          setSettings(res.data)
+          setDraft(Object.fromEntries(res.data.map((s) => [s.key, s.value])))
+          return
+        }
+      } catch {
+        // ignore, retry
       }
-    } catch {
-      setNotice({ type: 'error', text: '加载配置失败' })
+      // wait a bit before retry
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
+    setNotice({ type: 'error', text: '加载配置失败' })
   }, [])
 
   useEffect(() => {

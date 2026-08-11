@@ -3,6 +3,9 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
 
+// 禁用��件加速以防止 GPU �����（Windows ��见问题）
+app.disableHardwareAcceleration()
+
 const API_BASE = 'http://127.0.0.1:17890'
 
 let core: ChildProcess | null = null
