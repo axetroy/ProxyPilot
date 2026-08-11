@@ -275,3 +275,59 @@ func TestRunStops(t *testing.T) {
 	m.Stop()
 	_ = timerCount
 }
+
+func TestList(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.AddSubscription("sub-a", "https://example.com/a", 3600); err != nil {
+		t.Fatalf("add a: %v", err)
+	}
+	if _, err := m.AddSubscription("sub-b", "https://example.com/b", 3600); err != nil {
+		t.Fatalf("add b: %v", err)
+	}
+	subs, err := m.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(subs) != 2 {
+		t.Errorf("subs = %d, want 2", len(subs))
+	}
+}
+
+// scheduleInContext 定时刷新：短 interval 触发 refresh 并重新调度；取消后停止。
+func TestScheduleInContext(t *testing.T) {
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.2.3.4:8080"))
+	}))
+	defer src.Close()
+
+	m, st, sink := newTestManager(t)
+	sub := &model.Subscription{ID: 1, Name: "sub", URL: src.URL, Interval: 1, Enabled: true}
+	if err := st.UpsertSubscription(sub); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.scheduleInContext(ctx, sub)
+
+	// 等待定时刷新触发（interval=1s，最多等 3s）
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if sink.added > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if sink.added == 0 {
+		t.Fatal("scheduled refresh did not add nodes")
+	}
+
+	// 取消后：当前排定的 timer 可能再触发一次，但之后必须停止
+	cancel()
+	time.Sleep(2500 * time.Millisecond)
+	afterCancel := sink.added
+	time.Sleep(1500 * time.Millisecond)
+	if sink.added != afterCancel {
+		t.Errorf("refresh continued after cancel: added %d -> %d", afterCancel, sink.added)
+	}
+}

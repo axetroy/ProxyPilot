@@ -256,3 +256,35 @@ func TestLoadOverridesSkipsInvalidPersisted(t *testing.T) {
 		t.Errorf("invalid persisted value should be skipped, got %q", c.CheckTarget)
 	}
 }
+
+func TestSettingValue(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{KeyProxyPort, "7892"},
+		{KeyCheckTarget, "https://www.apple.com/library/test/success.html"},
+		{KeyCheckTimeout, "10s"},
+		{KeyCheckConcurr, "32"},
+		{KeyRefreshPeriod, "15m0s"},
+	}
+	for _, tc := range cases {
+		got, ok := c.SettingValue(tc.key)
+		if !ok {
+			t.Errorf("SettingValue(%q) ok = false, want true", tc.key)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("SettingValue(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+
+	// 未知 key
+	if _, ok := c.SettingValue("unknown_key"); ok {
+		t.Error("SettingValue(unknown) ok = true, want false")
+	}
+}

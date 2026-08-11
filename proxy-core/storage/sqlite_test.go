@@ -509,3 +509,140 @@ func TestSettingsGetSet(t *testing.T) {
 		t.Errorf("GetSetting after update = %q, want 127.0.0.1:8000", v)
 	}
 }
+
+// ---------- 订阅-节点关联 ----------
+
+// saveSub 创建订阅并返回。
+func saveSub(t *testing.T, st *Store, name string) *model.Subscription {
+	t.Helper()
+	sub := &model.Subscription{Name: name, URL: "https://example.com/" + name, Enabled: true, CreatedAt: time.Now().UTC()}
+	if err := st.UpsertSubscription(sub); err != nil {
+		t.Fatalf("upsert subscription: %v", err)
+	}
+	return sub
+}
+
+// saveNode 创建节点并返回。
+func saveNode(t *testing.T, st *Store, host string, port int) *model.ProxyNode {
+	t.Helper()
+	n := baseNode(host, port, model.ProtocolHTTP)
+	if added, err := st.SaveNode(n); err != nil {
+		t.Fatalf("save node: %v", err)
+	} else if !added {
+		t.Fatal("expected node to be added")
+	}
+	return n
+}
+
+func TestListNodesBySubscription(t *testing.T) {
+	st := newTestStore(t)
+	sub := saveSub(t, st, "sub-a")
+	other := saveSub(t, st, "sub-b")
+
+	n1 := saveNode(t, st, "1.1.1.1", 8080)
+	n2 := saveNode(t, st, "2.2.2.2", 8081)
+	n3 := saveNode(t, st, "3.3.3.3", 8082)
+
+	if err := st.AttachNodeToSubscription(n1.ID, sub.ID); err != nil {
+		t.Fatalf("attach n1: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n2.ID, sub.ID); err != nil {
+		t.Fatalf("attach n2: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n3.ID, other.ID); err != nil {
+		t.Fatalf("attach n3: %v", err)
+	}
+
+	nodes, err := st.ListNodesBySubscription(sub.ID)
+	if err != nil {
+		t.Fatalf("ListNodesBySubscription: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(nodes))
+	}
+	hosts := map[string]bool{}
+	for _, n := range nodes {
+		hosts[n.Host] = true
+	}
+	if !hosts["1.1.1.1"] || !hosts["2.2.2.2"] {
+		t.Errorf("hosts = %v, want 1.1.1.1 and 2.2.2.2", hosts)
+	}
+
+	// 无关联的订阅返回空
+	empty, err := st.ListNodesBySubscription(99999)
+	if err != nil {
+		t.Fatalf("ListNodesBySubscription empty: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty nodes = %d, want 0", len(empty))
+	}
+}
+
+func TestDetachNodeFromSubscription(t *testing.T) {
+	st := newTestStore(t)
+	sub := saveSub(t, st, "sub-a")
+	n1 := saveNode(t, st, "1.1.1.1", 8080)
+
+	if err := st.AttachNodeToSubscription(n1.ID, sub.ID); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if err := st.DetachNodeFromSubscription(n1.ID, sub.ID); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+
+	nodes, err := st.ListNodesBySubscription(sub.ID)
+	if err != nil {
+		t.Fatalf("ListNodesBySubscription: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("nodes after detach = %d, want 0", len(nodes))
+	}
+	// 节点本身仍存在
+	count, err := st.CountNodes()
+	if err != nil {
+		t.Fatalf("CountNodes: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("CountNodes = %d, want 1 (node kept)", count)
+	}
+}
+
+func TestCountSubscriptionRefs(t *testing.T) {
+	st := newTestStore(t)
+	subA := saveSub(t, st, "sub-a")
+	subB := saveSub(t, st, "sub-b")
+	n1 := saveNode(t, st, "1.1.1.1", 8080)
+
+	// 未关联时 0
+	c, err := st.CountSubscriptionRefs(n1.ID)
+	if err != nil {
+		t.Fatalf("CountSubscriptionRefs: %v", err)
+	}
+	if c != 0 {
+		t.Errorf("refs = %d, want 0", c)
+	}
+
+	// 关联两个订阅后 2
+	if err := st.AttachNodeToSubscription(n1.ID, subA.ID); err != nil {
+		t.Fatalf("attach A: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n1.ID, subB.ID); err != nil {
+		t.Fatalf("attach B: %v", err)
+	}
+	c, err = st.CountSubscriptionRefs(n1.ID)
+	if err != nil {
+		t.Fatalf("CountSubscriptionRefs: %v", err)
+	}
+	if c != 2 {
+		t.Errorf("refs = %d, want 2", c)
+	}
+
+	// 解除一个后 1
+	if err := st.DetachNodeFromSubscription(n1.ID, subA.ID); err != nil {
+		t.Fatalf("detach A: %v", err)
+	}
+	c, _ = st.CountSubscriptionRefs(n1.ID)
+	if c != 1 {
+		t.Errorf("refs after detach = %d, want 1", c)
+	}
+}

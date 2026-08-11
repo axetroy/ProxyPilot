@@ -409,3 +409,40 @@ func TestRefreshLoopStopsOnCancel(t *testing.T) {
 		t.Fatal("RefreshLoop did not stop after cancel")
 	}
 }
+
+// SetChecker 热更新检测器：替换后 CheckNode 使用新检测器。
+func TestSetChecker(t *testing.T) {
+	m, st := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{newNode("1.2.3.4", 8080, model.ProtocolHTTP)})
+	nodes := m.List()
+	id := nodes[0].ID
+
+	// 默认 checker 返回 OK
+	if r := m.CheckNode(nodes[0]); !r.OK {
+		t.Errorf("default checker result OK = %v, want true", r.OK)
+	}
+
+	// 替换为总是失败的 checker
+	m.SetChecker(&mockChecker{fail: map[int64]bool{id: true}})
+	if r := m.CheckNode(m.List()[0]); r.OK {
+		t.Errorf("after SetChecker result OK = %v, want false", r.OK)
+	}
+	_ = st
+}
+
+// SetConcurrency 热更新并发数：非法值回退为 1。
+func TestSetConcurrency(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.SetConcurrency(8)
+	if got := m.concur.Load(); got != 8 {
+		t.Errorf("concurrency = %d, want 8", got)
+	}
+	m.SetConcurrency(0)
+	if got := m.concur.Load(); got != 1 {
+		t.Errorf("concurrency after 0 = %d, want 1", got)
+	}
+	m.SetConcurrency(-3)
+	if got := m.concur.Load(); got != 1 {
+		t.Errorf("concurrency after negative = %d, want 1", got)
+	}
+}
