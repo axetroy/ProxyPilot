@@ -26,8 +26,8 @@ func TestNewDefaults(t *testing.T) {
 	if c.SOCKSProxyBind != "127.0.0.1:7893" {
 		t.Errorf("SOCKSProxyBind = %q, want 127.0.0.1:7893", c.SOCKSProxyBind)
 	}
-	if c.CheckTarget != "https://www.cloudflare.com/cdn-cgi/trace" {
-		t.Errorf("CheckTarget = %q, want default cloudflare trace target", c.CheckTarget)
+	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
+		t.Errorf("CheckTarget = %q, want default apple success target", c.CheckTarget)
 	}
 	if c.CheckTimeout != 10*time.Second {
 		t.Errorf("CheckTimeout = %v, want 10s", c.CheckTimeout)
@@ -225,7 +225,7 @@ func TestLoadOverridesFromStore(t *testing.T) {
 		t.Errorf("RefreshInterval after LoadOverrides = %v, want 30m", c.RefreshInterval)
 	}
 	// 未持久化的保持默认
-	if c.CheckTarget != "https://www.cloudflare.com/cdn-cgi/trace" {
+	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("CheckTarget should keep default, got %q", c.CheckTarget)
 	}
 }
@@ -246,7 +246,7 @@ func TestLoadOverridesSkipsInvalidPersisted(t *testing.T) {
 		t.Fatalf("SetSetting: %v", err)
 	}
 	c.LoadOverrides(st)
-	if c.CheckTarget != "https://www.cloudflare.com/cdn-cgi/trace" {
+	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("invalid persisted value should be skipped, got %q", c.CheckTarget)
 	}
 }

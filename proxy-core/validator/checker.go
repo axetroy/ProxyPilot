@@ -24,7 +24,7 @@ type Checker struct {
 
 func NewChecker(target string, timeout time.Duration) *Checker {
 	if target == "" {
-		target = "http://www.gstatic.com/generate_204"
+		target = "https://www.apple.com/library/test/success.html"
 	}
 	if timeout <= 0 {
 		timeout = 10 * time.Second

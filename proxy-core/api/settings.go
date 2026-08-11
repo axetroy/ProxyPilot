@@ -85,6 +85,9 @@ func (s *Services) updateSettings(c *gin.Context) {
 		case config.KeyHTTPBind, config.KeySOCKSBind:
 			if err := s.restartGatewayIfRunning(); err != nil {
 				s.Bus.Error("gateway restart failed: " + err.Error())
+				// Return error response to frontend so it can handle the failure properly
+				c.JSON(http.StatusBadRequest, fail(400, "网关重启失败: "+err.Error()))
+				return
 			}
 		}
 	}

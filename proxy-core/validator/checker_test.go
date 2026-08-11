@@ -10,7 +10,7 @@ import (
 
 func TestNewCheckerDefaults(t *testing.T) {
 	c := NewChecker("", 0)
-	if c.TestTarget() != "http://www.gstatic.com/generate_204" {
+	if c.TestTarget() != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("default target = %q", c.TestTarget())
 	}
 	if c.timeout != 10*time.Second {

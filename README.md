@@ -157,7 +157,7 @@ Electron 会自动 spawn Go 核心，并注入 token，加载界面后即可使�
 | `PROXYPILOT_HTTP_BIND` | `127.0.0.1:7892` | HTTP 代理监听地址（被占用时自动向后顺延） |
 | `PROXYPILOT_SOCKS5_BIND` | `127.0.0.1:7893` | SOCKS5 代理监听地址（被占用时自动向后顺延） |
 | `PROXYPILOT_TOKEN` | 随机生成 | Session token（不设则每次启动生成） |
-| `PROXYPILOT_CHECK_TARGET` | `http://www.gstatic.com/generate_204` | 节点检测目标 URL |
+| `PROXYPILOT_CHECK_TARGET` | `https://www.apple.com/library/test/success.html` | 节点检测目标 URL |
 | `PROXYPILOT_CHECK_TIMEOUT` | `10s` | 单节点检测超时 |
 | `PROXYPILOT_CHECK_CONCURRENCY` | `32` | 并发检测数 |
 | `PROXYPILOT_REFRESH_INTERVAL` | `15m` | 代理池自动检测周期 |

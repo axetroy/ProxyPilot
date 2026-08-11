@@ -42,7 +42,7 @@ func Settings() []SettingDef {
 	return []SettingDef{
 		{Key: KeyHTTPBind, Default: "127.0.0.1:7892", Desc: "HTTP 代理监听地址（被占用自动顺延）", Validate: validateHostPort},
 		{Key: KeySOCKSBind, Default: "127.0.0.1:7893", Desc: "SOCKS5 代理监听地址（被占用自动顺延）", Validate: validateHostPort},
-		{Key: KeyCheckTarget, Default: "https://www.cloudflare.com/cdn-cgi/trace", Desc: "节点检测目标 URL", Validate: validateURL},
+		{Key: KeyCheckTarget, Default: "https://www.apple.com/library/test/success.html", Desc: "节点检测目标 URL", Validate: validateURL},
 		{Key: KeyCheckTimeout, Default: "10s", Desc: "单节点检测超时（如 5s、500ms）", Validate: validateDuration},
 		{Key: KeyCheckConcurr, Default: "32", Desc: "并发检测节点数", Validate: validatePositiveInt},
 		{Key: KeyRefreshPeriod, Default: "15m", Desc: "代理池自动检测周期（如 30m、1h）", Validate: validateDuration},
@@ -96,7 +96,7 @@ func New() *Config {
 		DBPath:           "proxypilot.db",
 		HTTPProxyBind:    "127.0.0.1:7892",
 		SOCKSProxyBind:   "127.0.0.1:7893",
-		CheckTarget:      "https://www.cloudflare.com/cdn-cgi/trace",
+		CheckTarget:      "https://www.apple.com/library/test/success.html",
 		CheckTimeout:     10 * time.Second,
 		CheckConcurrency: 32,
 		RefreshInterval:  15 * time.Minute,

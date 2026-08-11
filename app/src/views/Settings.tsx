@@ -179,10 +179,15 @@ export default function Settings() {
                 s.key === 'http_proxy_bind' || s.key === 'socks5_proxy_bind' ? '若端口被占用会自动顺延，实际端口见上方「当前」地址' : undefined
               }
               value={draft[s.key] ?? ''}
-              onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.currentTarget.value }))}
+              onChange={(e) => {
+                // 必须在事件处理器内同步读取 value：
+                // setDraft 的函数更新器会在渲染阶段才执行，届时 e.currentTarget 已被 React 置为 null
+                const value = e.currentTarget.value
+                setDraft((d) => ({ ...d, [s.key]: value }))
+              }}
               rightSection={
                 draft[s.key] !== s.default ? (
-                  <Button size="compact-xs" variant="subtle" onClick={() => onReset(s.key, s.default)}>
+                  <Button size="xs" variant="subtle" onClick={() => onReset(s.key, s.default)}>
                     重置
                   </Button>
                 ) : undefined
