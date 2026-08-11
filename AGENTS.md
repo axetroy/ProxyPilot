@@ -135,13 +135,11 @@ app/                   # Electron UI
 - API 仅监听 `127.0.0.1:17890`，所有请求必须带 `X-Token` header
   （token 由 proxy-core 启动时随机生成并通过 stdout 输出给 Electron）。
 - 不要把 session token、订阅 URL 等敏感信息写进日志或提交到仓库。
-- 代理网关默认出口 `127.0.0.1:7892`（HTTP）/ `127.0.0.1:7893`（SOCKS5），
-  若被其他程序占用会自动向后顺延（保持相邻端口对），实际端口以 `/api/status` 返回值为准；
-  仅绑定本机，不要修改为对外暴露。
+- 代理网关默认出口 `127.0.0.1:7892`，HTTP 与 SOCKS5 共用同一端口（按连接首字节自动识别分流）。
+  端口被占用会自动向后顺延，实际端口以 `/api/status` 返回值为准；仅绑定本机，不要修改为对外暴露。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
-  `http_proxy_bind` / `socks5_proxy_bind` / `check_target` / `check_timeout` /
-  `check_concurrency` / `refresh_interval`；启动时 `config.LoadOverrides()` 从 DB 覆盖默认值，
-  环境变量优先级最高，其次 DB，最后默认值。
+  `proxy_port` / `check_target` / `check_timeout` / `check_concurrency` /
+  `refresh_interval`；启动时 `config.LoadOverrides()` 从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。
 
 ---
 

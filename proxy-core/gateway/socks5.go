@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -50,6 +51,12 @@ func (s *socksServer) Stop() {
 }
 
 func (s *socksServer) handleConn(conn net.Conn) {
+	s.handleConnWithReader(conn, bufio.NewReader(conn))
+}
+
+// handleConnWithReader 处理一条 SOCKS5 连接，握手数据从 br 读取。
+// 混合模式下由 mixedServer 传入已嗅探的 bufio.Reader，避免丢失首字节。
+func (s *socksServer) handleConnWithReader(conn net.Conn, br *bufio.Reader) {
 	defer func() { _ = conn.Close() }()
 
 	if s.g != nil && s.g.bus != nil {
@@ -57,7 +64,7 @@ func (s *socksServer) handleConn(conn net.Conn) {
 	}
 
 	buf := make([]byte, 256)
-	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+	if _, err := io.ReadFull(br, buf[:2]); err != nil {
 		return
 	}
 	if buf[0] != 0x05 {
@@ -65,7 +72,7 @@ func (s *socksServer) handleConn(conn net.Conn) {
 	}
 	methods := int(buf[1])
 	if methods > 0 {
-		if _, err := io.ReadFull(conn, buf[:methods]); err != nil {
+		if _, err := io.ReadFull(br, buf[:methods]); err != nil {
 			return
 		}
 	}
@@ -73,7 +80,7 @@ func (s *socksServer) handleConn(conn net.Conn) {
 		return
 	}
 
-	if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+	if _, err := io.ReadFull(br, buf[:4]); err != nil {
 		return
 	}
 	if buf[0] != 0x05 || buf[1] != 0x01 {
@@ -81,7 +88,7 @@ func (s *socksServer) handleConn(conn net.Conn) {
 		return
 	}
 
-	target, port, err := readTarget(conn, buf)
+	target, port, err := readTarget(br, buf)
 	if err != nil {
 		_ = writeReply(conn, 0x01)
 		return
@@ -120,28 +127,28 @@ func (s *socksServer) dialTarget(ctx context.Context, target string) (net.Conn, 
 	return net.Dial("tcp", target)
 }
 
-func readTarget(conn net.Conn, buf []byte) (string, int, error) {
+func readTarget(br *bufio.Reader, buf []byte) (string, int, error) {
 	atyp := buf[3]
 	var host string
 	var port int
 
 	switch atyp {
 	case 0x01:
-		if _, err := io.ReadFull(conn, buf[:4]); err != nil {
+		if _, err := io.ReadFull(br, buf[:4]); err != nil {
 			return "", 0, err
 		}
 		host = net.IP(buf[:4]).String()
 	case 0x03:
-		if _, err := io.ReadFull(conn, buf[:1]); err != nil {
+		if _, err := io.ReadFull(br, buf[:1]); err != nil {
 			return "", 0, err
 		}
 		length := int(buf[0])
-		if _, err := io.ReadFull(conn, buf[:length]); err != nil {
+		if _, err := io.ReadFull(br, buf[:length]); err != nil {
 			return "", 0, err
 		}
 		host = string(buf[:length])
 	case 0x04:
-		if _, err := io.ReadFull(conn, buf[:16]); err != nil {
+		if _, err := io.ReadFull(br, buf[:16]); err != nil {
 			return "", 0, err
 		}
 		host = net.IP(buf[:16]).String()
@@ -149,7 +156,7 @@ func readTarget(conn net.Conn, buf []byte) (string, int, error) {
 		return "", 0, fmt.Errorf("unsupported socks address type %d", atyp)
 	}
 
-	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+	if _, err := io.ReadFull(br, buf[:2]); err != nil {
 		return "", 0, err
 	}
 	port = int(buf[0])<<8 | int(buf[1])

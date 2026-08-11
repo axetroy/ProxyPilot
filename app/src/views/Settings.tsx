@@ -61,10 +61,9 @@ export default function Settings() {
   const fields = useMemo(
     () => [
       { label: '核心 API', value: 'http://127.0.0.1:17890' },
-      { label: 'HTTP 代理（当前）', value: status.httpProxyBind || '-' },
-      { label: 'SOCKS5 代理（当前）', value: status.socks5ProxyBind || '-' },
+      { label: '代理（HTTP / SOCKS5 共用，当前）', value: status.httpProxyBind || '-' },
     ],
-    [status.httpProxyBind, status.socks5ProxyBind],
+    [status.httpProxyBind],
   )
 
   async function onStart() {
@@ -176,7 +175,7 @@ export default function Settings() {
               key={s.key}
               label={s.desc}
               description={
-                s.key === 'http_proxy_bind' || s.key === 'socks5_proxy_bind' ? '若端口被占用会自动顺延，实际端口见上方「当前」地址' : undefined
+                s.key === 'proxy_port' ? '端口被占用会自动顺延，实际端口见上方「当前」地址；HTTP 与 SOCKS5 共用此端口' : undefined
               }
               value={draft[s.key] ?? ''}
               onChange={(e) => {

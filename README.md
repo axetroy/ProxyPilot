@@ -6,7 +6,7 @@
 HTTP / HTTPS / SOCKS5 代理出口。
 
 - **架构定位**：Electron 桌面端 + Golang 核心引擎
-- **核心出口**：`127.0.0.1:7892`（HTTP 代理）与 `127.0.0.1:7893`（SOCKS5）
+- **核心出口**：`127.0.0.1:7892`（HTTP 与 SOCKS5 默认共用同一端口，按首字节自动识别分流）
 - **设计文档**：见 [DESIGN.md](./DESIGN.md)
 
 ---
@@ -154,8 +154,7 @@ Electron 会自动 spawn Go 核心，并注入 token，加载界面后即可使�
 | --- | --- | --- |
 | `PROXYPILOT_API_BIND` | `127.0.0.1:17890` | API / WebSocket 监听地址（仅本机） |
 | `PROXYPILOT_DB_PATH` | `proxypilot.db` | SQLite 数据库文件路径 |
-| `PROXYPILOT_HTTP_BIND` | `127.0.0.1:7892` | HTTP 代理监听地址（被占用时自动向后顺延） |
-| `PROXYPILOT_SOCKS5_BIND` | `127.0.0.1:7893` | SOCKS5 代理监听地址（被占用时自动向后顺延） |
+| `PROXYPILOT_PROXY_PORT` | `7892` | 代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用时自动顺延） |
 | `PROXYPILOT_TOKEN` | 随机生成 | Session token（不设则每次启动生成） |
 | `PROXYPILOT_CHECK_TARGET` | `https://www.apple.com/library/test/success.html` | 节点检测目标 URL |
 | `PROXYPILOT_CHECK_TIMEOUT` | `10s` | 单节点检测超时 |
@@ -165,7 +164,7 @@ Electron 会自动 spawn Go 核心，并注入 token，加载界面后即可使�
 示例：
 
 ```bash
-PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_HTTP_BIND=127.0.0.1:8080 ./proxy-core.exe
+PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_PROXY_PORT=8080 ./proxy-core.exe
 ```
 
 ---
@@ -190,10 +189,10 @@ PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_HTTP_BIND=127.0.0.1:
 | POST | `/api/subscription` | 新增订阅（`{name, url, interval}`） |
 | DELETE | `/api/subscription/:id` | 删除订阅 |
 | POST | `/api/subscription/:id/refresh` | 立即刷新该订阅 |
-| POST | `/api/gateway/start` | 启动代理网关（HTTP 7892 / SOCKS5 7893） |
+| POST | `/api/gateway/start` | 启动代理网关（默认 HTTP+SOCKS5 共用 7892，端口被占用自动顺延） |
 | POST | `/api/gateway/stop` | 停止网关 |
-| GET | `/api/settings` | 获取可配置项（HTTP/SOCKS5 端口、检测目标、超时、并发、刷新周期） |
-| PUT | `/api/settings` | 更新配置（`{"check_timeout": "5s"}`），保存并立即生效，重启后仍保留 |
+| GET | `/api/settings` | 获取可配置项（代理端口、检测目标、超时、并发、刷新周期） |
+| PUT | `/api/settings` | 更新配置（`{"proxy_port": "8080"}`），保存并立即生效，重启后仍保留 |
 | GET | `/ws` | WebSocket 实时事件流 |
 
 ### 示例
@@ -259,13 +258,14 @@ Score = 40% × 成功率 + 30% × 延迟得分 + 20% × 稳定性 + 10% × 匿�
 
 ## 本地代理使用
 
-网关启动后，本机应用只需将代理指向本地端口。默认端口为 `7892`（HTTP）/ `7893`（SOCKS5），
-若默认端口被其他程序占用，网关会自动向后顺延寻找一对空闲端口（HTTP 与 SOCKS5 端口保持相邻），
-实际绑定的端口以界面「Dashboard」或 `/api/status` 返回的 `httpProxyBind` / `socks5ProxyBind` 为准：
+网关启动后，本机应用只需将代理指向本地端口。默认 HTTP 与 SOCKS5 共用同一端口 `7892`
+（两种协议通过连接首字节自动识别分流）；若在「设置」中将 SOCKS5 端口改为不同值，则分别监听两个端口。
+端口被其他程序占用时网关会自动向后顺延，实际绑定的端口以界面「Dashboard」或 `/api/status`
+返回的 `httpProxyBind` / `socks5ProxyBind` 为准：
 
 ```
 HTTP  →  127.0.0.1:7892
-SOCKS5 → 127.0.0.1:7893
+SOCKS5 → 127.0.0.1:7892（共用）
 ```
 
 - 浏览器/系统代理：指向 `127.0.0.1:7892`
@@ -273,7 +273,7 @@ SOCKS5 → 127.0.0.1:7893
 
 ```bash
 curl -x http://127.0.0.1:7892 https://ifconfig.me
-curl --socks5 127.0.0.1:7893 https://ifconfig.me
+curl --socks5 127.0.0.1:7892 https://ifconfig.me
 ```
 
 ---

@@ -37,7 +37,7 @@ func (s *Services) listSettings(c *gin.Context) {
 //   - check_target / check_timeout：重建检测器
 //   - check_concurrency：更新并发数
 //   - refresh_interval：更新自动检测周期
-//   - http_proxy_bind / socks5_proxy_bind：网关运行中时自动重启网关切换端口
+//   - proxy_port：网关运行中时自动重启网关切换端口
 func (s *Services) updateSettings(c *gin.Context) {
 	var updates map[string]string
 	if err := c.ShouldBindJSON(&updates); err != nil {
@@ -82,7 +82,7 @@ func (s *Services) updateSettings(c *gin.Context) {
 		case config.KeyRefreshPeriod:
 			s.Pool.SetRefreshInterval(s.Cfg.RefreshInterval)
 			s.Bus.Info("refresh interval updated")
-		case config.KeyHTTPBind, config.KeySOCKSBind:
+		case config.KeyProxyPort:
 			if err := s.restartGatewayIfRunning(); err != nil {
 				s.Bus.Error("gateway restart failed: " + err.Error())
 				// Return error response to frontend so it can handle the failure properly
@@ -105,11 +105,11 @@ func (s *Services) restartGatewayIfRunning() error {
 	if !s.Gateway.Running() {
 		return nil
 	}
-	s.Gateway.SetAddrs(s.Cfg.HTTPProxyBind, s.Cfg.SOCKSProxyBind)
+	s.Gateway.SetAddr(s.Cfg.ProxyAddr())
 	s.Gateway.Stop()
 	if err := s.Gateway.Start(); err != nil {
 		return err
 	}
-	s.Bus.Info("gateway restarted with new ports")
+	s.Bus.Info("gateway restarted with new port")
 	return nil
 }

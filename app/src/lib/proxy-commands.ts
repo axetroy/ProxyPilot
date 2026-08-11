@@ -51,7 +51,7 @@ export function buildCommands(n: ProxyNode): ProxyCommandSet[] {
  * 根据平台生成对应的网关使用命令。
  * 网关同时提供 HTTP 与 SOCKS5 两个出口：
  * - HTTP_PROXY/HTTPS_PROXY 指向 HTTP 出口（如 http://127.0.0.1:7892）
- * - ALL_PROXY 指向 SOCKS5 出口（如 socks5://127.0.0.1:7893）
+ * - ALL_PROXY 指向 SOCKS5 出口（如 socks5://127.0.0.1:7892，与 HTTP 共用）
  */
 export function buildGatewayCommands(httpUrl: string, socks5Url: string): GatewayCommandSet[] {
   const httpEnv = ['HTTP_PROXY', 'HTTPS_PROXY']

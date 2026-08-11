@@ -23,10 +23,16 @@ func (h *httpServer) Start() error {
 	if err != nil {
 		return err
 	}
+	h.serveOn(ln)
+	return nil
+}
+
+// serveOn 在外部提供的监听器上运行 HTTP 代理服务。
+// 混合模式（HTTP+SOCKS5 共用端口）下由 mixedServer 传入 channelListener。
+func (h *httpServer) serveOn(ln net.Listener) {
 	h.ln = ln
 	h.srv = &http.Server{Handler: h}
 	go func() { _ = h.srv.Serve(ln) }()
-	return nil
 }
 
 func (h *httpServer) Stop() {

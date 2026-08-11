@@ -43,7 +43,7 @@ func main() {
 
 	col := collector.NewManager(st, busc, poolMgr, cfg.CheckTimeout)
 	sel := scheduler.NewSelector(poolMgr)
-	gw := gateway.NewGateway(poolMgr, sel, busc, cfg.HTTPProxyBind, cfg.SOCKSProxyBind)
+	gw := gateway.NewGateway(poolMgr, sel, busc, cfg.ProxyAddr())
 
 	services := &api.Services{
 		Cfg:       cfg,

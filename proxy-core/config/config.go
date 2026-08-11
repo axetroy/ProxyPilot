@@ -20,12 +20,15 @@ var Version = "0.1.4"
 // 持久化配置项的 key。
 // APIBind / DBPath / SessionToken 属于启动期固定配置，不支持通过界面修改。
 const (
-	KeyHTTPBind      = "http_proxy_bind"
-	KeySOCKSBind     = "socks5_proxy_bind"
+	KeyProxyPort     = "proxy_port"
 	KeyCheckTarget   = "check_target"
 	KeyCheckTimeout  = "check_timeout"
 	KeyCheckConcurr  = "check_concurrency"
 	KeyRefreshPeriod = "refresh_interval"
+
+	// 以下为旧版配置 key，仅用于数据迁移（HTTP/SOCKS5 双端口时期）。
+	KeyHTTPBind  = "http_proxy_bind"
+	KeySOCKSBind = "socks5_proxy_bind"
 )
 
 // SettingDef 描述一个可在前端配置的项。
@@ -40,13 +43,21 @@ type SettingDef struct {
 // Settings 返回所有可在前端配置的项定义。
 func Settings() []SettingDef {
 	return []SettingDef{
-		{Key: KeyHTTPBind, Default: "127.0.0.1:7892", Desc: "HTTP 代理监听地址（被占用自动顺延）", Validate: validateHostPort},
-		{Key: KeySOCKSBind, Default: "127.0.0.1:7893", Desc: "SOCKS5 代理监听地址（被占用自动顺延）", Validate: validateHostPort},
+		{Key: KeyProxyPort, Default: "7892", Desc: "代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用自动顺延）", Validate: validatePort},
 		{Key: KeyCheckTarget, Default: "https://www.apple.com/library/test/success.html", Desc: "节点检测目标 URL", Validate: validateURL},
 		{Key: KeyCheckTimeout, Default: "10s", Desc: "单节点检测超时（如 5s、500ms）", Validate: validateDuration},
 		{Key: KeyCheckConcurr, Default: "32", Desc: "并发检测节点数", Validate: validatePositiveInt},
 		{Key: KeyRefreshPeriod, Default: "15m", Desc: "代理池自动检测周期（如 30m、1h）", Validate: validateDuration},
 	}
+}
+
+// validatePort 校验纯端口号（1-65535）。
+func validatePort(v string) error {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("端口必须是 1-65535 之间的整数")
+	}
+	return nil
 }
 
 func validateHostPort(v string) error {
@@ -81,8 +92,8 @@ func validatePositiveInt(v string) error {
 type Config struct {
 	APIBind          string
 	DBPath           string
-	HTTPProxyBind    string
-	SOCKSProxyBind   string
+	ProxyHost        string // 代理监听 host，固定仅本机，不允许修改
+	ProxyPort        int    // 代理监听端口（HTTP 与 SOCKS5 共用）
 	SessionToken     string
 	CheckTarget      string
 	CheckTimeout     time.Duration
@@ -94,8 +105,8 @@ func New() *Config {
 	c := &Config{
 		APIBind:          "127.0.0.1:17890",
 		DBPath:           "proxypilot.db",
-		HTTPProxyBind:    "127.0.0.1:7892",
-		SOCKSProxyBind:   "127.0.0.1:7893",
+		ProxyHost:        "127.0.0.1",
+		ProxyPort:        7892,
 		CheckTarget:      "https://www.apple.com/library/test/success.html",
 		CheckTimeout:     10 * time.Second,
 		CheckConcurrency: 32,
@@ -106,6 +117,11 @@ func New() *Config {
 	return c
 }
 
+// ProxyAddr 返回代理网关的完整监听地址 host:port。
+func (c *Config) ProxyAddr() string {
+	return net.JoinHostPort(c.ProxyHost, strconv.Itoa(c.ProxyPort))
+}
+
 func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_API_BIND"); v != "" {
 		c.APIBind = v
@@ -113,11 +129,19 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_DB_PATH"); v != "" {
 		c.DBPath = v
 	}
-	if v := os.Getenv("PROXYPILOT_HTTP_BIND"); v != "" {
-		c.HTTPProxyBind = v
+	if v := os.Getenv("PROXYPILOT_PROXY_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+			c.ProxyPort = n
+		}
 	}
-	if v := os.Getenv("PROXYPILOT_SOCKS5_BIND"); v != "" {
-		c.SOCKSProxyBind = v
+	// 兼容旧环境变量：仅取其端口（host 固定本机）
+	if v := os.Getenv("PROXYPILOT_HTTP_BIND"); v != "" && os.Getenv("PROXYPILOT_PROXY_PORT") == "" {
+		if host, port, err := net.SplitHostPort(v); err == nil {
+			if n, err := strconv.Atoi(port); err == nil && n > 0 && n <= 65535 {
+				c.ProxyHost = host
+				c.ProxyPort = n
+			}
+		}
 	}
 	if v := os.Getenv("PROXYPILOT_TOKEN"); v != "" {
 		c.SessionToken = v
@@ -154,10 +178,12 @@ func generatedSessionToken() string {
 // 以及该 key 是否属于可配置项。
 func (c *Config) settingKey(key string) (func(string), bool) {
 	switch key {
-	case KeyHTTPBind:
-		return func(v string) { c.HTTPProxyBind = v }, true
-	case KeySOCKSBind:
-		return func(v string) { c.SOCKSProxyBind = v }, true
+	case KeyProxyPort:
+		return func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+				c.ProxyPort = n
+			}
+		}, true
 	case KeyCheckTarget:
 		return func(v string) { c.CheckTarget = v }, true
 	case KeyCheckTimeout:
@@ -173,6 +199,8 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 
 // LoadOverrides 从持久化存储中加载用户在前端修改过的配置，覆盖当前值。
 // 调用时机：main 启动时、构造各组件之前。
+// 兼容旧版本：若 DB 中只有旧的 http_proxy_bind / socks5_proxy_bind（双端口时期），
+// 则取其端口迁移为 proxy_port 并写回 DB。
 func (c *Config) LoadOverrides(st *storage.Store) {
 	for _, def := range Settings() {
 		v, err := st.GetSetting(def.Key)
@@ -188,15 +216,38 @@ func (c *Config) LoadOverrides(st *storage.Store) {
 			apply(v)
 		}
 	}
+	c.migrateLegacyPort(st)
+}
+
+// migrateLegacyPort 旧版本双端口配置迁移：
+// DB 中没有 proxy_port，但存在旧 http_proxy_bind / socks5_proxy_bind 时，
+// 以 http 的端口为准写入 proxy_port（socks5 与 http 端口不同则仅提示保留 http 端口）。
+func (c *Config) migrateLegacyPort(st *storage.Store) {
+	if cur, _ := st.GetSetting(KeyProxyPort); cur != "" {
+		return // 新配置已存在，无需迁移
+	}
+	httpBind, _ := st.GetSetting(KeyHTTPBind)
+	if httpBind == "" {
+		return
+	}
+	host, port, err := net.SplitHostPort(httpBind)
+	if err != nil {
+		return
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return
+	}
+	c.ProxyHost = host
+	c.ProxyPort = n
+	_ = st.SetSetting(KeyProxyPort, strconv.Itoa(n)) // 写回，供前端展示
 }
 
 // SettingValue 返回指定 key 的当前值（作为字符串）。
 func (c *Config) SettingValue(key string) (string, bool) {
 	switch key {
-	case KeyHTTPBind:
-		return c.HTTPProxyBind, true
-	case KeySOCKSBind:
-		return c.SOCKSProxyBind, true
+	case KeyProxyPort:
+		return strconv.Itoa(c.ProxyPort), true
 	case KeyCheckTarget:
 		return c.CheckTarget, true
 	case KeyCheckTimeout:

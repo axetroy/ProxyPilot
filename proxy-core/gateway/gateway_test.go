@@ -16,37 +16,28 @@ func TestStartPortAutoShift(t *testing.T) {
 	defer func() { _ = blocker.Close() }()
 
 	blockedPort := blocker.Addr().(*net.TCPAddr).Port
-	baseHTTP := fmt.Sprintf("127.0.0.1:%d", blockedPort)
-	baseSOCKS := fmt.Sprintf("127.0.0.1:%d", blockedPort+1)
+	base := fmt.Sprintf("127.0.0.1:%d", blockedPort)
 
-	g := NewGateway(nil, nil, nil, baseHTTP, baseSOCKS)
+	g := NewGateway(nil, nil, nil, base)
 	if err := g.Start(); err != nil {
 		t.Fatalf("Start with blocked port: %v", err)
 	}
 	defer g.Stop()
 
-	httpAddr := g.HTTPAddr()
-	socksAddr := g.SOCKSAddr()
-	if httpAddr == baseHTTP {
-		t.Fatalf("expected port shift, HTTP still on blocked port %s", httpAddr)
+	if g.HTTPAddr() == base {
+		t.Fatalf("expected port shift, still on blocked port %s", g.HTTPAddr())
 	}
-	// 顺延后 HTTP 端口应为 blockedPort+1，SOCKS5 为 blockedPort+2（相邻偏移保持）
-	wantHTTP := fmt.Sprintf("127.0.0.1:%d", blockedPort+1)
-	wantSOCKS := fmt.Sprintf("127.0.0.1:%d", blockedPort+2)
-	if httpAddr != wantHTTP {
-		t.Errorf("HTTPAddr = %q, want %q", httpAddr, wantHTTP)
+	// HTTP 与 SOCKS5 共用同一端口
+	if g.HTTPAddr() != g.SOCKSAddr() {
+		t.Errorf("HTTPAddr = %q, SOCKSAddr = %q, want same shared port", g.HTTPAddr(), g.SOCKSAddr())
 	}
-	if socksAddr != wantSOCKS {
-		t.Errorf("SOCKSAddr = %q, want %q", socksAddr, wantSOCKS)
-	}
-
 	if !g.Running() {
 		t.Error("Running() = false after Start")
 	}
 }
 
 func TestStartIdempotent(t *testing.T) {
-	// 先找一对空闲端口（系统分配后立即释放，测试中基本无竞态）
+	// 先找一个空闲端口（系统分配后立即释放，测试中基本无竞态）
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
@@ -54,9 +45,8 @@ func TestStartIdempotent(t *testing.T) {
 	base := probe.Addr().(*net.TCPAddr).Port
 	_ = probe.Close()
 
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", base)
-	socksAddr := fmt.Sprintf("127.0.0.1:%d", base+1)
-	g := NewGateway(nil, nil, nil, httpAddr, socksAddr)
+	addr := fmt.Sprintf("127.0.0.1:%d", base)
+	g := NewGateway(nil, nil, nil, addr)
 
 	// 验证 Start 幂等：重复调用不会重复绑定
 	if err := g.Start(); err != nil {
@@ -67,11 +57,11 @@ func TestStartIdempotent(t *testing.T) {
 	}
 	defer g.Stop()
 
-	if got := g.HTTPAddr(); got != httpAddr {
-		t.Errorf("HTTPAddr = %q, want %q", got, httpAddr)
+	if got := g.HTTPAddr(); got != addr {
+		t.Errorf("HTTPAddr = %q, want %q", got, addr)
 	}
-	if got := g.SOCKSAddr(); got != socksAddr {
-		t.Errorf("SOCKSAddr = %q, want %q", got, socksAddr)
+	if got := g.SOCKSAddr(); got != addr {
+		t.Errorf("SOCKSAddr = %q, want %q", got, addr)
 	}
 }
 

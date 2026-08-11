@@ -20,11 +20,14 @@ func TestNewDefaults(t *testing.T) {
 	if c.DBPath != "proxypilot.db" {
 		t.Errorf("DBPath = %q, want proxypilot.db", c.DBPath)
 	}
-	if c.HTTPProxyBind != "127.0.0.1:7892" {
-		t.Errorf("HTTPProxyBind = %q, want 127.0.0.1:7892", c.HTTPProxyBind)
+	if c.ProxyAddr() != "127.0.0.1:7892" {
+		t.Errorf("ProxyAddr = %q, want 127.0.0.1:7892", c.ProxyAddr())
 	}
-	if c.SOCKSProxyBind != "127.0.0.1:7893" {
-		t.Errorf("SOCKSProxyBind = %q, want 127.0.0.1:7893", c.SOCKSProxyBind)
+	if c.ProxyPort != 7892 {
+		t.Errorf("ProxyPort = %d, want 7892", c.ProxyPort)
+	}
+	if c.ProxyHost != "127.0.0.1" {
+		t.Errorf("ProxyHost = %q, want 127.0.0.1", c.ProxyHost)
 	}
 	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("CheckTarget = %q, want default apple success target", c.CheckTarget)
@@ -63,8 +66,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 
 	_ = os.Setenv("PROXYPILOT_API_BIND", "0.0.0.0:9999")
 	_ = os.Setenv("PROXYPILOT_DB_PATH", "/tmp/test.db")
-	_ = os.Setenv("PROXYPILOT_HTTP_BIND", "0.0.0.0:8888")
-	_ = os.Setenv("PROXYPILOT_SOCKS5_BIND", "0.0.0.0:8889")
+	_ = os.Setenv("PROXYPILOT_PROXY_PORT", "8888")
 	_ = os.Setenv("PROXYPILOT_TOKEN", "my-token")
 	_ = os.Setenv("PROXYPILOT_CHECK_TARGET", "http://example.com/204")
 	_ = os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "3s")
@@ -78,11 +80,12 @@ func TestApplyEnvOverrides(t *testing.T) {
 	if c.DBPath != "/tmp/test.db" {
 		t.Errorf("DBPath = %q", c.DBPath)
 	}
-	if c.HTTPProxyBind != "0.0.0.0:8888" {
-		t.Errorf("HTTPProxyBind = %q", c.HTTPProxyBind)
+	// 代理仅绑定本机，环境变量只能改端口
+	if c.ProxyAddr() != "127.0.0.1:8888" {
+		t.Errorf("ProxyAddr = %q, want 127.0.0.1:8888", c.ProxyAddr())
 	}
-	if c.SOCKSProxyBind != "0.0.0.0:8889" {
-		t.Errorf("SOCKSProxyBind = %q", c.SOCKSProxyBind)
+	if c.ProxyPort != 8888 {
+		t.Errorf("ProxyPort = %d", c.ProxyPort)
 	}
 	if c.SessionToken != "my-token" {
 		t.Errorf("SessionToken = %q", c.SessionToken)
@@ -144,8 +147,8 @@ var savedEnv = map[string]string{}
 func unsetEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
-		"PROXYPILOT_API_BIND", "PROXYPILOT_DB_PATH", "PROXYPILOT_HTTP_BIND",
-		"PROXYPILOT_SOCKS5_BIND", "PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
+		"PROXYPILOT_API_BIND", "PROXYPILOT_DB_PATH", "PROXYPILOT_PROXY_PORT",
+		"PROXYPILOT_HTTP_BIND", "PROXYPILOT_SOCKS5_BIND", "PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
 		"PROXYPILOT_CHECK_TIMEOUT", "PROXYPILOT_CHECK_CONCURRENCY", "PROXYPILOT_REFRESH_INTERVAL",
 	}
 	for _, k := range keys {
@@ -172,11 +175,14 @@ func TestApplySettingValidatesAndApplies(t *testing.T) {
 
 	c := New()
 	// 非法值：校验应失败且不修改
-	if changed, err := c.ApplySetting(KeyHTTPBind, "not-a-port"); err == nil || changed {
-		t.Errorf("expected error for invalid http bind, got changed=%v err=%v", changed, err)
+	if changed, err := c.ApplySetting(KeyProxyPort, "not-a-port"); err == nil || changed {
+		t.Errorf("expected error for invalid port, got changed=%v err=%v", changed, err)
 	}
-	if c.HTTPProxyBind != "127.0.0.1:7892" {
-		t.Errorf("HTTPProxyBind should not change on invalid input, got %q", c.HTTPProxyBind)
+	if changed, err := c.ApplySetting(KeyProxyPort, "0"); err == nil || changed {
+		t.Errorf("expected error for zero port, got changed=%v err=%v", changed, err)
+	}
+	if c.ProxyPort != 7892 {
+		t.Errorf("ProxyPort should not change on invalid input, got %d", c.ProxyPort)
 	}
 	if changed, err := c.ApplySetting(KeyCheckConcurr, "abc"); err == nil || changed {
 		t.Errorf("expected error for invalid concurrency, got changed=%v err=%v", changed, err)
@@ -186,14 +192,14 @@ func TestApplySettingValidatesAndApplies(t *testing.T) {
 	}
 
 	// 合法值
-	if changed, err := c.ApplySetting(KeyCheckTarget, "https://www.google.com/generate_204"); err != nil || !changed {
-		t.Errorf("ApplySetting valid target: changed=%v err=%v", changed, err)
+	if changed, err := c.ApplySetting(KeyProxyPort, "8080"); err != nil || !changed {
+		t.Errorf("ApplySetting valid port: changed=%v err=%v", changed, err)
 	}
-	if c.CheckTarget != "https://www.google.com/generate_204" {
-		t.Errorf("CheckTarget = %q", c.CheckTarget)
+	if c.ProxyPort != 8080 {
+		t.Errorf("ProxyPort = %d", c.ProxyPort)
 	}
 	// 相同值不产生变更
-	if changed, err := c.ApplySetting(KeyCheckTarget, "https://www.google.com/generate_204"); err != nil || changed {
+	if changed, err := c.ApplySetting(KeyProxyPort, "8080"); err != nil || changed {
 		t.Errorf("ApplySetting same value should be no-op, changed=%v err=%v", changed, err)
 	}
 }
@@ -210,7 +216,7 @@ func TestLoadOverridesFromStore(t *testing.T) {
 	defer func() { _ = st.Close() }()
 
 	// 持久化两个配置项
-	if err := st.SetSetting(KeyHTTPBind, "127.0.0.1:7901"); err != nil {
+	if err := st.SetSetting(KeyProxyPort, "7901"); err != nil {
 		t.Fatalf("SetSetting: %v", err)
 	}
 	if err := st.SetSetting(KeyRefreshPeriod, "30m"); err != nil {
@@ -218,8 +224,8 @@ func TestLoadOverridesFromStore(t *testing.T) {
 	}
 
 	c.LoadOverrides(st)
-	if c.HTTPProxyBind != "127.0.0.1:7901" {
-		t.Errorf("HTTPProxyBind after LoadOverrides = %q, want 127.0.0.1:7901", c.HTTPProxyBind)
+	if c.ProxyPort != 7901 {
+		t.Errorf("ProxyPort after LoadOverrides = %d, want 7901", c.ProxyPort)
 	}
 	if c.RefreshInterval != 30*time.Minute {
 		t.Errorf("RefreshInterval after LoadOverrides = %v, want 30m", c.RefreshInterval)
@@ -248,5 +254,55 @@ func TestLoadOverridesSkipsInvalidPersisted(t *testing.T) {
 	c.LoadOverrides(st)
 	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("invalid persisted value should be skipped, got %q", c.CheckTarget)
+	}
+}
+
+// 旧版本双端口配置（http_proxy_bind / socks5_proxy_bind）应迁移为 proxy_port。
+func TestLoadOverridesMigratesLegacyPort(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// 只有旧的 http_proxy_bind，没有新 proxy_port
+	if err := st.SetSetting(KeyHTTPBind, "127.0.0.1:7901"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	c.LoadOverrides(st)
+	if c.ProxyPort != 7901 {
+		t.Errorf("ProxyPort after migration = %d, want 7901", c.ProxyPort)
+	}
+	if c.ProxyHost != "127.0.0.1" {
+		t.Errorf("ProxyHost after migration = %q, want 127.0.0.1", c.ProxyHost)
+	}
+	// 迁移结果写回 DB，供前端展示
+	if v, _ := st.GetSetting(KeyProxyPort); v != "7901" {
+		t.Errorf("proxy_port persisted = %q, want 7901", v)
+	}
+}
+
+// 新旧配置并存时以新 proxy_port 为准，不做迁移覆盖。
+func TestLoadOverridesPrefersNewPortKey(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	_ = st.SetSetting(KeyProxyPort, "8080")
+	_ = st.SetSetting(KeyHTTPBind, "127.0.0.1:7901") // 旧值应被忽略
+
+	c.LoadOverrides(st)
+	if c.ProxyPort != 8080 {
+		t.Errorf("ProxyPort = %d, want 8080 (new key wins)", c.ProxyPort)
 	}
 }

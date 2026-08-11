@@ -73,7 +73,7 @@ export default function Dashboard() {
   const gatewaySets = useMemo<GatewayCommandSet[]>(() => {
     const http = formatProxyValue(status.httpProxyBind, 'http')
     const socks5 = formatProxyValue(status.socks5ProxyBind, 'socks5')
-    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7892' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7893' : socks5)
+    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7892' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7892' : socks5)
   }, [status.httpProxyBind, status.socks5ProxyBind])
 
   const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
@@ -276,9 +276,9 @@ export default function Dashboard() {
           </Card>
         </SimpleGrid>
 
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md" mt="md">
+        <SimpleGrid cols={{ base: 1, md: 1 }} spacing="md" mt="md">
           <Card padding="md" radius="md" withBorder>
-            <Text size="sm" c="dimmed">HTTP 代理</Text>
+            <Text size="sm" c="dimmed">HTTP / SOCKS5 代理（共用同一端口）</Text>
             <TextInput readOnly value={formatProxyValue(status.httpProxyBind, 'http')} mt="xs" />
             <Group gap="xs" mt="xs">
               <Button
@@ -289,7 +289,17 @@ export default function Dashboard() {
                 leftSection={<Clipboard size={14} />}
                 onClick={() => onCopy(status.httpProxyBind, 'http')}
               >
-                {copiedKey === 'http' ? '已复制' : '复制地址'}
+                {copiedKey === 'http' ? '已复制' : '复制 HTTP 地址'}
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                color={copiedKey === 'socks5' ? 'green' : 'blue'}
+                className={copiedKey === 'socks5' ? 'dashboard-copy-btn success' : 'dashboard-copy-btn'}
+                leftSection={<Clipboard size={14} />}
+                onClick={() => onCopy(status.socks5ProxyBind, 'socks5')}
+              >
+                {copiedKey === 'socks5' ? '已复制' : '复制 SOCKS5 地址'}
               </Button>
               <Button
                 size="xs"
@@ -305,37 +315,7 @@ export default function Dashboard() {
               </Button>
               <Text size="xs" c="dimmed">默认 7892，被占用时自动顺延</Text>
             </Group>
-            <Text size="xs" c="dimmed" mt="xs">适合系统代理、浏览器代理、HTTP 客户端</Text>
-          </Card>
-          <Card padding="md" radius="md" withBorder>
-            <Text size="sm" c="dimmed">SOCKS5 代理</Text>
-            <TextInput readOnly value={formatProxyValue(status.socks5ProxyBind, 'socks5')} mt="xs" />
-            <Group gap="xs" mt="xs">
-              <Button
-                size="xs"
-                variant="light"
-                color={copiedKey === 'socks5' ? 'green' : 'blue'}
-                className={copiedKey === 'socks5' ? 'dashboard-copy-btn success' : 'dashboard-copy-btn'}
-                leftSection={<Clipboard size={14} />}
-                onClick={() => onCopy(status.socks5ProxyBind, 'socks5')}
-              >
-                {copiedKey === 'socks5' ? '已复制' : '复制地址'}
-              </Button>
-              <Button
-                size="xs"
-                variant="light"
-                disabled={!status.running}
-                leftSection={<Copy size={14} />}
-                onClick={() => {
-                  setActiveTab(defaultTab)
-                  setGatewayModalOpen(true)
-                }}
-              >
-                复制命令
-              </Button>
-              <Text size="xs" c="dimmed">默认 7893，被占用时自动顺延</Text>
-            </Group>
-            <Text size="xs" c="dimmed" mt="xs">适合 Clash、Telegram、浏览器扩展等 SOCKS5 场景</Text>
+            <Text size="xs" c="dimmed" mt="xs">HTTP 与 SOCKS5 共用同一端口，按连接首字节自动识别分流；浏览器/系统代理用 HTTP，Clash、Telegram 等用 SOCKS5</Text>
           </Card>
         </SimpleGrid>
       </Card>
