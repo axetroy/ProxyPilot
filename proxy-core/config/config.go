@@ -28,8 +28,8 @@ func New() *Config {
 	c := &Config{
 		APIBind:          "127.0.0.1:17890",
 		DBPath:           "proxypilot.db",
-		HTTPProxyBind:    "127.0.0.1:7890",
-		SOCKSProxyBind:   "127.0.0.1:7891",
+		HTTPProxyBind:    "127.0.0.1:7892",
+		SOCKSProxyBind:   "127.0.0.1:7893",
 		CheckTarget:      "http://www.gstatic.com/generate_204",
 		CheckTimeout:     10 * time.Second,
 		CheckConcurrency: 32,

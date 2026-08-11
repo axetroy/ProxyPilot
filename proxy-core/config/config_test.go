@@ -18,11 +18,11 @@ func TestNewDefaults(t *testing.T) {
 	if c.DBPath != "proxypilot.db" {
 		t.Errorf("DBPath = %q, want proxypilot.db", c.DBPath)
 	}
-	if c.HTTPProxyBind != "127.0.0.1:7890" {
-		t.Errorf("HTTPProxyBind = %q, want 127.0.0.1:7890", c.HTTPProxyBind)
+	if c.HTTPProxyBind != "127.0.0.1:7892" {
+		t.Errorf("HTTPProxyBind = %q, want 127.0.0.1:7892", c.HTTPProxyBind)
 	}
-	if c.SOCKSProxyBind != "127.0.0.1:7891" {
-		t.Errorf("SOCKSProxyBind = %q, want 127.0.0.1:7891", c.SOCKSProxyBind)
+	if c.SOCKSProxyBind != "127.0.0.1:7893" {
+		t.Errorf("SOCKSProxyBind = %q, want 127.0.0.1:7893", c.SOCKSProxyBind)
 	}
 	if c.CheckTarget != "http://www.gstatic.com/generate_204" {
 		t.Errorf("CheckTarget = %q, want default gstatic target", c.CheckTarget)

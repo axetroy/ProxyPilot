@@ -50,8 +50,8 @@ export default function Settings() {
 
   const fields = [
     { label: '核心 API', value: 'http://127.0.0.1:17890' },
-    { label: 'HTTP 代理', value: '127.0.0.1:7890' },
-    { label: 'SOCKS5 代理', value: '127.0.0.1:7891' },
+    { label: 'HTTP 代理', value: '127.0.0.1:7892（默认，被占用自动顺延）' },
+    { label: 'SOCKS5 代理', value: '127.0.0.1:7893（默认，被占用自动顺延）' },
   ]
 
   return (

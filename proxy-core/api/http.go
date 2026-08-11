@@ -102,8 +102,8 @@ func (s *Services) status(c *gin.Context) {
 		currentNode,
 		currentHTTPNode,
 		currentSOCKS5Node,
-		s.Cfg.HTTPProxyBind,
-		s.Cfg.SOCKSProxyBind,
+		s.Gateway.HTTPAddr(),
+		s.Gateway.SOCKSAddr(),
 		config.Version,
 	)))
 }
@@ -274,8 +274,8 @@ func (s *Services) startGateway(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, ok(gin.H{
-		"http":   s.Cfg.HTTPProxyBind,
-		"socks5": s.Cfg.SOCKSProxyBind,
+		"http":   s.Gateway.HTTPAddr(),
+		"socks5": s.Gateway.SOCKSAddr(),
 	}))
 }
 

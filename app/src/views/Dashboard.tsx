@@ -73,7 +73,7 @@ export default function Dashboard() {
   const gatewaySets = useMemo<GatewayCommandSet[]>(() => {
     const http = formatProxyValue(status.httpProxyBind, 'http')
     const socks5 = formatProxyValue(status.socks5ProxyBind, 'socks5')
-    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7890' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7891' : socks5)
+    return buildGatewayCommands(http === '未启动' ? 'http://127.0.0.1:7892' : http, socks5 === '未启动' ? 'socks5://127.0.0.1:7893' : socks5)
   }, [status.httpProxyBind, status.socks5ProxyBind])
 
   const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
@@ -303,7 +303,7 @@ export default function Dashboard() {
               >
                 复制命令
               </Button>
-              <Text size="xs" c="dimmed">示例：http://127.0.0.1:7890</Text>
+              <Text size="xs" c="dimmed">默认 7892，被占用时自动顺延</Text>
             </Group>
             <Text size="xs" c="dimmed" mt="xs">适合系统代理、浏览器代理、HTTP 客户端</Text>
           </Card>
@@ -333,7 +333,7 @@ export default function Dashboard() {
               >
                 复制命令
               </Button>
-              <Text size="xs" c="dimmed">示例：socks5://127.0.0.1:7891</Text>
+              <Text size="xs" c="dimmed">默认 7893，被占用时自动顺延</Text>
             </Group>
             <Text size="xs" c="dimmed" mt="xs">适合 Clash、Telegram、浏览器扩展等 SOCKS5 场景</Text>
           </Card>

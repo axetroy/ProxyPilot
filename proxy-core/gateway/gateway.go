@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/validator"
 )
+
+// maxPortProbe 端口被占用时向后顺延的最大尝试次数。
+const maxPortProbe = 100
 
 // Gateway exposes local proxy ports and routes traffic through the node pool.
 type Gateway struct {
@@ -81,31 +85,80 @@ func (g *Gateway) CurrentSOCKS5Node() *model.ProxyNode {
 }
 
 // Start binds HTTP and SOCKS5 proxy listeners.
+// 若配置的端口被占用，会向后顺延寻找一对空闲端口（HTTP 与 SOCKS5 端口保持相邻），
+// 保证网关总能启动成功。实际绑定的端口可通过 HTTPAddr()/SOCKSAddr() 获取。
 func (g *Gateway) Start() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.http == nil {
-		h := &httpServer{addr: g.httpAddr, g: g}
+	if g.http != nil || g.socks != nil {
+		return nil
+	}
+
+	// 解析配置端口的 host 与起始端口号，之后仅对端口号顺延
+	host, startPort, err := splitHostPort(g.httpAddr)
+	if err != nil {
+		return fmt.Errorf("invalid http proxy address %q: %w", g.httpAddr, err)
+	}
+
+	// 从配置端口开始向后探测：HTTP 端口为 port，SOCKS5 端口为 port+1（保持相邻偏移）
+	for port := startPort; port < startPort+maxPortProbe; port++ {
+		httpAddr := net.JoinHostPort(host, strconv.Itoa(port))
+		socksAddr := net.JoinHostPort(host, strconv.Itoa(port+1))
+
+		h := &httpServer{addr: httpAddr, g: g}
 		if err := h.Start(); err != nil {
-			return fmt.Errorf("http proxy startup: %w", err)
+			continue // HTTP 端口被占用，整体后移
 		}
-		g.http = h
-		g.bus.Info(fmt.Sprintf("HTTP proxy listening on %s", g.httpAddr))
-	}
-	if g.socks == nil {
-		s := &socksServer{addr: g.socksAddr, g: g}
+		s := &socksServer{addr: socksAddr, g: g}
 		if err := s.Start(); err != nil {
-			if g.http != nil {
-				g.http.Stop()
-				g.http = nil
-			}
-			return fmt.Errorf("socks5 startup: %w", err)
+			h.Stop() // SOCKS5 端口被占用，回滚后整体后移
+			continue
 		}
+
+		g.http = h
 		g.socks = s
-		g.bus.Info(fmt.Sprintf("SOCKS5 proxy listening on %s", g.socksAddr))
+		g.httpAddr = httpAddr
+		g.socksAddr = socksAddr
+		g.startedAt = time.Now()
+		if g.bus != nil {
+			g.bus.Info(fmt.Sprintf("HTTP proxy listening on %s", g.httpAddr))
+			g.bus.Info(fmt.Sprintf("SOCKS5 proxy listening on %s", g.socksAddr))
+			if port != startPort {
+				g.bus.Warn(fmt.Sprintf("configured port %d occupied, proxy ports shifted to %s / %s", startPort, g.httpAddr, g.socksAddr))
+			}
+		}
+		return nil
 	}
-	g.startedAt = time.Now()
-	return nil
+	return fmt.Errorf("no free port pair found starting from %s (tried %d ports)", g.httpAddr, maxPortProbe)
+}
+
+// HTTPAddr 返回当前实际绑定的 HTTP 代理地址。
+// 若配置端口被占用自动顺延，这里即为顺延后的实际端口。
+func (g *Gateway) HTTPAddr() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.httpAddr
+}
+
+// SOCKSAddr 返回当前实际绑定的 SOCKS5 代理地址。
+// 若配置端口被占用自动顺延，这里即为顺延后的实际端口。
+func (g *Gateway) SOCKSAddr() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.socksAddr
+}
+
+// splitHostPort 将 host:port 拆分为 host 与端口号。
+func splitHostPort(addr string) (host string, port int, err error) {
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port %q: %w", p, err)
+	}
+	return h, n, nil
 }
 
 // Stop releases all proxy listeners.
@@ -123,7 +176,9 @@ func (g *Gateway) Stop() {
 	g.currentNode = nil
 	g.currentHTTPNode = nil
 	g.currentSOCKS5Node = nil
-	g.bus.Info("proxy gateway stopped")
+	if g.bus != nil {
+		g.bus.Info("proxy gateway stopped")
+	}
 }
 
 // Upstream dials `target` through the best live node, retrying alternatives

@@ -6,7 +6,7 @@
 HTTP / HTTPS / SOCKS5 代理出口。
 
 - **架构定位**：Electron 桌面端 + Golang 核心引擎
-- **核心出口**：`127.0.0.1:7890`（HTTP 代理）与 `127.0.0.1:7891`（SOCKS5）
+- **核心出口**：`127.0.0.1:7892`（HTTP 代理）与 `127.0.0.1:7893`（SOCKS5）
 - **设计文档**：见 [DESIGN.md](./DESIGN.md)
 
 ---
@@ -154,8 +154,8 @@ Electron 会自动 spawn Go 核心，并注入 token，加载界面后即可使�
 | --- | --- | --- |
 | `PROXYPILOT_API_BIND` | `127.0.0.1:17890` | API / WebSocket 监听地址（仅本机） |
 | `PROXYPILOT_DB_PATH` | `proxypilot.db` | SQLite 数据库文件路径 |
-| `PROXYPILOT_HTTP_BIND` | `127.0.0.1:7890` | HTTP 代理监听地址 |
-| `PROXYPILOT_SOCKS5_BIND` | `127.0.0.1:7891` | SOCKS5 代理监听地址 |
+| `PROXYPILOT_HTTP_BIND` | `127.0.0.1:7892` | HTTP 代理监听地址（被占用时自动向后顺延） |
+| `PROXYPILOT_SOCKS5_BIND` | `127.0.0.1:7893` | SOCKS5 代理监听地址（被占用时自动向后顺延） |
 | `PROXYPILOT_TOKEN` | 随机生成 | Session token（不设则每次启动生成） |
 | `PROXYPILOT_CHECK_TARGET` | `http://www.gstatic.com/generate_204` | 节点检测目标 URL |
 | `PROXYPILOT_CHECK_TIMEOUT` | `10s` | 单节点检测超时 |
@@ -190,7 +190,7 @@ PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_HTTP_BIND=127.0.0.1:
 | POST | `/api/subscription` | 新增订阅（`{name, url, interval}`） |
 | DELETE | `/api/subscription/:id` | 删除订阅 |
 | POST | `/api/subscription/:id/refresh` | 立即刷新该订阅 |
-| POST | `/api/gateway/start` | 启动代理网关（HTTP 7890 / SOCKS5 7891） |
+| POST | `/api/gateway/start` | 启动代理网关（HTTP 7892 / SOCKS5 7893） |
 | POST | `/api/gateway/stop` | 停止网关 |
 | GET | `/ws` | WebSocket 实时事件流 |
 
@@ -257,19 +257,21 @@ Score = 40% × 成功率 + 30% × 延迟得分 + 20% × 稳定性 + 10% × 匿�
 
 ## 本地代理使用
 
-网关启动后，本机应用只需将代理指向本地端口：
+网关启动后，本机应用只需将代理指向本地端口。默认端口为 `7892`（HTTP）/ `7893`（SOCKS5），
+若默认端口被其他程序占用，网关会自动向后顺延寻找一对空闲端口（HTTP 与 SOCKS5 端口保持相邻），
+实际绑定的端口以界面「Dashboard」或 `/api/status` 返回的 `httpProxyBind` / `socks5ProxyBind` 为准：
 
 ```
-HTTP  →  127.0.0.1:7890
-SOCKS5 → 127.0.0.1:7891
+HTTP  →  127.0.0.1:7892
+SOCKS5 → 127.0.0.1:7893
 ```
 
-- 浏览器/系统代理：指向 `127.0.0.1:7890`
+- 浏览器/系统代理：指向 `127.0.0.1:7892`
 - 命令行：
 
 ```bash
-curl -x http://127.0.0.1:7890 https://ifconfig.me
-curl --socks5 127.0.0.1:7891 https://ifconfig.me
+curl -x http://127.0.0.1:7892 https://ifconfig.me
+curl --socks5 127.0.0.1:7893 https://ifconfig.me
 ```
 
 ---
