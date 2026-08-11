@@ -192,6 +192,8 @@ PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_HTTP_BIND=127.0.0.1:
 | POST | `/api/subscription/:id/refresh` | 立即刷新该订阅 |
 | POST | `/api/gateway/start` | 启动代理网关（HTTP 7892 / SOCKS5 7893） |
 | POST | `/api/gateway/stop` | 停止网关 |
+| GET | `/api/settings` | 获取可配置项（HTTP/SOCKS5 端口、检测目标、超时、并发、刷新周期） |
+| PUT | `/api/settings` | 更新配置（`{"check_timeout": "5s"}`），保存并立即生效，重启后仍保留 |
 | GET | `/ws` | WebSocket 实时事件流 |
 
 ### 示例

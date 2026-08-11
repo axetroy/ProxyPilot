@@ -39,6 +39,19 @@ export interface SystemStatus {
   version: string
 }
 
+/** proxy-core 可在前端配置的项 */
+export interface SettingItem {
+  key: string
+  value: string
+  default: string
+  desc: string
+}
+
+export interface UpdateSettingsResult {
+  changed: boolean
+  settings: SettingItem[]
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

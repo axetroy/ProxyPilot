@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, CheckResult, LogEvent, ProxyNode, Subscription, SystemStatus } from '@/types'
+import type { ApiResponse, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SystemStatus, UpdateSettingsResult } from '@/types'
 
 const API_BASE = 'http://127.0.0.1:17890'
 
@@ -167,6 +167,18 @@ export async function startGateway(): Promise<ApiResponse<{ http: string; socks5
 export async function stopGateway(): Promise<ApiResponse<void>> {
   await ensureApiReady()
   const { data } = await http.post<ApiResponse<void>>('/api/gateway/stop')
+  return data
+}
+
+export async function listSettings(): Promise<ApiResponse<SettingItem[]>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<SettingItem[]>>('/api/settings')
+  return data
+}
+
+export async function updateSettings(updates: Record<string, string>): Promise<ApiResponse<UpdateSettingsResult>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<UpdateSettingsResult>>('/api/settings', updates)
   return data
 }
 

@@ -477,3 +477,35 @@ func TestSaveNodeTimestampsDefaulted(t *testing.T) {
 		t.Fatal("expected timestamps defaulted")
 	}
 }
+
+func TestSettingsGetSet(t *testing.T) {
+	st := newTestStore(t)
+	// 未设置时返回空
+	v, err := st.GetSetting("http_proxy_bind")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "" {
+		t.Errorf("GetSetting unset = %q, want empty", v)
+	}
+
+	if err := st.SetSetting("http_proxy_bind", "127.0.0.1:7999"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	v, err = st.GetSetting("http_proxy_bind")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "127.0.0.1:7999" {
+		t.Errorf("GetSetting = %q, want 127.0.0.1:7999", v)
+	}
+
+	// 覆盖更新
+	if err := st.SetSetting("http_proxy_bind", "127.0.0.1:8000"); err != nil {
+		t.Fatalf("SetSetting update: %v", err)
+	}
+	v, _ = st.GetSetting("http_proxy_bind")
+	if v != "127.0.0.1:8000" {
+		t.Errorf("GetSetting after update = %q, want 127.0.0.1:8000", v)
+	}
+}

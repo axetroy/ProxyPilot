@@ -31,11 +31,15 @@ func main() {
 	}
 	defer func() { _ = st.Close() }()
 
+	// 加载用户在前端持久化的配置，覆盖默认值/环境变量
+	cfg.LoadOverrides(st)
+
 	poolMgr := pool.NewManager(st, validator.NewChecker(cfg.CheckTarget, cfg.CheckTimeout), busc, cfg.CheckConcurrency)
 	if err := poolMgr.Load(); err != nil {
 		fmt.Fprintf(os.Stderr, "pool load: %v\n", err)
 		os.Exit(1)
 	}
+	poolMgr.SetRefreshInterval(cfg.RefreshInterval)
 
 	col := collector.NewManager(st, busc, poolMgr, cfg.CheckTimeout)
 	sel := scheduler.NewSelector(poolMgr)
@@ -63,7 +67,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = col.Run(ctx) }()
-	go poolMgr.RefreshLoop(ctx, cfg.RefreshInterval)
+	go poolMgr.RefreshLoop(ctx)
 
 	srv := &http.Server{Addr: cfg.APIBind, Handler: router}
 	go func() {

@@ -128,12 +128,12 @@ func TestNewManagerConcurrencyDefault(t *testing.T) {
 	}
 	defer func() { _ = st.Close() }()
 	m := NewManager(st, &mockChecker{}, bus.New(), 0)
-	if m.concur != 1 {
-		t.Fatalf("concurrency = %d, want 1", m.concur)
+	if got := m.concur.Load(); got != 1 {
+		t.Fatalf("concurrency = %d, want 1", got)
 	}
 	m = NewManager(st, &mockChecker{}, bus.New(), -3)
-	if m.concur != 1 {
-		t.Fatalf("concurrency = %d, want 1", m.concur)
+	if got := m.concur.Load(); got != 1 {
+		t.Fatalf("concurrency = %d, want 1", got)
 	}
 }
 
@@ -395,10 +395,11 @@ func TestCheckNowConcurrentGuard(t *testing.T) {
 
 func TestRefreshLoopStopsOnCancel(t *testing.T) {
 	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.SetRefreshInterval(time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		m.RefreshLoop(ctx, time.Millisecond)
+		m.RefreshLoop(ctx)
 		close(done)
 	}()
 	cancel()

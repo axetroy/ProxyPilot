@@ -19,25 +19,51 @@ type nodeChecker interface {
 
 type Manager struct {
 	store    *storage.Store
-	checker  nodeChecker
+	checker  atomic.Pointer[nodeChecker]
 	bus      *bus.Bus
 	mx       sync.RWMutex
 	nodes    map[int64]*model.ProxyNode
-	concur   int
+	concur   atomic.Int32
 	checking atomic.Bool
+
+	// refreshInterval 单位纳秒，RefreshLoop 每轮读取，支持热更新
+	refreshInterval atomic.Int64
 }
 
 func NewManager(store *storage.Store, checker nodeChecker, bus *bus.Bus, concurrency int) *Manager {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	return &Manager{
-		store:   store,
-		checker: checker,
-		bus:     bus,
-		nodes:   make(map[int64]*model.ProxyNode),
-		concur:  concurrency,
+	m := &Manager{
+		store: store,
+		bus:   bus,
+		nodes: make(map[int64]*model.ProxyNode),
 	}
+	m.checker.Store(&checker)
+	m.concur.Store(int32(concurrency))
+	m.refreshInterval.Store(int64(15 * time.Minute))
+	return m
+}
+
+// SetChecker 热更新节点检测器（target/timeout 变化时由配置更新触发）。
+func (m *Manager) SetChecker(c nodeChecker) {
+	m.checker.Store(&c)
+}
+
+// SetConcurrency 热更新并发检测数。
+func (m *Manager) SetConcurrency(n int) {
+	if n <= 0 {
+		n = 1
+	}
+	m.concur.Store(int32(n))
+}
+
+// SetRefreshInterval 热更新自动检测周期，RefreshLoop 下一轮生效。
+func (m *Manager) SetRefreshInterval(d time.Duration) {
+	if d <= 0 {
+		d = 15 * time.Minute
+	}
+	m.refreshInterval.Store(int64(d))
 }
 
 // Load populates the in-memory pool from the store.
@@ -247,7 +273,7 @@ func (m *Manager) CheckNow(ctx context.Context) error {
 	}
 	m.bus.Info(fmt.Sprintf("starting check of %d nodes", len(nodes)))
 
-	sem := make(chan struct{}, m.concur)
+	sem := make(chan struct{}, m.concur.Load())
 	var done int64
 	var wg sync.WaitGroup
 	progressTicker := time.NewTicker(500 * time.Millisecond)
@@ -294,7 +320,7 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 	}
 	m.mx.Unlock()
 
-	result, _ := m.checker.Check(fresh)
+	result, _ := (*m.checker.Load()).Check(fresh)
 	score := CalculateScore(fresh, result)
 
 	status := model.StatusAlive
@@ -342,17 +368,19 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 }
 
 // RefreshLoop periodically validates nodes until ctx is cancelled.
-func (m *Manager) RefreshLoop(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = 15 * time.Minute
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// 周期通过 SetRefreshInterval 热更新，下一轮生效。
+func (m *Manager) RefreshLoop(ctx context.Context) {
 	for {
+		interval := time.Duration(m.refreshInterval.Load())
+		if interval <= 0 {
+			interval = 15 * time.Minute
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := m.CheckNow(ctx); err != nil {
 				m.bus.Debug(fmt.Sprintf("periodic check interrupted: %v", err))
 			}

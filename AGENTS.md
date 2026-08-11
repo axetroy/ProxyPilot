@@ -138,6 +138,10 @@ app/                   # Electron UI
 - 代理网关默认出口 `127.0.0.1:7892`（HTTP）/ `127.0.0.1:7893`（SOCKS5），
   若被其他程序占用会自动向后顺延（保持相邻端口对），实际端口以 `/api/status` 返回值为准；
   仅绑定本机，不要修改为对外暴露。
+- 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
+  `http_proxy_bind` / `socks5_proxy_bind` / `check_target` / `check_timeout` /
+  `check_concurrency` / `refresh_interval`；启动时 `config.LoadOverrides()` 从 DB 覆盖默认值，
+  环境变量优先级最高，其次 DB，最后默认值。
 
 ---
 

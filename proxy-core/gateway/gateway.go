@@ -148,6 +148,15 @@ func (g *Gateway) SOCKSAddr() string {
 	return g.socksAddr
 }
 
+// SetAddrs 更新配置端口（下一次 Start 时生效）。
+// 网关正在运行时，先 Stop 再 Start 即可切换端口。
+func (g *Gateway) SetAddrs(httpAddr, socksAddr string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.httpAddr = httpAddr
+	g.socksAddr = socksAddr
+}
+
 // splitHostPort 将 host:port 拆分为 host 与端口号。
 func splitHostPort(addr string) (host string, port int, err error) {
 	h, p, err := net.SplitHostPort(addr)

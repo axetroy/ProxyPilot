@@ -67,6 +67,8 @@ func NewRouter(s *Services) *gin.Engine {
 	r.Use(eventBusMiddleware(s.Bus))
 
 	r.GET("/api/status", s.status)
+	r.GET("/api/settings", s.listSettings)
+	r.PUT("/api/settings", s.updateSettings)
 	r.GET("/api/subscriptions", s.listSubscriptions)
 	r.POST("/api/subscription", s.createSubscription)
 	r.DELETE("/api/subscription/:id", s.deleteSubscription)

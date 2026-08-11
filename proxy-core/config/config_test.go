@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 )
 
 func TestNewDefaults(t *testing.T) {
@@ -160,4 +162,91 @@ func restoreEnv(t *testing.T) {
 		_ = os.Setenv(k, v)
 	}
 	savedEnv = map[string]string{}
+}
+
+// ---------- settings ----------
+
+func TestApplySettingValidatesAndApplies(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	// 非法值：校验应失败且不修改
+	if changed, err := c.ApplySetting(KeyHTTPBind, "not-a-port"); err == nil || changed {
+		t.Errorf("expected error for invalid http bind, got changed=%v err=%v", changed, err)
+	}
+	if c.HTTPProxyBind != "127.0.0.1:7892" {
+		t.Errorf("HTTPProxyBind should not change on invalid input, got %q", c.HTTPProxyBind)
+	}
+	if changed, err := c.ApplySetting(KeyCheckConcurr, "abc"); err == nil || changed {
+		t.Errorf("expected error for invalid concurrency, got changed=%v err=%v", changed, err)
+	}
+	if c.CheckConcurrency != 32 {
+		t.Errorf("CheckConcurrency should stay 32, got %d", c.CheckConcurrency)
+	}
+
+	// 合法值
+	if changed, err := c.ApplySetting(KeyCheckTarget, "https://www.google.com/generate_204"); err != nil || !changed {
+		t.Errorf("ApplySetting valid target: changed=%v err=%v", changed, err)
+	}
+	if c.CheckTarget != "https://www.google.com/generate_204" {
+		t.Errorf("CheckTarget = %q", c.CheckTarget)
+	}
+	// 相同值不产生变更
+	if changed, err := c.ApplySetting(KeyCheckTarget, "https://www.google.com/generate_204"); err != nil || changed {
+		t.Errorf("ApplySetting same value should be no-op, changed=%v err=%v", changed, err)
+	}
+}
+
+func TestLoadOverridesFromStore(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// 持久化两个配置项
+	if err := st.SetSetting(KeyHTTPBind, "127.0.0.1:7901"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	if err := st.SetSetting(KeyRefreshPeriod, "30m"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+
+	c.LoadOverrides(st)
+	if c.HTTPProxyBind != "127.0.0.1:7901" {
+		t.Errorf("HTTPProxyBind after LoadOverrides = %q, want 127.0.0.1:7901", c.HTTPProxyBind)
+	}
+	if c.RefreshInterval != 30*time.Minute {
+		t.Errorf("RefreshInterval after LoadOverrides = %v, want 30m", c.RefreshInterval)
+	}
+	// 未持久化的保持默认
+	if c.CheckTarget != "http://www.gstatic.com/generate_204" {
+		t.Errorf("CheckTarget should keep default, got %q", c.CheckTarget)
+	}
+}
+
+func TestLoadOverridesSkipsInvalidPersisted(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// 持久化的非法值应被跳过，保持默认
+	if err := st.SetSetting(KeyCheckTarget, "not-a-url"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	c.LoadOverrides(st)
+	if c.CheckTarget != "http://www.gstatic.com/generate_204" {
+		t.Errorf("invalid persisted value should be skipped, got %q", c.CheckTarget)
+	}
 }
