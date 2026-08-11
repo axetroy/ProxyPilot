@@ -40,6 +40,9 @@ app.whenReady().then(async () => {
       height: 512,
       useContentSize: true,
       show: false,
+      // 透明背景：SVG 圆角矩形外的区域保持透明，而不是白色
+      transparent: true,
+      backgroundColor: '#00000000',
       webPreferences: { offscreen: true },
     })
     await win.loadFile(svgPath)
