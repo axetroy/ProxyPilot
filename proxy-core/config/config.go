@@ -25,10 +25,6 @@ const (
 	KeyCheckTimeout  = "check_timeout"
 	KeyCheckConcurr  = "check_concurrency"
 	KeyRefreshPeriod = "refresh_interval"
-
-	// 以下为旧版配置 key，仅用于数据迁移（HTTP/SOCKS5 双端口时期）。
-	KeyHTTPBind  = "http_proxy_bind"
-	KeySOCKSBind = "socks5_proxy_bind"
 )
 
 // SettingDef 描述一个可在前端配置的项。
@@ -56,13 +52,6 @@ func validatePort(v string) error {
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 || n > 65535 {
 		return fmt.Errorf("端口必须是 1-65535 之间的整数")
-	}
-	return nil
-}
-
-func validateHostPort(v string) error {
-	if _, _, err := net.SplitHostPort(v); err != nil {
-		return fmt.Errorf("格式应为 host:port，如 127.0.0.1:7892")
 	}
 	return nil
 }
@@ -134,15 +123,6 @@ func (c *Config) ApplyEnv() {
 			c.ProxyPort = n
 		}
 	}
-	// 兼容旧环境变量：仅取其端口（host 固定本机）
-	if v := os.Getenv("PROXYPILOT_HTTP_BIND"); v != "" && os.Getenv("PROXYPILOT_PROXY_PORT") == "" {
-		if host, port, err := net.SplitHostPort(v); err == nil {
-			if n, err := strconv.Atoi(port); err == nil && n > 0 && n <= 65535 {
-				c.ProxyHost = host
-				c.ProxyPort = n
-			}
-		}
-	}
 	if v := os.Getenv("PROXYPILOT_TOKEN"); v != "" {
 		c.SessionToken = v
 	}
@@ -199,8 +179,6 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 
 // LoadOverrides 从持久化存储中加载用户在前端修改过的配置，覆盖当前值。
 // 调用时机：main 启动时、构造各组件之前。
-// 兼容旧版本：若 DB 中只有旧的 http_proxy_bind / socks5_proxy_bind（双端口时期），
-// 则取其端口迁移为 proxy_port 并写回 DB。
 func (c *Config) LoadOverrides(st *storage.Store) {
 	for _, def := range Settings() {
 		v, err := st.GetSetting(def.Key)
@@ -216,31 +194,6 @@ func (c *Config) LoadOverrides(st *storage.Store) {
 			apply(v)
 		}
 	}
-	c.migrateLegacyPort(st)
-}
-
-// migrateLegacyPort 旧版本双端口配置迁移：
-// DB 中没有 proxy_port，但存在旧 http_proxy_bind / socks5_proxy_bind 时，
-// 以 http 的端口为准写入 proxy_port（socks5 与 http 端口不同则仅提示保留 http 端口）。
-func (c *Config) migrateLegacyPort(st *storage.Store) {
-	if cur, _ := st.GetSetting(KeyProxyPort); cur != "" {
-		return // 新配置已存在，无需迁移
-	}
-	httpBind, _ := st.GetSetting(KeyHTTPBind)
-	if httpBind == "" {
-		return
-	}
-	host, port, err := net.SplitHostPort(httpBind)
-	if err != nil {
-		return
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n > 65535 {
-		return
-	}
-	c.ProxyHost = host
-	c.ProxyPort = n
-	_ = st.SetSetting(KeyProxyPort, strconv.Itoa(n)) // 写回，供前端展示
 }
 
 // SettingValue 返回指定 key 的当前值（作为字符串）。

@@ -148,7 +148,7 @@ func unsetEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"PROXYPILOT_API_BIND", "PROXYPILOT_DB_PATH", "PROXYPILOT_PROXY_PORT",
-		"PROXYPILOT_HTTP_BIND", "PROXYPILOT_SOCKS5_BIND", "PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
+		"PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
 		"PROXYPILOT_CHECK_TIMEOUT", "PROXYPILOT_CHECK_CONCURRENCY", "PROXYPILOT_REFRESH_INTERVAL",
 	}
 	for _, k := range keys {
@@ -254,55 +254,5 @@ func TestLoadOverridesSkipsInvalidPersisted(t *testing.T) {
 	c.LoadOverrides(st)
 	if c.CheckTarget != "https://www.apple.com/library/test/success.html" {
 		t.Errorf("invalid persisted value should be skipped, got %q", c.CheckTarget)
-	}
-}
-
-// 旧版本双端口配置（http_proxy_bind / socks5_proxy_bind）应迁移为 proxy_port。
-func TestLoadOverridesMigratesLegacyPort(t *testing.T) {
-	unsetEnv(t)
-	defer restoreEnv(t)
-
-	c := New()
-	st, err := storage.New(":memory:")
-	if err != nil {
-		t.Fatalf("storage: %v", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	// 只有旧的 http_proxy_bind，没有新 proxy_port
-	if err := st.SetSetting(KeyHTTPBind, "127.0.0.1:7901"); err != nil {
-		t.Fatalf("SetSetting: %v", err)
-	}
-	c.LoadOverrides(st)
-	if c.ProxyPort != 7901 {
-		t.Errorf("ProxyPort after migration = %d, want 7901", c.ProxyPort)
-	}
-	if c.ProxyHost != "127.0.0.1" {
-		t.Errorf("ProxyHost after migration = %q, want 127.0.0.1", c.ProxyHost)
-	}
-	// 迁移结果写回 DB，供前端展示
-	if v, _ := st.GetSetting(KeyProxyPort); v != "7901" {
-		t.Errorf("proxy_port persisted = %q, want 7901", v)
-	}
-}
-
-// 新旧配置并存时以新 proxy_port 为准，不做迁移覆盖。
-func TestLoadOverridesPrefersNewPortKey(t *testing.T) {
-	unsetEnv(t)
-	defer restoreEnv(t)
-
-	c := New()
-	st, err := storage.New(":memory:")
-	if err != nil {
-		t.Fatalf("storage: %v", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	_ = st.SetSetting(KeyProxyPort, "8080")
-	_ = st.SetSetting(KeyHTTPBind, "127.0.0.1:7901") // 旧值应被忽略
-
-	c.LoadOverrides(st)
-	if c.ProxyPort != 8080 {
-		t.Errorf("ProxyPort = %d, want 8080 (new key wins)", c.ProxyPort)
 	}
 }
