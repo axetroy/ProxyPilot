@@ -210,3 +210,97 @@ func TestScoreWeightsSumToOne(t *testing.T) {
 		t.Fatalf("weights must sum to 1.0, got %v", sum)
 	}
 }
+
+func TestBreakdownAliveNode(t *testing.T) {
+	// 存活节点：9 次成功 1 次失败，延迟 387ms
+	node := &model.ProxyNode{
+		Protocol:     model.ProtocolSOCKS5,
+		Status:       model.StatusAlive,
+		SuccessCount: 9,
+		FailCount:    1,
+		Latency:      387,
+	}
+	b := Breakdown(node)
+	if b == nil {
+		t.Fatal("expected non-nil breakdown")
+	}
+	// successRate = (9+1)/(10+1) = 90.9 -> 90
+	if b.SuccessRate != 90 {
+		t.Fatalf("expected successRate 90, got %d", b.SuccessRate)
+	}
+	// latencyScore(387) = 60
+	if b.LatencyScore != 60 {
+		t.Fatalf("expected latencyScore 60, got %d", b.LatencyScore)
+	}
+	// decay = min(30, 1*15/0.919) = 16.3 -> stability = 83
+	if b.Stability != 83 {
+		t.Fatalf("expected stability 83, got %d", b.Stability)
+	}
+	// socks5 匿名性 95
+	if b.Anonymity != 95 {
+		t.Fatalf("expected anonymity 95, got %d", b.Anonymity)
+	}
+	// score = 0.4*90.9 + 0.3*60 + 0.2*83 + 0.1*95 = 80.46 -> 80
+	if b.Score != 80 {
+		t.Fatalf("expected score 80, got %d", b.Score)
+	}
+	if b.WeightSuccess != 0.40 || b.WeightLatency != 0.30 || b.WeightStability != 0.20 || b.WeightAnonymity != 0.10 {
+		t.Fatalf("unexpected weights: %v %v %v %v", b.WeightSuccess, b.WeightLatency, b.WeightStability, b.WeightAnonymity)
+	}
+}
+
+func TestBreakdownDeadNodeHalved(t *testing.T) {
+	// 死亡节点：分数减半，且与 CalculateScore 失败检测口径一致
+	node := &model.ProxyNode{
+		Protocol:     model.ProtocolHTTP,
+		Status:       model.StatusDead,
+		SuccessCount: 0,
+		FailCount:    1,
+		Latency:      0,
+	}
+	b := Breakdown(node)
+	if b == nil {
+		t.Fatal("expected non-nil breakdown")
+	}
+	// successRate = 0/1 = 0（死亡节点不把成功计入）
+	if b.SuccessRate != 0 {
+		t.Fatalf("expected successRate 0, got %d", b.SuccessRate)
+	}
+	// latencyScore(0) = 100
+	if b.LatencyScore != 100 {
+		t.Fatalf("expected latencyScore 100, got %d", b.LatencyScore)
+	}
+	// decay = min(30, 1*18/0.01) = 30 -> stability = 70
+	if b.Stability != 70 {
+		t.Fatalf("expected stability 70, got %d", b.Stability)
+	}
+	// http 匿名性 80
+	if b.Anonymity != 80 {
+		t.Fatalf("expected anonymity 80, got %d", b.Anonymity)
+	}
+	// score = (0 + 0.3*100 + 0.2*70 + 0.1*80) * 0.5 = (30+14+8)*0.5 = 26
+	if b.Score != 26 {
+		t.Fatalf("expected score 26, got %d", b.Score)
+	}
+}
+
+func TestBreakdownFreshNode(t *testing.T) {
+	// 全新节点（无历史）：与 CalculateScore 首次成功口径一致
+	node := &model.ProxyNode{
+		Protocol: model.ProtocolHTTP,
+		Status:   model.StatusAlive,
+		Latency:  100,
+	}
+	b := Breakdown(node)
+	if b == nil {
+		t.Fatal("expected non-nil breakdown")
+	}
+	// successRate = 1/2 = 50
+	if b.SuccessRate != 50 {
+		t.Fatalf("expected successRate 50, got %d", b.SuccessRate)
+	}
+	// score = 0.4*50 + 0.3*100 + 0.2*100 + 0.1*80 = 20+30+20+8 = 78
+	if b.Score != 78 {
+		t.Fatalf("expected score 78, got %d", b.Score)
+	}
+}

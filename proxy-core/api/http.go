@@ -226,6 +226,10 @@ func (s *Services) listProxies(c *gin.Context) {
 			return
 		}
 	}
+	// 为每个节点填充评分明细，供前端展示评分计算过程。
+	for _, n := range nodes {
+		n.ScoreBreakdown = pool.Breakdown(n)
+	}
 	c.JSON(http.StatusOK, ok(nodes))
 }
 

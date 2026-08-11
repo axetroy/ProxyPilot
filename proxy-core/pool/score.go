@@ -155,3 +155,62 @@ func Anonymity(node *model.ProxyNode) int {
 	}
 	return anonymity
 }
+
+// Breakdown 根据节点当前状态，还原一次评分的各维度明细，供前端展示评分计算过程。
+// 计算口径与 CalculateScore 完全一致（成功率、延迟分、稳定性、匿名性、权重、死亡惩罚），
+// 这样前端看到的明细与列表中的总分能够对得上。
+func Breakdown(node *model.ProxyNode) *model.ScoreBreakdown {
+	total := node.SuccessCount + node.FailCount
+	if total == 0 {
+		total = 1
+	}
+	successRate := float64(node.SuccessCount) / float64(total)
+	if node.Status == model.StatusAlive {
+		// 存活节点视为最近一次检测成功，把这次成功也计入统计。
+		successRate = float64(node.SuccessCount+1) / float64(total+1)
+	}
+
+	latencyScore := latencyScore(node.Latency)
+
+	stability := 100
+	if node.FailCount > 0 {
+		decayBase := 15.0
+		if node.Protocol == model.ProtocolHTTP || node.Protocol == model.ProtocolHTTPS {
+			decayBase = 18.0
+		}
+		decay := math.Min(30, float64(node.FailCount)*decayBase/float64(successRate+0.01))
+		stability = int(100 - decay)
+	}
+	if stability < 0 {
+		stability = 0
+	}
+
+	anonymity := 80
+	if node.Protocol == model.ProtocolSOCKS5 {
+		anonymity = 95
+	}
+	if node.Username != "" {
+		anonymity = 50
+	}
+
+	score := WeightSuccess*successRate*100 +
+		WeightLatency*float64(latencyScore) +
+		WeightStability*float64(stability) +
+		WeightAnonymity*float64(anonymity)
+	if node.Status == model.StatusDead {
+		// 死亡节点与检测失败一致，最终分数减半。
+		score *= 0.5
+	}
+
+	return &model.ScoreBreakdown{
+		SuccessRate:     int(successRate * 100),
+		LatencyScore:    latencyScore,
+		Stability:       stability,
+		Anonymity:       anonymity,
+		WeightSuccess:   WeightSuccess,
+		WeightLatency:   WeightLatency,
+		WeightStability: WeightStability,
+		WeightAnonymity: WeightAnonymity,
+		Score:           int(math.Round(math.Min(100, math.Max(0, score)))),
+	}
+}

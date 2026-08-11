@@ -13,6 +13,21 @@ export interface ProxyNode {
   lastCheck: string
   createdAt: string
   updatedAt: string
+  subscriptionId?: number
+  scoreBreakdown?: ScoreBreakdown
+}
+
+/** 评分明细，与后端 pool.Breakdown 返回结构对应 */
+export interface ScoreBreakdown {
+  successRate: number
+  latencyScore: number
+  stability: number
+  anonymity: number
+  weightSuccess: number
+  weightLatency: number
+  weightStability: number
+  weightAnonymity: number
+  score: number
 }
 
 export interface Subscription {

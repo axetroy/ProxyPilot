@@ -38,6 +38,21 @@ type ProxyNode struct {
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
 	SubscriptionID int64         `json:"subscriptionId,omitempty"`
+	// ScoreBreakdown 评分明细，仅 API 输出时填充（不持久化），用于前端展示评分计算过程。
+	ScoreBreakdown *ScoreBreakdown `json:"scoreBreakdown,omitempty"`
+}
+
+// ScoreBreakdown 表示一次评分的各维度明细，与 CalculateScore 的权重口径一致。
+type ScoreBreakdown struct {
+	SuccessRate    int     `json:"successRate"`    // 成功率（0-100）
+	LatencyScore   int     `json:"latencyScore"`   // 延迟分（0-100）
+	Stability      int     `json:"stability"`      // 稳定性（0-100）
+	Anonymity      int     `json:"anonymity"`      // 匿名性（0-100）
+	WeightSuccess  float64 `json:"weightSuccess"`  // 成功率权重
+	WeightLatency  float64 `json:"weightLatency"`  // 延迟权重
+	WeightStability float64 `json:"weightStability"` // 稳定性权重
+	WeightAnonymity float64 `json:"weightAnonymity"` // 匿名性权重
+	Score          int     `json:"score"`          // 加权总分（0-100）
 }
 
 func (n *ProxyNode) Key() string {

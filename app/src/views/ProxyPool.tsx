@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Code, Group, Modal, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Code, Group, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { getPlatform, type Platform } from '@/api'
 import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
@@ -50,6 +50,7 @@ export default function ProxyPool() {
   const [scrollTop, setScrollTop] = useState(0)
   const [pending, setPending] = useState<ProxyNode | null>(null)
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
+  const [scoreTarget, setScoreTarget] = useState<ProxyNode | null>(null)
   const [platform, setPlatform] = useState<Platform>('linux')
   const [activeTab, setActiveTab] = useState<string | null>('darwin')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -82,13 +83,9 @@ export default function ProxyPool() {
   }, [deferredFilter])
 
   const list = useMemo(() => {
+    // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
-    const filtered = normalizedFilter ? nodes.filter((n) => n.host.toLowerCase().includes(normalizedFilter)) : nodes
-    return [...filtered].sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score
-      if (a.id !== b.id) return a.id - b.id
-      return a.host.localeCompare(b.host)
-    })
+    return normalizedFilter ? nodes.filter((n) => n.host.toLowerCase().includes(normalizedFilter)) : nodes
   }, [nodes, deferredFilter])
 
   const totalHeight = list.length * ROW_HEIGHT
@@ -218,7 +215,11 @@ export default function ProxyPool() {
                     <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
                     <Badge variant="light">{n.protocol}</Badge>
                     <Text size="sm">{n.latency}ms</Text>
-                    <Text size="sm">{n.score}</Text>
+                    <Tooltip label="查看评分明细">
+                      <Button size="xs" variant="subtle" px={4} onClick={() => setScoreTarget(n)}>
+                        {n.score}
+                      </Button>
+                    </Tooltip>
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
                     <Group justify="flex-end" gap="xs">
                       <Tooltip label="复制代理命令">
@@ -253,6 +254,12 @@ export default function ProxyPool() {
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal opened={scoreTarget !== null} onClose={() => setScoreTarget(null)} title="评分明细" size="md">
+        {scoreTarget && (
+          <ScoreBreakdownModal node={scoreTarget} />
+        )}
       </Modal>
 
       <Modal opened={copyTarget !== null} onClose={() => setCopyTarget(null)} title="复制代理命令" size="lg">
@@ -297,6 +304,59 @@ export default function ProxyPool() {
           </Stack>
         )}
       </Modal>
+    </Stack>
+  )
+}
+
+function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
+  const b = node.scoreBreakdown
+  if (!b) {
+    return (
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">暂无评分明细（可能为旧版本数据，请刷新后重试）</Text>
+        <Text size="sm">总分：{node.score}</Text>
+      </Stack>
+    )
+  }
+  const rows = [
+    { label: '成功率', weight: b.weightSuccess, value: b.successRate, hint: '历史成功次数占比，权重最高' },
+    { label: '延迟', weight: b.weightLatency, value: b.latencyScore, hint: `${node.latency}ms 映射为 ${b.latencyScore} 分` },
+    { label: '稳定性', weight: b.weightStability, value: b.stability, hint: '失败次数越少越稳定' },
+    { label: '匿名性', weight: b.weightAnonymity, value: b.anonymity, hint: node.protocol === 'socks5' ? 'SOCKS5 默认 95 分' : node.username ? '带认证，匿名性较低' : 'HTTP/HTTPS 默认 80 分' },
+  ]
+  return (
+    <Stack gap="md">
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <div>
+          <Group gap="xs">
+            <Badge variant="light">{node.protocol}</Badge>
+            <Text size="sm" fw={600}>{`${node.host}:${node.port}`}</Text>
+          </Group>
+          <Text size="xs" c="dimmed" mt={4}>状态：{statusLabel(node)} · 延迟 {node.latency}ms</Text>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <Text size="xl" fw={700} c={node.score >= 60 ? 'green' : node.score >= 40 ? 'yellow' : 'red'}>{node.score}</Text>
+          <Text size="xs" c="dimmed">综合评分</Text>
+        </div>
+      </Group>
+
+      {rows.map((r) => (
+        <div key={r.label}>
+          <Group justify="space-between" mb={4}>
+            <Text size="sm" fw={600}>{r.label}（{Math.round(r.weight * 100)}%）</Text>
+            <Text size="sm">{r.value}</Text>
+          </Group>
+          <Progress value={r.value} color={r.value >= 60 ? 'green' : r.value >= 40 ? 'yellow' : 'red'} size="md" />
+          <Text size="xs" c="dimmed" mt={2}>{r.hint}</Text>
+        </div>
+      ))}
+
+      <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
+        <Text size="xs" c="dimmed" mb={4}>计算公式（加权求和，死亡节点总分减半）</Text>
+        <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {`${b.weightSuccess}×${b.successRate} + ${b.weightLatency}×${b.latencyScore} + ${b.weightStability}×${b.stability} + ${b.weightAnonymity}×${b.anonymity} = ${b.score}`}
+        </Code>
+      </Box>
     </Stack>
   )
 }
