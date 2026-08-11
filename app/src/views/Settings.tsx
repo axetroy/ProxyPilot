@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Monitor, Moon, Play, RotateCcw, Square, Sun } from 'lucide-react'
+import { Minimize2, Monitor, Moon, Play, RotateCcw, Square, Sun } from 'lucide-react'
 import {
   Alert,
   Button,
@@ -14,7 +14,7 @@ import {
 } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { getPlatform, listSettings, updateSettings, type Platform } from '@/api'
-import type { SettingItem } from '@/types'
+import type { AppSettings, SettingItem } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -30,6 +30,7 @@ export default function Settings() {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
+  const [appSettings, setAppSettings] = useState<AppSettings>({ closeBehavior: 'minimize' })
 
   const load = useCallback(async () => {
     const maxRetries = 10;
@@ -58,6 +59,21 @@ export default function Settings() {
   useEffect(() => {
     getPlatform().then(setPlatform).catch(() => setPlatform('linux'))
   }, [])
+
+  useEffect(() => {
+    window.proxypilot?.getAppSettings().then(setAppSettings).catch(() => {})
+  }, [])
+
+  async function onChangeCloseBehavior(value: string) {
+    const next: AppSettings = { closeBehavior: value as 'minimize' | 'quit' }
+    setAppSettings(next)
+    try {
+      await window.proxypilot?.setAppSettings(next)
+      setNotice({ type: 'success', text: '窗口行为设置已保存' })
+    } catch {
+      setNotice({ type: 'error', text: '保存窗口行为设置失败' })
+    }
+  }
 
   useEffect(() => {
     if (!notice) return
@@ -157,6 +173,24 @@ export default function Settings() {
                 { label: '亮色', value: 'light' },
                 { label: '暗色', value: 'dark' },
                 { label: '跟随系统', value: 'auto' },
+              ]}
+            />
+          </div>
+
+          <Divider />
+
+          <div>
+            <Group gap="xs" mb={4}>
+              <Minimize2 size={16} />
+              <Text fw={600}>窗口行为</Text>
+            </Group>
+            <Text size="sm" c="dimmed" mb="sm">关闭主窗口时最小化到系统托盘，或直接退出程序</Text>
+            <SegmentedControl
+              value={appSettings.closeBehavior}
+              onChange={onChangeCloseBehavior}
+              data={[
+                { label: '最小化到托盘', value: 'minimize' },
+                { label: '退出程序', value: 'quit' },
               ]}
             />
           </div>

@@ -73,6 +73,11 @@ export interface CheckResult {
   error?: string
 }
 
+/** 应用级设置（Electron 主进程持久化到 userData/settings.json） */
+export interface AppSettings {
+  closeBehavior: 'minimize' | 'quit'
+}
+
 export interface ApiResponse<T = unknown> {
   code: number
   msg: string

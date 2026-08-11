@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SystemStatus, UpdateSettingsResult } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SystemStatus, UpdateSettingsResult } from '@/types'
 
 const API_BASE = 'http://127.0.0.1:17890'
 
@@ -13,6 +13,8 @@ declare global {
       getToken: () => Promise<string>
       getApiBase: () => Promise<string>
       getPlatform: () => Promise<string>
+      getAppSettings: () => Promise<AppSettings>
+      setAppSettings: (settings: AppSettings) => Promise<AppSettings>
       onCoreExit: (cb: () => void) => void
       onCoreError: (cb: (msg: string) => void) => void
     }
