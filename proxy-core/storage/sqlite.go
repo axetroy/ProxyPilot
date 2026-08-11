@@ -285,7 +285,8 @@ func (s *Store) GetNode(id int64) (*model.ProxyNode, error) {
 func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
 		latency, score, status, success_count, fail_count, last_check, created_at, updated_at
-		FROM proxy_nodes ORDER BY score DESC, latency ASC`)
+		FROM proxy_nodes ORDER BY CASE WHEN status='alive' THEN 0 ELSE 1 END,
+		score DESC, latency ASC, id ASC, host ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +305,7 @@ func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 func (s *Store) ListNodesByStatus(status model.ProxyStatus) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
 		latency, score, status, success_count, fail_count, last_check, created_at, updated_at
-		FROM proxy_nodes WHERE status=? ORDER BY score DESC`, string(status))
+		FROM proxy_nodes WHERE status=? ORDER BY score DESC, latency ASC, id ASC, host ASC`, string(status))
 	if err != nil {
 		return nil, err
 	}

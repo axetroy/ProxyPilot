@@ -185,6 +185,128 @@ func TestListReturnsSnapshot(t *testing.T) {
 	}
 }
 
+func TestListSortedByScoreLatencyIDHost(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	// 构造乱序节点：分数、延迟、ID、host 各不相同，验证完整排序链。
+	nodes := []*model.ProxyNode{
+		{Host: "z-host", Port: 80, Protocol: model.ProtocolHTTP, Score: 50, Latency: 100},
+		{Host: "a-host", Port: 80, Protocol: model.ProtocolHTTP, Score: 90, Latency: 300},
+		{Host: "b-host", Port: 80, Protocol: model.ProtocolHTTP, Score: 90, Latency: 100},
+		{Host: "c-host", Port: 80, Protocol: model.ProtocolHTTP, Score: 90, Latency: 100},
+	}
+	if m.AddNodes(nodes) != 4 {
+		t.Fatal("failed to add nodes")
+	}
+
+	list := m.List()
+	if len(list) != 4 {
+		t.Fatalf("len = %d, want 4", len(list))
+	}
+	// 期望顺序：b-host(90,100) → c-host(90,100) → a-host(90,300) → z-host(50,100)
+	// b-host 与 c-host 分数延迟相同，按 ID 升序（先添加的 ID 小）。
+	want := []string{"b-host", "c-host", "a-host", "z-host"}
+	for i, w := range want {
+		if list[i].Host != w {
+			t.Fatalf("position %d: host = %s, want %s (full: %+v)", i, list[i].Host, w, list)
+		}
+	}
+}
+
+func TestListSortedAliveFirst(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	// 存活节点分数低也应排在死亡/新节点之前。
+	aliveLow := newNode("alive-low", 80, model.ProtocolHTTP)
+	aliveLow.Status = model.StatusAlive
+	aliveLow.Score = 10
+	deadHigh := newNode("dead-high", 80, model.ProtocolHTTP)
+	deadHigh.Status = model.StatusDead
+	deadHigh.Score = 99
+	newMid := newNode("new-mid", 80, model.ProtocolHTTP)
+	newMid.Score = 50
+	if m.AddNodes([]*model.ProxyNode{aliveLow, deadHigh, newMid}) != 3 {
+		t.Fatal("failed to add nodes")
+	}
+
+	list := m.List()
+	if len(list) != 3 {
+		t.Fatalf("len = %d, want 3", len(list))
+	}
+	// 期望顺序：alive-low(存活) → new-mid(50) → dead-high(99)
+	// 非存活状态按优先级 new < dead，dead 沉底。
+	want := []string{"alive-low", "new-mid", "dead-high"}
+	for i, w := range want {
+		if list[i].Host != w {
+			t.Fatalf("position %d: host = %s, want %s (full: %+v)", i, list[i].Host, w, list)
+		}
+	}
+}
+
+func TestListSortedStatusRankDeterministic(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	// 非存活状态之间必须有明确顺序（checking < new < dead），
+	// 否则 sort.Slice 不稳定排序会导致每次刷新顺序随机。
+	dead := newNode("dead", 80, model.ProtocolHTTP)
+	dead.Status = model.StatusDead
+	dead.Score = 90
+	newNode1 := newNode("new", 80, model.ProtocolHTTP)
+	newNode1.Score = 90
+	checking := newNode("checking", 80, model.ProtocolHTTP)
+	checking.Status = model.StatusChecking
+	checking.Score = 90
+	if m.AddNodes([]*model.ProxyNode{dead, newNode1, checking}) != 3 {
+		t.Fatal("failed to add nodes")
+	}
+
+	// 连续多次 List，顺序必须完全一致（确定性）。
+	var prev []string
+	for i := 0; i < 10; i++ {
+		list := m.List()
+		if len(list) != 3 {
+			t.Fatalf("len = %d, want 3", len(list))
+		}
+		got := []string{list[0].Host, list[1].Host, list[2].Host}
+		if prev == nil {
+			prev = got
+		} else {
+			for j := range got {
+				if got[j] != prev[j] {
+					t.Fatalf("run %d: order changed: %v vs %v", i, got, prev)
+				}
+			}
+		}
+	}
+	// 期望顺序：checking → new → dead（状态优先级，同分按 ID）。
+	want := []string{"checking", "new", "dead"}
+	for i, w := range want {
+		if prev[i] != w {
+			t.Fatalf("position %d: host = %s, want %s (full: %v)", i, prev[i], w, prev)
+		}
+	}
+}
+
+func TestAliveSortedByScoreLatencyIDHost(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	aliveLow := newNode("low", 80, model.ProtocolHTTP)
+	aliveLow.Status = model.StatusAlive
+	aliveLow.Score = 30
+	aliveLow.Latency = 50
+	aliveHigh := newNode("high", 80, model.ProtocolHTTP)
+	aliveHigh.Status = model.StatusAlive
+	aliveHigh.Score = 90
+	aliveHigh.Latency = 200
+	dead := newNode("dead", 80, model.ProtocolHTTP)
+	dead.Status = model.StatusDead
+	m.AddNodes([]*model.ProxyNode{aliveLow, aliveHigh, dead})
+
+	alive := m.Alive()
+	if len(alive) != 2 {
+		t.Fatalf("alive len = %d, want 2", len(alive))
+	}
+	if alive[0].Host != "high" || alive[1].Host != "low" {
+		t.Fatalf("unexpected alive order: %+v", alive)
+	}
+}
+
 func TestAliveFilter(t *testing.T) {
 	m, _ := newTestManagerWithChecker(t, &mockChecker{})
 	alive := newNode("1.1.1.1", 80, model.ProtocolHTTP)

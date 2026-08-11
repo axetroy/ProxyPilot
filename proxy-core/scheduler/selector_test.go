@@ -249,26 +249,51 @@ func TestStickyExpiry(t *testing.T) {
 	}
 }
 
-func TestWeight(t *testing.T) {
+func TestEffectiveScore(t *testing.T) {
 	cases := []struct {
 		name     string
 		score    int
-		latency  int64
 		failures int
 		want     float64
 	}{
-		{"base", 100, 100, 0, 1000},
-		{"one failure", 100, 100, 1, 500},
-		{"two failures", 100, 100, 2, 250},
-		{"zero latency uses 1", 100, 0, 0, 100000},
-		{"zero score", 0, 100, 0, 0},
-		{"negative score", -5, 100, 0, 0},
+		{"base", 100, 0, 100},
+		{"one failure", 100, 1, 50},
+		{"two failures", 100, 2, 25},
+		{"zero score", 0, 0, 0},
+		{"negative score", -5, 0, 0},
 	}
 	for _, c := range cases {
-		n := &model.ProxyNode{Score: c.score, Latency: c.latency}
-		if got := weight(n, c.failures); got != c.want {
-			t.Errorf("%s: weight() = %v, want %v", c.name, got, c.want)
+		n := &model.ProxyNode{Score: c.score}
+		if got := effectiveScore(n, c.failures); got != c.want {
+			t.Errorf("%s: effectiveScore() = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestSelectBestPrefersScoreThenLatency(t *testing.T) {
+	m := newTestPool(t)
+	// 分数相同（80），延迟低的优先。
+	slow := addAlive(t, m, "slow", 80, 300)
+	fast := addAlive(t, m, "fast", 80, 100)
+
+	s := NewSelector(m)
+	got := s.Next()
+	if got == nil || got.ID != fast.ID {
+		t.Fatalf("expected fast node (id=%d) with same score, got %+v", fast.ID, got)
+	}
+	_ = slow
+}
+
+func TestSelectBestScoreBeatsLatency(t *testing.T) {
+	m := newTestPool(t)
+	// 分数优先于延迟：90 分高延迟节点应胜过 50 分低延迟节点。
+	high := addAlive(t, m, "high-score", 90, 500)
+	addAlive(t, m, "low-score", 50, 50)
+
+	s := NewSelector(m)
+	got := s.Next()
+	if got == nil || got.ID != high.ID {
+		t.Fatalf("expected high-score node (id=%d), got %+v", high.ID, got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,6 +110,8 @@ func (m *Manager) AddNodes(nodes []*model.ProxyNode) int {
 }
 
 // List returns a snapshot of all nodes.
+// 返回结果按 分数（降序）→ 延迟（升序）→ ID（升序）→ host（升序）排序，
+// 保证 API 返回的节点列表顺序稳定且与选择阶段口径一致。
 func (m *Manager) List() []*model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
@@ -116,10 +119,51 @@ func (m *Manager) List() []*model.ProxyNode {
 	for _, n := range m.nodes {
 		out = append(out, cloneNode(n))
 	}
+	sortNodes(out)
 	return out
 }
 
+// StatusRank 返回节点状态的排序优先级：alive(0) < checking(1) < new(2) < dead(3)。
+// 所有状态都有明确顺序，保证排序比较器是严格全序；
+// 否则（如只区分 alive/非 alive）两个非 alive 节点互相比较都返回 false，
+// sort.Slice 不稳定排序会导致它们的相对顺序每次随机。
+func StatusRank(s model.ProxyStatus) int {
+	switch s {
+	case model.StatusAlive:
+		return 0
+	case model.StatusChecking:
+		return 1
+	case model.StatusNew:
+		return 2
+	case model.StatusDead:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// sortNodes 按 存活（优先）→ 分数（降序）→ 延迟（升序）→ ID（升序）→ host（升序）排序。
+func sortNodes(nodes []*model.ProxyNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		a, b := nodes[i], nodes[j]
+		if ra, rb := StatusRank(a.Status), StatusRank(b.Status); ra != rb {
+			return ra < rb
+		}
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Latency != b.Latency {
+			return a.Latency < b.Latency
+		}
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		return a.Host < b.Host
+	})
+}
+
 // Alive returns nodes currently marked alive.
+// 返回结果同样按 分数 → 延迟 → ID → host 排序，与 List 口径一致。
 func (m *Manager) Alive() []*model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
@@ -129,6 +173,7 @@ func (m *Manager) Alive() []*model.ProxyNode {
 			out = append(out, cloneNode(n))
 		}
 	}
+	sortNodes(out)
 	return out
 }
 

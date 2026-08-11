@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -138,8 +139,10 @@ func (s *Selector) stickyNode(key string) *model.ProxyNode {
 	return nil
 }
 
-// selectBest 在指定协议族内挑选权重最高的节点。
-// 权重 = score / latency，并叠加最近连续失败的惩罚。
+// selectBest 在指定协议族内挑选最优节点。
+// 排序优先级：存活（优先）→ 有效分数（降序）→ 延迟（升序）→ ID（升序）→ host（升序）。
+// 有效分数 = 原始分数 × 失败惩罚（失败窗口内按 0.5^failures 衰减），
+// 与代理池列表的排序口径保持一致：存活优先，分数优先，同分比延迟。
 func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
 	alive := s.pool.Alive()
 	if len(alive) == 0 {
@@ -180,15 +183,25 @@ func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
 	}
 	s.mu.Unlock()
 
-	best := candidates[0]
-	bestWeight := weight(best, penalties[best.ID])
-	for _, n := range candidates[1:] {
-		if w := weight(n, penalties[n.ID]); w > bestWeight {
-			best = n
-			bestWeight = w
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if ra, rb := pool.StatusRank(a.Status), pool.StatusRank(b.Status); ra != rb {
+			return ra < rb
 		}
-	}
-	return best
+		sa := effectiveScore(a, penalties[a.ID])
+		sb := effectiveScore(b, penalties[b.ID])
+		if sa != sb {
+			return sa > sb
+		}
+		if a.Latency != b.Latency {
+			return a.Latency < b.Latency
+		}
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		return a.Host < b.Host
+	})
+	return candidates[0]
 }
 
 // FailOn records a consecutive failure for the node so its weight drops and
@@ -221,16 +234,15 @@ func (s *Selector) Success(id int64) {
 	delete(s.failures, id)
 }
 
-// weight returns score / latency scaled by the failure penalty.
-func weight(n *model.ProxyNode, failures int) float64 {
-	lat := n.Latency
-	if lat <= 0 {
-		lat = 1
-	}
+// effectiveScore 返回节点在选择阶段使用的有效分数：
+// 失败窗口内按 0.5^failures 衰减，窗口外恢复原始分数。
+func effectiveScore(n *model.ProxyNode, failures int) float64 {
 	if n.Score <= 0 {
 		return 0
 	}
-	w := float64(n.Score) / float64(lat)
-	w *= math.Pow(failurePenalty, float64(failures))
-	return math.Max(0, w*float64(1000))
+	s := float64(n.Score)
+	if failures > 0 {
+		s *= math.Pow(failurePenalty, float64(failures))
+	}
+	return s
 }
