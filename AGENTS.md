@@ -83,14 +83,14 @@ proxy-core 二进制（`dist:win` 为 `proxy-core.exe`，`dist:linux`/`dist:mac`
 
 ```
 proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPilot/proxy-core）
-  main.go              # 入口：装配各模块，spawn 后输出 PROXYPILOT_TOKEN 供前端鉴权
-  api/                 # Gin REST 路由 + X-Token 鉴权中间件 + WebSocket 实时推送
+  main.go              # 入口：装配各模块，spawn 后输出 PROXYPILOT_TOKEN 供前端鉴权；启动订阅 server
+  api/                 # Gin REST 路由 + X-Token 鉴权中间件 + WebSocket 实时推送 + 对外订阅端点
   bus/                 # 日志/进度事件 pub/sub（回放历史，非阻塞发布）
   collector/           # 订阅抓取（fetcher.go）与定时调度（subscription.go）
   config/              # 配置：默认值 + PROXYPILOT_* 环境变量覆盖
   gateway/             # 本地 HTTP / HTTPS CONNECT / SOCKS5 代理出口
   model/               # 数据模型（ProxyNode / Subscription / CheckResult 等）
-  parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）
+  parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）与导出（proxy_export.go）
   pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
   scheduler/           # 出口选择：weight = score/latency，失败惩罚窗口 30s，粘性绑定 10min
   storage/             # SQLite（modernc.org/sqlite，无 CGO）
@@ -144,12 +144,20 @@ app/                   # Electron UI
 
 - API 仅监听 `127.0.0.1:17890`，所有请求必须带 `X-Token` header
   （token 由 proxy-core 启动时随机生成并通过 stdout 输出给 Electron）。
-- 不要把 session token、订阅 URL 等敏感信息写进日志或提交到仓库。
+- 不要把 session token、订阅 URL、订阅密钥等敏感信息写进日志或提交到仓库。
 - 代理网关默认出口 `127.0.0.1:7892`，HTTP 与 SOCKS5 共用同一端口（按连接首字节自动识别分流）。
   端口被占用会自动向后顺延，实际端口以 `/api/status` 返回值为准；仅绑定本机，不要修改为对外暴露。
+- **对外订阅服务**独立监听 `127.0.0.1:17891`（`subscription_listen` 可配置）：把代理池中存活的节点
+  作为订阅源对外提供，订阅 URL 为 `http://<host>:<port>/sub/<token>`（支持 `?format=plain|base64`，
+  默认 base64）。订阅密钥独立于 session token，可随时重置；关闭时返回 404，密钥错误返回 401。
+  默认仅本机监听，对外暴露（`0.0.0.0:17891`）需用户显式配置，避免把管理 API 一起暴露；
+  监听地址修改后需重启 proxy-core 生效（无热更新）。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
   `proxy_port` / `check_target` / `check_anonymity_target` / `check_timeout` / `check_concurrency` /
-  `refresh_interval`；启动时 `config.LoadOverrides()` 从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。
+  `refresh_interval` / `subscription_enabled` / `subscription_listen`；启动时 `config.LoadOverrides()`
+  从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。`subscription_token` 不进
+  `/api/settings` 通用表单（避免泄露），由 `/api/subscription` 专门接口管理（GET 返回、
+  PUT `{resetToken:true}` 重置），首次启动随机生成并持久化。
 - 匿名性评分优先使用真实探测（`check_anonymity_target` 回显端点，默认 `https://httpbin.org/anything`）：
   对比直连/经代理的出口 IP 与目标收到的请求头，按 源 IP 隐藏 40% + 头泄漏 30% + 代理特征 30% 加权；
   在此基础上叠加调节项：两次经代理采样出口 IP 不同（轮换代理）+5，请求被代理改写（回显

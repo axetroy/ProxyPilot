@@ -77,6 +77,21 @@ func main() {
 		}
 	}()
 
+	// 订阅服务：独立端口，仅暴露订阅端点。默认仅监听本机；
+	// 如需局域网设备拉取订阅，用户需在设置中显式把监听地址改为 0.0.0.0:17891。
+	var subSrv *http.Server
+	if cfg.SubEnabled {
+		subSrv = &http.Server{Addr: cfg.SubListen, Handler: api.NewSubscriptionRouter(services)}
+		go func() {
+			busc.Info(fmt.Sprintf("subscription service listening on %s", cfg.SubListen))
+			if err := subSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				busc.Error(fmt.Sprintf("subscription server: %v", err))
+			}
+		}()
+	} else {
+		busc.Info("subscription service disabled")
+	}
+
 	// Print the session token for the Electron wrapper to pick up.
 	fmt.Printf("PROXYPILOT_TOKEN=%s\n", cfg.SessionToken)
 	fmt.Printf("PROXYPILOT_API=http://%s\n", cfg.APIBind)
@@ -92,5 +107,8 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+	if subSrv != nil {
+		_ = subSrv.Shutdown(shutdownCtx)
+	}
 	gw.Stop()
 }

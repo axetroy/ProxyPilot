@@ -84,6 +84,16 @@ export interface UpdateSettingsResult {
   settings: SettingItem[]
 }
 
+/** 订阅导出配置（GET/PUT /api/subscription） */
+export interface SubscriptionExportConfig {
+  enabled: boolean
+  listen: string
+  host: string
+  lanIPs: string[]
+  token: string
+  url: string
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

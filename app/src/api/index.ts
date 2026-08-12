@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SystemStatus, UpdateSettingsResult } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, UpdateSettingsResult } from '@/types'
 
 const API_BASE = 'http://127.0.0.1:17890'
 
@@ -182,6 +182,37 @@ export async function updateSettings(updates: Record<string, string>): Promise<A
   await ensureApiReady()
   const { data } = await http.put<ApiResponse<UpdateSettingsResult>>('/api/settings', updates)
   return data
+}
+
+export async function getSubscriptionConfig(): Promise<ApiResponse<SubscriptionExportConfig>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<SubscriptionExportConfig>>('/api/subscription')
+  return data
+}
+
+export async function updateSubscriptionConfig(patch: {
+  enabled?: boolean
+  listen?: string
+  host?: string
+  resetToken?: boolean
+}): Promise<ApiResponse<SubscriptionExportConfig>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<SubscriptionExportConfig>>('/api/subscription', patch)
+  return data
+}
+
+/** 导出存活节点：format 为 json（默认）/ base64 / plain，文本格式直接返回内容 */
+export async function exportProxies(format: 'json' | 'base64' | 'plain' = 'json'): Promise<ApiResponse<unknown>> {
+  await ensureApiReady()
+  if (format === 'json') {
+    const { data } = await http.get<ApiResponse<unknown>>('/api/export')
+    return data
+  }
+  const { data } = await http.get<{ code: number; msg: string; data?: unknown }>(`/api/export?format=${format}`, {
+    responseType: 'text',
+  })
+  // 文本格式的响应体即订阅内容，这里包一层以便调用方统一处理
+  return { code: data.code ?? 0, msg: data.msg ?? 'ok', data: typeof data === 'string' ? data : (data as unknown as { data?: unknown })?.data }
 }
 
 export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {

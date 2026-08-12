@@ -438,6 +438,48 @@ ws://127.0.0.1:17890/ws
 
 ---
 
+# 6.7 对外订阅服务
+
+将代理池中**存活的节点**作为订阅源对外提供，其他设备 / 客户端
+（Clash、v2ray 等）通过订阅 URL 拉取节点列表。
+
+## 独立监听端口
+
+订阅服务与主 API 分离，默认：
+
+```
+127.0.0.1:17891
+```
+
+- 默认仅监听本机；如需局域网设备订阅，在前端「设置 → 订阅服务」中把监听地址
+  改为 `0.0.0.0:17891`（修改后需重启应用生效）。
+- 独立端口避免把带鉴权中间件的管理 API（17890）一起暴露出去。
+- 订阅开关关闭时返回 404；密钥错误时返回 401。
+
+## 订阅 URL
+
+```
+GET /sub/<subscription_token>?format=base64|plain
+```
+
+- token 位于 path（v2ray 订阅风格），独立于管理 API 的 session token，
+  首次启动随机生成并持久化，可在设置页一键重置。
+- 默认返回 base64 编码的节点列表（与解析路径互逆）；`format=plain` 返回明文，
+  每行一个 `protocol://user:pass@host:port`。
+- 内容仅包含当前存活的节点，按 分数 → 延迟 → ID → host 排序。
+
+## 配置接口
+
+```
+GET /api/subscription   # 返回 {enabled, listen, token, url}
+PUT /api/subscription   # body: {enabled?, listen?, resetToken?}
+```
+
+持久化到 SQLite settings 表：`subscription_enabled`、`subscription_listen`、
+`subscription_token`。
+
+---
+
 # 7. Golang Core模块设计
 
 目录：
@@ -867,6 +909,14 @@ X-Token: xxxx
 ```
 
 避免变成开放代理。
+
+## 订阅服务保护
+
+- 订阅服务独立监听 `127.0.0.1:17891`，默认不对外；对外监听必须由用户显式配置
+  `0.0.0.0`，不会随管理 API 一起暴露。
+- 订阅密钥独立于 session token，通过 URL 中的 path 传递，
+  校验使用常量时间比较，避免时序攻击。
+- 订阅开关默认开启，但关闭后立即返回 404，密钥泄露可随时重置。
 
 ---
 
