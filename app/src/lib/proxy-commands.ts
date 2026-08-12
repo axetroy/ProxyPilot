@@ -11,7 +11,7 @@ export interface ProxyCommandSet {
 export interface GatewayCommandSet {
   platform: Platform
   label: string
-  /** 设置 HTTP 代理环境变量的命令（HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口） */
+  /** 设置 HTTP 代理环境变量的命令（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 走 HTTP 出口） */
   httpEnv: string
   /** 设置 SOCKS5 代理环境变量的命令（ALL_PROXY 走 SOCKS5 出口） */
   socks5Env: string
@@ -41,7 +41,7 @@ export function buildCommands(n: ProxyNode): ProxyCommandSet[] {
     {
       platform: 'win32',
       label: 'Windows PowerShell',
-      env: ENV_VARS.map((v) => `$env:${v} = "${url}"`).join('; '),
+      env: ENV_VARS.map((v) => `$env:${v}="${url}"`).join(';'),
     },
     {
       platform: 'win32',
@@ -59,7 +59,7 @@ export function buildCommands(n: ProxyNode): ProxyCommandSet[] {
 /**
  * 根据平台生成对应的网关使用命令。
  * 网关同时提供 HTTP 与 SOCKS5 两个出口，分别生成独立命令：
- * - HTTP 命令：HTTP_PROXY/HTTPS_PROXY 指向 HTTP 出口（如 http://127.0.0.1:7892）
+ * - HTTP 命令：HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 全部指向 HTTP 出口（如 http://127.0.0.1:7892）
  * - SOCKS5 命令：HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 全部指向 SOCKS5 出口
  *   （如 socks5h://127.0.0.1:7892，与 HTTP 共用端口；SOCKS5 同样能处理 HTTP 请求，
  *   因此 HTTP_PROXY/HTTPS_PROXY 也一并设置，兼容只认 HTTP 环境变量的工具）
@@ -68,7 +68,7 @@ export function buildCommands(n: ProxyNode): ProxyCommandSet[] {
  * 避免客户端本地解析出 IPv6 地址后，上游节点因不支持 IPv6 目标而连接失败。
  */
 export function buildGatewayCommands(httpUrl: string, socks5Url: string): GatewayCommandSet[] {
-  const httpEnvVars = ['HTTP_PROXY', 'HTTPS_PROXY']
+  const httpEnvVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']
   const socksEnvVars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']
 
   return [

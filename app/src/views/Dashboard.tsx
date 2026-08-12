@@ -332,7 +332,7 @@ export default function Dashboard() {
         size="lg"
       >
         <Text size="sm" c="dimmed" mb="md">
-          网关同时提供 HTTP 与 SOCKS5 两个出口，可分别复制对应命令：HTTP 命令设置 HTTP_PROXY/HTTPS_PROXY 走 HTTP 出口；SOCKS5 命令设置 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 全部走 SOCKS5 出口（SOCKS5 同样能处理 HTTP 请求）。选择你的平台复制对应命令。
+          网关同时提供 HTTP 与 SOCKS5 两个出口，选择你的平台复制对应命令即可；SOCKS5 命令同样能处理 HTTP 请求。
         </Text>
         <Tabs value={activeTab} onChange={setActiveTab}>
           <Tabs.List>
@@ -349,7 +349,7 @@ export default function Dashboard() {
                   <div>
                     <Group justify="space-between" align="center" mb={4}>
                       <Text size="sm" fw={600}>HTTP 代理命令</Text>
-                      <Badge color="blue" variant="light" size="xs">HTTP_PROXY / HTTPS_PROXY</Badge>
+                      <Badge color="blue" variant="light" size="xs">HTTP_PROXY / HTTPS_PROXY / ALL_PROXY</Badge>
                     </Group>
                     <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                       {set.httpEnv}
