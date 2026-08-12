@@ -188,6 +188,14 @@ function resolveIconPath(): string {
   return path.join(__dirname, '..', '..', 'build', 'icon.png')
 }
 
+// macOS 菜单栏托盘模板图标路径（打包后 <resources>/trayTemplate.png）。
+function resolveTrayIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'trayTemplate.png')
+  }
+  return path.join(__dirname, '..', '..', 'build', 'trayTemplate.png')
+}
+
 function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow()
@@ -199,7 +207,15 @@ function showMainWindow(): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(resolveIconPath())
+  let icon: Electron.NativeImage
+  if (process.platform === 'darwin') {
+    // macOS 菜单栏使用模板图标：16x16（自动加载 @2x），系统按深浅色菜单栏自动渲染单色
+    icon = nativeImage.createFromPath(resolveTrayIconPath())
+    icon.setTemplateImage(true)
+  } else {
+    // Windows/Linux 托盘可以显示彩色大图（系统会自动缩放）
+    icon = nativeImage.createFromPath(resolveIconPath())
+  }
   tray = new Tray(icon)
   tray.setToolTip('ProxyPilot')
   tray.setContextMenu(

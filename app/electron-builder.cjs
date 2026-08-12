@@ -60,6 +60,15 @@ module.exports = () => {
         from: path.join(__dirname, 'build', 'icon.png'),
         to: 'icon.png',
       },
+      // macOS 菜单栏托盘模板图标（16x16 + @2x，打包后位于 resources/trayTemplate*.png）
+      {
+        from: path.join(__dirname, 'build', 'trayTemplate.png'),
+        to: 'trayTemplate.png',
+      },
+      {
+        from: path.join(__dirname, 'build', 'trayTemplate@2x.png'),
+        to: 'trayTemplate@2x.png',
+      },
     ],
     win: {
       icon: 'build/icon.ico',

@@ -1,7 +1,8 @@
 // 生成应用图标：将 build/icon.svg 渲染为 build/icon.png（512x512）与 build/icon.ico
+// 并生成 macOS 菜单栏托盘模板图标（build/trayTemplate.png 16x16 + trayTemplate@2x.png 32x32）
 // 用法: npx electron scripts/generate-icon.js
 // 依赖 Electron 离屏渲染（Chromium），无需额外图像库。
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, nativeImage } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -9,6 +10,9 @@ const buildDir = path.join(__dirname, '..', 'app', 'build')
 const svgPath = path.join(buildDir, 'icon.svg')
 const pngPath = path.join(buildDir, 'icon.png')
 const icoPath = path.join(buildDir, 'icon.ico')
+const traySvgPath = path.join(buildDir, 'trayTemplate.svg')
+const trayPngPath = path.join(buildDir, 'trayTemplate.png')
+const trayPng2xPath = path.join(buildDir, 'trayTemplate@2x.png')
 
 // 将 PNG 打包为 ICO（PNG 内嵌格式，Windows Vista+ 支持，可容纳 512x512）
 function createIco(pngBuffer) {
@@ -54,6 +58,18 @@ app.whenReady().then(async () => {
     fs.writeFileSync(icoPath, createIco(png))
     console.log(`已生成: ${pngPath} (${image.getSize().width}x${image.getSize().height})`)
     console.log(`已生成: ${icoPath}`)
+    // macOS 菜单栏托盘模板图标：透明背景 + 单色纸飞机
+    // 16x16（1x）与 32x32（@2x），Electron createFromPath 自动加载 @2x 表示。
+    // 复用同一窗口顺序加载（headless 下销毁后新建窗口可能加载失败）。
+    await win.loadFile(traySvgPath)
+    await new Promise((r) => setTimeout(r, 800))
+    const trayImage = await win.webContents.capturePage()
+    const tray1x = trayImage.resize({ width: 16, height: 16 })
+    const tray2x = trayImage.resize({ width: 32, height: 32 })
+    fs.writeFileSync(trayPngPath, tray1x.toPNG())
+    fs.writeFileSync(trayPng2xPath, tray2x.toPNG())
+    console.log(`已生成: ${trayPngPath} (16x16)`)
+    console.log(`已生成: ${trayPng2xPath} (32x32 @2x)`)
     win.destroy()
   } catch (e) {
     console.error('生成图标失败:', e)
