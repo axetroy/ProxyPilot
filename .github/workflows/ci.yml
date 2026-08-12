@@ -70,6 +70,10 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Lint (ESLint)
+        working-directory: app
+        run: npm run lint
+
       - name: Typecheck
         working-directory: app
         run: npm run typecheck
