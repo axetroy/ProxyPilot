@@ -28,6 +28,10 @@ module.exports = () => {
     process.env.PP_CORE_BIN ||
     (process.platform === 'win32' ? 'proxy-core.exe' : 'proxy-core')
 
+  // 默认构建当前主机架构：本地 `npm run dist` 只产出本机架构的安装包。
+  // CI 通过 dist:*:arm64 / dist:mac:x64 等脚本的 --x64/--arm64 参数显式覆盖。
+  const hostArch = process.arch === 'arm64' ? 'arm64' : 'x64'
+
   return {
     appId: 'com.axetroy.proxypilot',
     productName: 'ProxyPilot',
@@ -59,7 +63,8 @@ module.exports = () => {
     ],
     win: {
       icon: 'build/icon.ico',
-      target: [{ target: 'nsis', arch: ['x64'] }],
+      // 默认跟随当前主机架构；其他架构由 dist:win:arm64（--win --arm64）覆盖构建
+      target: [{ target: 'nsis', arch: [hostArch] }],
     },
     nsis: {
       oneClick: false,
@@ -69,12 +74,18 @@ module.exports = () => {
     },
     linux: {
       icon: 'build/icon.png',
-      target: [{ target: 'AppImage', arch: ['x64', 'arm64'] }],
+      // 默认跟随当前主机架构；其他架构由 dist:linux:arm64（--linux --arm64）覆盖构建。
+      // 注意同一平台多架构需分开构建：extraResources 里的 proxy-core
+      // 是单个二进制，一次构建只能对应一个目标架构。
+      target: [{ target: 'AppImage', arch: [hostArch] }],
       category: 'Network',
     },
     mac: {
       icon: 'build/icon.png',
-      target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
+      // 默认跟随当前主机架构（Apple Silicon 上产 arm64）；x64 由
+      // dist:mac:x64（--mac --x64）覆盖构建，同一平台多架构分开构建以保证
+      // proxy-core 架构匹配。dmg 只能在 macOS 上构建。
+      target: [{ target: 'dmg', arch: [hostArch] }],
       category: 'public.app-category.utilities',
       // 未配置 Apple Developer 证书：明确不签名（identity: null），
       // 否则 electron-builder 会尝试自动发现证书导致构建失败。

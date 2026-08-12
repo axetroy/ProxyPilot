@@ -114,10 +114,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ---------- 发布：桌面端安装包（electron-builder，三平台） ----------
+  # ---------- 发布：桌面端安装包（electron-builder，平台 × 架构矩阵） ----------
+  #
+  # 架构交叉编译（同一系统内）：
+  #   - windows: x64 runner 上分别构建 win x64 / win arm64（NSIS 支持 arm64）
+  #   - linux:   x64 runner 上分别构建 linux x64 / linux arm64（AppImage 支持交叉架构）
+  #   - mac:     macos runner 上构建 mac arm64 与 mac x64（Apple Silicon 上交叉构建 x64）
+  # proxy-core 二进制由各 dist:* 脚本按目标 GOOS/GOARCH 交叉编译，
+  # 保证打包进安装包的二进制与目标架构一致。
 
   build-app:
-    name: Build app (${{ matrix.platform }})
+    name: Build app (${{ matrix.platform }}-${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: ${{ matrix.os }}
@@ -129,10 +136,28 @@ jobs:
         include:
           - os: windows-latest
             platform: win
+            arch: x64
+            dist: dist:win
+          - os: windows-latest
+            platform: win
+            arch: arm64
+            dist: dist:win:arm64
           - os: ubuntu-latest
             platform: linux
+            arch: x64
+            dist: dist:linux
+          - os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            dist: dist:linux:arm64
           - os: macos-latest
             platform: mac
+            arch: arm64
+            dist: dist:mac
+          - os: macos-latest
+            platform: mac
+            arch: x64
+            dist: dist:mac:x64
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -154,9 +179,9 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Build app (${{ matrix.platform }})
+      - name: Build app (${{ matrix.platform }}-${{ matrix.arch }})
         working-directory: app
-        run: npm run dist:${{ matrix.platform }}
+        run: npm run ${{ matrix.dist }}
         env:
           # CI 无签名证书：禁用自动发现，避免 macOS 签名失败
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

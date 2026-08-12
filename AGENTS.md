@@ -38,9 +38,14 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
 
 - 推送 `v*` tag（如 `v0.1.0`）触发发布，先跑 `test` 矩阵（Go vet/test/lint + 前端 typecheck/build）
 - `release` job（ubuntu）：`goreleaser release` 构建 proxy-core 六目标并创建 GitHub Release
-- `build-app` job（win/linux/mac 矩阵）：`npm run dist:<platform>` 构建安装包
-  （Windows NSIS x64 / Linux AppImage x64+arm64 / macOS dmg x64+arm64），
-  通过 `softprops/action-gh-release` 上传到同一 Release
+- `build-app` job（win/linux/mac × x64/arm64 矩阵）：`npm run dist:<platform>[:arch]` 构建安装包
+  （Windows NSIS x64+arm64 / Linux AppImage x64+arm64 / macOS dmg x64+arm64），
+  通过 `softprops/action-gh-release` 上传到同一 Release。
+  同系统内架构交叉编译（如 linux/x64 编译 linux/arm64）：`dist:*:arm64` 脚本会先按
+  `GOOS/GOARCH` 交叉编译 proxy-core，再以 `--arm64` 参数让 electron-builder 产出对应架构
+  安装包；同一平台多架构必须分开构建（extraResources 里的 proxy-core 是单架构二进制）。
+  本地 `npm run dist` 默认只构建当前主机架构（electron-builder.cjs 中 arch 动态取
+  `process.arch`）；CI 各 `dist:<platform>[:arch]` 脚本通过 `--x64`/`--arm64` 显式覆盖。
 - 安装包命名遵循 electron-builder 升级检测（electron-updater）约定格式
   `${productName}-${version}-${os}-${arch}.${ext}`（如 `ProxyPilot-0.1.5-mac-arm64.dmg`、
   `ProxyPilot-0.1.5-win-x64.exe`、`ProxyPilot-0.1.5-linux-x64.AppImage`），
