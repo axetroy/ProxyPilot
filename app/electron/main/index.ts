@@ -295,11 +295,20 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
+
+    if (mainWindow && mainWindow.isMinimized()) mainWindow.restore()
+
+    mainWindow?.show()
+    mainWindow?.focus()
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // macOS 惯例是关闭所有窗口后应用常驻 Dock；但用户选择「退出程序」行为时，
+  // 关闭主窗口即应直接退出应用（不受平台惯例限制）
+  if (process.platform !== 'darwin' || loadAppSettings().closeBehavior === 'quit') {
+    app.quit()
+  }
 })
 
 app.on('before-quit', () => {
