@@ -161,8 +161,8 @@ func calculateAnonymity(node *model.ProxyNode, probe *model.AnonymityProbe) (int
 		return anonymity, nil
 	}
 
-	// 源 IP 隐藏
-	sourceScore := 50.0
+	// 源 IP 隐藏：所有分支都会显式赋值，避免无效的初始赋值（ineffassign）。
+	var sourceScore float64
 	var hidden *bool
 	switch {
 	case probe.DirectIP != "" && probe.ProxiedIP != "":
