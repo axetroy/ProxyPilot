@@ -28,9 +28,15 @@ module.exports = () => {
     process.env.PP_CORE_BIN ||
     (process.platform === 'win32' ? 'proxy-core.exe' : 'proxy-core')
 
-  // 默认构建当前主机架构：本地 `npm run dist` 只产出本机架构的安装包。
-  // CI 通过 dist:*:arm64 / dist:mac:x64 等脚本的 --x64/--arm64 参数显式覆盖。
-  const hostArch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  // 注意：target 里【不要】写死 arch。electron-builder 中 target 配置里的
+  // `arch` 优先级高于 CLI 的 --x64/--arm64 参数，且当 CLI 指定了架构而某个
+  // 架构条目没有对应 target 时，会回退到该平台的 defaultTarget
+  // （Linux 默认是 ["snap", "appimage"]），导致：
+  //   1. CI 的 dist:*:arm64 实际仍产出 x64 产物；
+  //   2. linux-arm64 构建意外触发 snap target，在无 snapcraft 的
+  //      GitHub Actions runner 上报 "snapcraft process failed ENOENT"。
+  // 因此这里只声明 target 名称，架构完全由 CLI 的 --x64/--arm64 决定；
+  // 未传 flag 时（本地 `npm run dist`）electron-builder 默认构建当前主机架构。
 
   return {
     appId: 'com.axetroy.proxypilot',
@@ -72,8 +78,9 @@ module.exports = () => {
     ],
     win: {
       icon: 'build/icon.ico',
-      // 默认跟随当前主机架构；其他架构由 dist:win:arm64（--win --arm64）覆盖构建
-      target: [{ target: 'nsis', arch: [hostArch] }],
+      // 架构由 CLI --x64/--arm64 决定（dist:win / dist:win:arm64）；
+      // 未指定时默认构建当前主机架构。NSIS 支持 arm64。
+      target: 'nsis',
     },
     nsis: {
       oneClick: false,
@@ -83,18 +90,18 @@ module.exports = () => {
     },
     linux: {
       icon: 'build/icon.png',
-      // 默认跟随当前主机架构；其他架构由 dist:linux:arm64（--linux --arm64）覆盖构建。
-      // 注意同一平台多架构需分开构建：extraResources 里的 proxy-core
-      // 是单个二进制，一次构建只能对应一个目标架构。
-      target: [{ target: 'AppImage', arch: [hostArch] }],
+      // 只构建 AppImage，架构由 CLI --x64/--arm64 决定（dist:linux / dist:linux:arm64）。
+      // 同平台多架构需分开构建：extraResources 里的 proxy-core 是单个二进制，
+      // 一次构建只能对应一个目标架构。不要在这里声明 arch，否则会覆盖 CLI 参数
+      // 并可能意外触发 snap target（见文件头部注释）。
+      target: 'AppImage',
       category: 'Network',
     },
     mac: {
       icon: 'build/icon.png',
-      // 默认跟随当前主机架构（Apple Silicon 上产 arm64）；x64 由
-      // dist:mac:x64（--mac --x64）覆盖构建，同一平台多架构分开构建以保证
-      // proxy-core 架构匹配。dmg 只能在 macOS 上构建。
-      target: [{ target: 'dmg', arch: [hostArch] }],
+      // 架构由 CLI --arm64/--x64 决定（dist:mac / dist:mac:x64），
+      // 同平台多架构分开构建以保证 proxy-core 架构匹配。dmg 只能在 macOS 上构建。
+      target: 'dmg',
       category: 'public.app-category.utilities',
       // 未配置 Apple Developer 证书：明确不签名（identity: null），
       // 否则 electron-builder 会尝试自动发现证书导致构建失败。

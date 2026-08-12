@@ -44,8 +44,12 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
   同系统内架构交叉编译（如 linux/x64 编译 linux/arm64）：`dist:*:arm64` 脚本会先按
   `GOOS/GOARCH` 交叉编译 proxy-core，再以 `--arm64` 参数让 electron-builder 产出对应架构
   安装包；同一平台多架构必须分开构建（extraResources 里的 proxy-core 是单架构二进制）。
-  本地 `npm run dist` 默认只构建当前主机架构（electron-builder.cjs 中 arch 动态取
-  `process.arch`）；CI 各 `dist:<platform>[:arch]` 脚本通过 `--x64`/`--arm64` 显式覆盖。
+  架构完全由 CLI 的 `--x64`/`--arm64` 参数决定（`app/electron-builder.cjs` 的 target 只声明
+  target 名称、不写死 arch：写死 arch 会覆盖 CLI 参数，且 CLI 指定了架构而该架构无对应
+  target 时会回退到 Linux 默认 target `["snap","appimage"]`，在无 snapcraft 的 GitHub
+  Actions runner 上报 "snapcraft process failed ENOENT"）；本地 `npm run dist` 未传
+  flag 时默认构建当前主机架构，CI 各 `dist:<platform>[:arch]` 脚本通过 `--x64`/`--arm64`
+  显式覆盖。
 - 安装包命名遵循 electron-builder 升级检测（electron-updater）约定格式
   `${productName}-${version}-${os}-${arch}.${ext}`（如 `ProxyPilot-0.1.5-mac-arm64.dmg`、
   `ProxyPilot-0.1.5-win-x64.exe`、`ProxyPilot-0.1.5-linux-x64.AppImage`），
