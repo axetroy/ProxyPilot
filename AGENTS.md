@@ -41,6 +41,11 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
 - `build-app` job（win/linux/mac 矩阵）：`npm run dist:<platform>` 构建安装包
   （Windows NSIS x64 / Linux AppImage x64+arm64 / macOS dmg x64+arm64），
   通过 `softprops/action-gh-release` 上传到同一 Release
+- 安装包命名遵循 electron-builder 升级检测（electron-updater）约定格式
+  `${productName}-${version}-${os}-${arch}.${ext}`（如 `ProxyPilot-0.1.5-mac-arm64.dmg`、
+  `ProxyPilot-0.1.5-win-x64.exe`、`ProxyPilot-0.1.5-linux-x64.AppImage`），
+  由 `app/electron-builder.cjs` 的 `artifactName` 配置（注意必须用单引号字符串，
+  反引号模板字符串会把 `${productName}` 等宏立即插值导致命名错误）
 - 发布需 `GITHUB_TOKEN`（仓库默认提供，`contents: write` 权限）
 
 ### app（Electron 前端）

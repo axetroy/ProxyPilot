@@ -31,6 +31,13 @@ module.exports = () => {
   return {
     appId: 'com.axetroy.proxypilot',
     productName: 'ProxyPilot',
+    // 安装包命名遵循 electron-builder 升级检测（electron-updater）约定的格式：
+    // ${productName}-${version}-${os}-${arch}.${ext}
+    // 例如：ProxyPilot-0.1.5-mac-arm64.dmg、ProxyPilot-0.1.5-win-x64.exe、
+    // ProxyPilot-0.1.5-linux-x64.AppImage（包名明确包含平台与架构）。
+    // 注意：必须用单引号字符串；若用 JS 模板字符串（反引号），
+    // ${productName} 等宏会被立即插值，导致产物命名错误。
+    artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
     // 禁用 electron-builder 自动发布：检测到 GITHUB_TOKEN 时它会在 tag 构建
     // 尝试自行上传到 GitHub（runner 代理下报 self-signed certificate 错误）。
     // 上传统一由 CI 的 softprops/action-gh-release 负责。
