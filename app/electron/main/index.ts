@@ -200,10 +200,6 @@ function showMainWindow(): void {
 
 function createTray(): void {
   const icon = nativeImage.createFromPath(resolveIconPath())
-  // macOS 菜单栏图标使用模板图片：系统自动适配深浅色菜单栏（单色渲染）
-  if (process.platform === 'darwin') {
-    icon.setTemplateImage(true)
-  }
   tray = new Tray(icon)
   tray.setToolTip('ProxyPilot')
   tray.setContextMenu(
