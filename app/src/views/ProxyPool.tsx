@@ -34,6 +34,29 @@ function statusLabel(n: ProxyNode) {
   }
 }
 
+// AnonymityBadge 在列表中标注节点的匿名性：优先使用真实探测明细分数，
+// 回退到评分明细中的匿名性分数（启发式）；非存活或未评分节点显示占位符。
+function AnonymityBadge({ node }: { node: ProxyNode }) {
+  console.log(node)
+  const d = node.anonymityDetail
+  const score = d?.score ?? node.scoreBreakdown?.anonymity
+  if (node.status !== 'alive' || score === undefined) {
+    return <Text size="xs" c="dimmed">—</Text>
+  }
+  const probed = d != null
+  const info =
+    score >= 80
+      ? { label: '匿名', color: 'green' }
+      : score >= 60
+        ? { label: '半匿名', color: 'yellow' }
+        : { label: '不匿名', color: 'red' }
+  return (
+    <Tooltip label={`匿名性 ${score} 分（${probed ? '真实探测' : '启发式估算'}）`}>
+      <Badge color={info.color} variant="light">{info.label}</Badge>
+    </Tooltip>
+  )
+}
+
 export default function ProxyPool() {
   const nodes = usePoolStore((s) => s.nodes)
   const loading = usePoolStore((s) => s.loading)
@@ -59,6 +82,11 @@ export default function ProxyPool() {
   const ROW_HEIGHT = 56
   const VIEWPORT_HEIGHT = 520
   const OVERSCAN = 8
+  // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
+  // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度：
+  // 70+180+90+90+70+84+60+180 = 824，+7×8 gap +24 padding = 904。
+  const GRID_COLUMNS = '70px minmax(180px, 2.2fr) 90px 90px 70px 84px 60px 180px'
+  const GRID_MIN_WIDTH = 904
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -168,7 +196,7 @@ export default function ProxyPool() {
         <Box
           ref={viewportRef}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          style={{ maxHeight: VIEWPORT_HEIGHT, overflowY: 'auto', borderRadius: 12, border: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}
+          style={{ maxHeight: VIEWPORT_HEIGHT, overflowY: 'auto', overflowX: 'auto', borderRadius: 12, border: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}
         >
           <Box style={{ height: totalHeight, minHeight: VIEWPORT_HEIGHT, position: 'relative' }}>
             <Box
@@ -177,7 +205,8 @@ export default function ProxyPool() {
                 top: 0,
                 zIndex: 2,
                 display: 'grid',
-                gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 180px',
+                gridTemplateColumns: GRID_COLUMNS,
+                minWidth: GRID_MIN_WIDTH,
                 alignItems: 'center',
                 gap: 8,
                 padding: '0 12px',
@@ -196,6 +225,7 @@ export default function ProxyPool() {
               <Text size="xs">协议</Text>
               <Text size="xs">延迟</Text>
               <Text size="xs">评分</Text>
+              <Text size="xs">匿名</Text>
               <Text size="xs">状态</Text>
               <Text size="xs" style={{ textAlign: 'right' }}>操作</Text>
             </Box>
@@ -211,7 +241,8 @@ export default function ProxyPool() {
                     key={n.id}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '70px minmax(180px, 2.2fr) 90px 90px 70px 110px 180px',
+                      gridTemplateColumns: GRID_COLUMNS,
+                      minWidth: GRID_MIN_WIDTH,
                       alignItems: 'center',
                       gap: 8,
                       padding: '0 12px',
@@ -228,6 +259,7 @@ export default function ProxyPool() {
                         {n.score}
                       </Button>
                     </Tooltip>
+                    <AnonymityBadge node={n} />
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
                     <Group justify="flex-end" gap="xs">
                       <Tooltip label="复制代理命令">
@@ -316,6 +348,32 @@ export default function ProxyPool() {
   )
 }
 
+function anonymityHint(node: ProxyNode, value: number): string {
+  const d = node.anonymityDetail
+  if (!d) {
+    // 无探测明细：回退说明
+    if (value === 0) return '死亡节点，匿名性记 0 分'
+    return node.protocol === 'socks5' ? 'SOCKS5 默认 95 分（未探测到回显数据）' : node.username ? '带认证，匿名性较低（未探测到回显数据）' : 'HTTP/HTTPS 默认 80 分（未探测到回显数据）'
+  }
+  const parts: string[] = []
+  if (d.sourceIpHidden === undefined) {
+    parts.push('源 IP 无法对比')
+  } else if (d.sourceIpHidden) {
+    parts.push('源 IP 已隐藏')
+  } else {
+    parts.push('源 IP 未隐藏（透明）')
+  }
+  parts.push(`头泄漏 ${d.headerLeaks?.length ?? 0} 项`)
+  parts.push(`代理特征 ${d.proxyMarkers?.length ?? 0} 项`)
+  if (d.rotatingIp) {
+    parts.push('出口 IP 轮换')
+  }
+  if ((d.reqIssues?.length ?? 0) > 0) {
+    parts.push(`连接信息问题 ${d.reqIssues?.length} 项`)
+  }
+  return parts.join(' · ')
+}
+
 function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
   const b = node.scoreBreakdown
   if (!b) {
@@ -326,11 +384,12 @@ function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
       </Stack>
     )
   }
+  const d = node.anonymityDetail
   const rows = [
     { label: '成功率', weight: b.weightSuccess, value: b.successRate, hint: '历史成功次数占比，权重最高' },
     { label: '延迟', weight: b.weightLatency, value: b.latencyScore, hint: `${node.latency}ms 映射为 ${b.latencyScore} 分` },
     { label: '稳定性', weight: b.weightStability, value: b.stability, hint: '失败次数越少越稳定' },
-    { label: '匿名性', weight: b.weightAnonymity, value: b.anonymity, hint: node.protocol === 'socks5' ? 'SOCKS5 默认 95 分' : node.username ? '带认证，匿名性较低' : 'HTTP/HTTPS 默认 80 分' },
+    { label: '匿名性', weight: b.weightAnonymity, value: b.anonymity, hint: anonymityHint(node, b.anonymity) },
   ]
   return (
     <Stack gap="md">
@@ -358,6 +417,38 @@ function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
           <Text size="xs" c="dimmed" mt={2}>{r.hint}</Text>
         </div>
       ))}
+
+      {d && (d.headerLeaks?.length || d.proxyMarkers?.length || d.sourceIpHidden !== undefined || d.rotatingIp || d.reqIssues?.length) && (
+        <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
+          <Text size="xs" fw={600} mb={4}>匿名性探测明细</Text>
+          {d.sourceIpHidden !== undefined && (
+            <Text size="xs" c="dimmed">
+              源 IP 隐藏：{d.sourceIpHidden ? '是（代理出口 ≠ 直连出口）' : '否（透明代理，出口 IP 相同）'}
+            </Text>
+          )}
+          {d.rotatingIp && (
+            <Text size="xs" c="dimmed">出口 IP 轮换：是（两次采样出口不同，难以关联同一用户）</Text>
+          )}
+          {d.headerLeaks && d.headerLeaks.length > 0 && (
+            <Text size="xs" c="dimmed">头泄漏：</Text>
+          )}
+          {d.headerLeaks?.map((h) => (
+            <Code key={h} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{h}</Code>
+          ))}
+          {d.proxyMarkers && d.proxyMarkers.length > 0 && (
+            <Text size="xs" c="dimmed" mt={4}>代理特征：</Text>
+          )}
+          {d.proxyMarkers?.map((h) => (
+            <Code key={h} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{h}</Code>
+          ))}
+          {d.reqIssues && d.reqIssues.length > 0 && (
+            <Text size="xs" c="dimmed" mt={4}>连接信息问题（请求被改写）：</Text>
+          )}
+          {d.reqIssues?.map((h) => (
+            <Code key={h} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{h}</Code>
+          ))}
+        </Box>
+      )}
 
       <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
         <Text size="xs" c="dimmed" mb={4}>计算公式（加权求和，死亡节点总分减半）</Text>

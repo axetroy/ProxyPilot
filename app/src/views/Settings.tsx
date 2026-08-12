@@ -241,6 +241,7 @@ export default function Settings() {
                   </Button>
                 ) : undefined
               }
+              rightSectionWidth={64}
             />
           ))}
 

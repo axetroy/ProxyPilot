@@ -20,11 +20,12 @@ var Version = "0.1.5"
 // 持久化配置项的 key。
 // APIBind / DBPath / SessionToken 属于启动期固定配置，不支持通过界面修改。
 const (
-	KeyProxyPort     = "proxy_port"
-	KeyCheckTarget   = "check_target"
-	KeyCheckTimeout  = "check_timeout"
-	KeyCheckConcurr  = "check_concurrency"
-	KeyRefreshPeriod = "refresh_interval"
+	KeyProxyPort         = "proxy_port"
+	KeyCheckTarget       = "check_target"
+	KeyCheckAnonymityTgt = "check_anonymity_target"
+	KeyCheckTimeout      = "check_timeout"
+	KeyCheckConcurr      = "check_concurrency"
+	KeyRefreshPeriod     = "refresh_interval"
 )
 
 // SettingDef 描述一个可在前端配置的项。
@@ -41,6 +42,7 @@ func Settings() []SettingDef {
 	return []SettingDef{
 		{Key: KeyProxyPort, Default: "7892", Desc: "代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用自动顺延）", Validate: validatePort},
 		{Key: KeyCheckTarget, Default: "https://www.apple.com/library/test/success.html", Desc: "节点检测目标 URL", Validate: validateURL},
+		{Key: KeyCheckAnonymityTgt, Default: "https://httpbin.org/anything", Desc: "匿名性检测回显端点（需返回 origin 与 headers 字段）", Validate: validateURL},
 		{Key: KeyCheckTimeout, Default: "10s", Desc: "单节点检测超时（如 5s、500ms）", Validate: validateDuration},
 		{Key: KeyCheckConcurr, Default: "32", Desc: "并发检测节点数", Validate: validatePositiveInt},
 		{Key: KeyRefreshPeriod, Default: "15m", Desc: "代理池自动检测周期（如 30m、1h）", Validate: validateDuration},
@@ -79,27 +81,29 @@ func validatePositiveInt(v string) error {
 }
 
 type Config struct {
-	APIBind          string
-	DBPath           string
-	ProxyHost        string // 代理监听 host，固定仅本机，不允许修改
-	ProxyPort        int    // 代理监听端口（HTTP 与 SOCKS5 共用）
-	SessionToken     string
-	CheckTarget      string
-	CheckTimeout     time.Duration
-	CheckConcurrency int
-	RefreshInterval  time.Duration
+	APIBind              string
+	DBPath               string
+	ProxyHost            string // 代理监听 host，固定仅本机，不允许修改
+	ProxyPort            int    // 代理监听端口（HTTP 与 SOCKS5 共用）
+	SessionToken         string
+	CheckTarget          string
+	CheckAnonymityTarget string
+	CheckTimeout         time.Duration
+	CheckConcurrency     int
+	RefreshInterval      time.Duration
 }
 
 func New() *Config {
 	c := &Config{
-		APIBind:          "127.0.0.1:17890",
-		DBPath:           "proxypilot.db",
-		ProxyHost:        "127.0.0.1",
-		ProxyPort:        7892,
-		CheckTarget:      "https://www.apple.com/library/test/success.html",
-		CheckTimeout:     10 * time.Second,
-		CheckConcurrency: 32,
-		RefreshInterval:  15 * time.Minute,
+		APIBind:              "127.0.0.1:17890",
+		DBPath:               "proxypilot.db",
+		ProxyHost:            "127.0.0.1",
+		ProxyPort:            7892,
+		CheckTarget:          "https://www.apple.com/library/test/success.html",
+		CheckAnonymityTarget: "https://httpbin.org/anything",
+		CheckTimeout:         10 * time.Second,
+		CheckConcurrency:     32,
+		RefreshInterval:      15 * time.Minute,
 	}
 	c.SessionToken = generatedSessionToken()
 	c.ApplyEnv()
@@ -128,6 +132,9 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := os.Getenv("PROXYPILOT_CHECK_TARGET"); v != "" {
 		c.CheckTarget = v
+	}
+	if v := os.Getenv("PROXYPILOT_CHECK_ANONYMITY_TARGET"); v != "" {
+		c.CheckAnonymityTarget = v
 	}
 	if v := os.Getenv("PROXYPILOT_CHECK_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -166,6 +173,8 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 		}, true
 	case KeyCheckTarget:
 		return func(v string) { c.CheckTarget = v }, true
+	case KeyCheckAnonymityTgt:
+		return func(v string) { c.CheckAnonymityTarget = v }, true
 	case KeyCheckTimeout:
 		return func(v string) { if d, err := time.ParseDuration(v); err == nil { c.CheckTimeout = d } }, true
 	case KeyCheckConcurr:
@@ -203,6 +212,8 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return strconv.Itoa(c.ProxyPort), true
 	case KeyCheckTarget:
 		return c.CheckTarget, true
+	case KeyCheckAnonymityTgt:
+		return c.CheckAnonymityTarget, true
 	case KeyCheckTimeout:
 		return c.CheckTimeout.String(), true
 	case KeyCheckConcurr:

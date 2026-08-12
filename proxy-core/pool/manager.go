@@ -375,6 +375,7 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 	fresh.Status = status
 	fresh.Latency = result.Latency
 	fresh.Score = score.Score
+	fresh.AnonymityDetail = score.AnonymityDetail
 	fresh.LastCheck = time.Now()
 	if result.OK {
 		fresh.SuccessCount++
@@ -402,6 +403,7 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 		live.SuccessCount = fresh.SuccessCount
 		live.FailCount = fresh.FailCount
 		live.LastCheck = fresh.LastCheck
+		live.AnonymityDetail = fresh.AnonymityDetail
 	}
 	m.mx.Unlock()
 

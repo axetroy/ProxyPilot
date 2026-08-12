@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +34,19 @@ func TestNewCheckerCustom(t *testing.T) {
 	}
 	if c.timeout != 5*time.Second {
 		t.Errorf("timeout = %v, want 5s", c.timeout)
+	}
+}
+
+func TestNewCheckerWithAnonymityDefaults(t *testing.T) {
+	c := NewCheckerWithAnonymity("", "", 0)
+	if c.TestTarget() != "https://www.apple.com/library/test/success.html" {
+		t.Errorf("default target = %q", c.TestTarget())
+	}
+	if c.anonymityTarget != DefaultAnonymityTarget {
+		t.Errorf("default anonymity target = %q, want %q", c.anonymityTarget, DefaultAnonymityTarget)
+	}
+	if c.timeout != 10*time.Second {
+		t.Errorf("default timeout = %v, want 10s", c.timeout)
 	}
 }
 
@@ -198,6 +212,161 @@ func TestCheckUnreachableProxy(t *testing.T) {
 	// 连接失败时 err 可能非 nil，也可能返回 result.OK=false
 	if err == nil && result.OK {
 		t.Error("expected failure for unreachable proxy")
+	}
+}
+
+// ---------- 匿名性探测 ----------
+
+// TestProbeAnonymityParsesEcho 验证回显端点返回的 origin/headers 能被正确解析：
+// 回显端点固定返回一个“代理注入”了 X-Forwarded-For 与 Via 的响应，
+// 用于验证头泄漏与代理特征的识别逻辑（不依赖真实网络）。
+func TestProbeAnonymityParsesEcho(t *testing.T) {
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"origin": "203.0.113.9", "headers": {"X-Forwarded-For": "10.0.0.1", "Via": "1.1 squid", "User-Agent": "ProxyPilot/0.1"}}`)
+	}))
+	defer echo.Close()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startMockHTTPProxy(t)
+	defer closeProxy()
+	host, portStr, _ := net.SplitHostPort(proxyAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	node := &model.ProxyNode{Host: host, Port: port, Protocol: model.ProtocolHTTP}
+	c := NewCheckerWithAnonymity(target.URL, echo.URL, 5*time.Second)
+	result, err := c.Check(node)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("Check OK = false, want true (err=%s)", result.Error)
+	}
+	if result.Anonymity == nil {
+		t.Fatal("Anonymity probe = nil, want non-nil")
+	}
+	if result.Anonymity.ProxiedIP != "203.0.113.9" {
+		t.Errorf("ProxiedIP = %q, want 203.0.113.9", result.Anonymity.ProxiedIP)
+	}
+	if result.Anonymity.DirectIP != "203.0.113.9" {
+		t.Errorf("DirectIP = %q, want 203.0.113.9", result.Anonymity.DirectIP)
+	}
+	if len(result.Anonymity.HeaderLeaks) != 1 || !strings.Contains(result.Anonymity.HeaderLeaks[0], "X-Forwarded-For") {
+		t.Errorf("HeaderLeaks = %v, want [X-Forwarded-For...]", result.Anonymity.HeaderLeaks)
+	}
+	if len(result.Anonymity.ProxyMarkers) != 1 || !strings.Contains(result.Anonymity.ProxyMarkers[0], "Via") {
+		t.Errorf("ProxyMarkers = %v, want [Via...]", result.Anonymity.ProxyMarkers)
+	}
+}
+
+// TestProbeAnonymityEchoUnreachable 验证回显端点不可达时：
+// 连通性结果不受影响（仍 OK），但 Anonymity 为 nil（上层回退启发式）。
+func TestProbeAnonymityEchoUnreachable(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startMockHTTPProxy(t)
+	defer closeProxy()
+	host, portStr, _ := net.SplitHostPort(proxyAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	node := &model.ProxyNode{Host: host, Port: port, Protocol: model.ProtocolHTTP}
+	// 回显端点指向一个未监听的端口，直连请求必然失败
+	c := NewCheckerWithAnonymity(target.URL, "http://127.0.0.1:1/anything", 500*time.Millisecond)
+	result, err := c.Check(node)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("Check OK = false, want true (err=%s)", result.Error)
+	}
+	if result.Anonymity != nil {
+		t.Error("Anonymity probe = non-nil, want nil when echo unreachable")
+	}
+}
+
+// TestProbeAnonymitySecondSample 验证第二次经代理采样：
+// 回显端点按请求顺序返回不同 origin，探测结果应填充 ProxiedIP2（轮换检测数据）。
+// 直连第 1 次、经代理第 2、3 次，串行调用无并发。
+func TestProbeAnonymitySecondSample(t *testing.T) {
+	var count atomic.Int32
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := count.Add(1)
+		origin := "203.0.113.1"
+		switch n {
+		case 2:
+			origin = "203.0.113.9" // 代理第 1 次
+		case 3:
+			origin = "203.0.113.77" // 代理第 2 次（轮换）
+		}
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"origin": %q, "headers": {}}`, origin))
+	}))
+	defer echo.Close()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startMockHTTPProxy(t)
+	defer closeProxy()
+	host, portStr, _ := net.SplitHostPort(proxyAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	node := &model.ProxyNode{Host: host, Port: port, Protocol: model.ProtocolHTTP}
+	c := NewCheckerWithAnonymity(target.URL, echo.URL, 5*time.Second)
+	result, err := c.Check(node)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Anonymity == nil {
+		t.Fatal("Anonymity probe = nil, want non-nil")
+	}
+	if result.Anonymity.DirectIP != "203.0.113.1" {
+		t.Errorf("DirectIP = %q, want 203.0.113.1", result.Anonymity.DirectIP)
+	}
+	if result.Anonymity.ProxiedIP != "203.0.113.9" {
+		t.Errorf("ProxiedIP = %q, want 203.0.113.9", result.Anonymity.ProxiedIP)
+	}
+	if result.Anonymity.ProxiedIP2 != "203.0.113.77" {
+		t.Errorf("ProxiedIP2 = %q, want 203.0.113.77 (rotating sample)", result.Anonymity.ProxiedIP2)
+	}
+}
+
+// TestProbeAnonymityReqIssues 验证请求被代理改写时能识别连接信息问题：
+// 回显端点固定返回一个与请求目标 host 不一致的 url 字段，应记录 ReqIssues。
+func TestProbeAnonymityReqIssues(t *testing.T) {
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"origin": "203.0.113.9", "url": "http://evil.example/rewritten", "headers": {"Host": "evil.example"}}`)
+	}))
+	defer echo.Close()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startMockHTTPProxy(t)
+	defer closeProxy()
+	host, portStr, _ := net.SplitHostPort(proxyAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	node := &model.ProxyNode{Host: host, Port: port, Protocol: model.ProtocolHTTP}
+	c := NewCheckerWithAnonymity(target.URL, echo.URL, 5*time.Second)
+	result, err := c.Check(node)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Anonymity == nil {
+		t.Fatal("Anonymity probe = nil, want non-nil")
+	}
+	if len(result.Anonymity.ReqIssues) < 2 {
+		t.Fatalf("ReqIssues = %v, want >= 2 items (url + host rewritten)", result.Anonymity.ReqIssues)
 	}
 }
 

@@ -304,3 +304,250 @@ func TestBreakdownFreshNode(t *testing.T) {
 		t.Fatalf("expected score 78, got %d", b.Score)
 	}
 }
+
+// ---------- calculateAnonymity 多维匿名性 ----------
+
+func TestCalculateAnonymityNilProbeFallback(t *testing.T) {
+	// probe 为 nil（探测失败/未启用）时回退启发式
+	cases := []struct {
+		name string
+		node *model.ProxyNode
+		want int
+	}{
+		{"http", &model.ProxyNode{Protocol: model.ProtocolHTTP}, 80},
+		{"https", &model.ProxyNode{Protocol: model.ProtocolHTTPS}, 80},
+		{"socks5", &model.ProxyNode{Protocol: model.ProtocolSOCKS5}, 95},
+		{"http with auth", &model.ProxyNode{Protocol: model.ProtocolHTTP, Username: "u"}, 50},
+		{"socks5 with auth", &model.ProxyNode{Protocol: model.ProtocolSOCKS5, Username: "u"}, 50},
+	}
+	for _, c := range cases {
+		got, detail := calculateAnonymity(c.node, nil)
+		if got != c.want {
+			t.Errorf("%s: calculateAnonymity = %d, want %d", c.name, got, c.want)
+		}
+		if detail != nil {
+			t.Errorf("%s: detail = %v, want nil", c.name, detail)
+		}
+	}
+}
+
+func TestCalculateAnonymitySourceIPHidden(t *testing.T) {
+	// 代理出口 IP 与直连不同：源 IP 隐藏，满分
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{DirectIP: "1.1.1.1", ProxiedIP: "2.2.2.2"}
+	got, detail := calculateAnonymity(node, probe)
+	if got != 100 {
+		t.Fatalf("score = %d, want 100", got)
+	}
+	if detail == nil || detail.SourceIpHidden == nil || !*detail.SourceIpHidden {
+		t.Fatalf("SourceIpHidden = %v, want true", detail.SourceIpHidden)
+	}
+}
+
+func TestCalculateAnonymitySourceIPTransparent(t *testing.T) {
+	// 代理出口 IP 与直连相同：透明代理，源 IP 隐藏得 0 分
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{DirectIP: "1.1.1.1", ProxiedIP: "1.1.1.1"}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*0 + 0.3*100 + 0.3*100 = 60
+	if got != 60 {
+		t.Fatalf("score = %d, want 60", got)
+	}
+	if detail == nil || detail.SourceIpHidden == nil || *detail.SourceIpHidden {
+		t.Fatalf("SourceIpHidden = %v, want false", detail.SourceIpHidden)
+	}
+}
+
+func TestCalculateAnonymityNoIPCompare(t *testing.T) {
+	// 直连或代理侧 IP 缺失：无法对比，取中间值 50
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{DirectIP: "", ProxiedIP: "2.2.2.2"}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*50 + 0.3*100 + 0.3*100 = 80
+	if got != 80 {
+		t.Fatalf("score = %d, want 80", got)
+	}
+	if detail == nil || detail.SourceIpHidden != nil {
+		t.Fatalf("SourceIpHidden = %v, want nil", detail.SourceIpHidden)
+	}
+}
+
+func TestCalculateAnonymityHeaderLeaks(t *testing.T) {
+	// 头泄漏：每项扣 30
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:    "1.1.1.1",
+		ProxiedIP:   "2.2.2.2",
+		HeaderLeaks: []string{"X-Forwarded-For: 10.0.0.1", "X-Real-IP: 10.0.0.2"},
+	}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*100 + 0.3*(100-60) + 0.3*100 = 40+12+30 = 82
+	if got != 82 {
+		t.Fatalf("score = %d, want 82", got)
+	}
+	if detail == nil || len(detail.HeaderLeaks) != 2 {
+		t.Fatalf("HeaderLeaks = %v, want 2 items", detail.HeaderLeaks)
+	}
+}
+
+func TestCalculateAnonymityProxyMarkers(t *testing.T) {
+	// 代理特征：每项扣 25
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:     "1.1.1.1",
+		ProxiedIP:    "2.2.2.2",
+		ProxyMarkers: []string{"Via: 1.1 squid", "X-Via: proxy"},
+	}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*100 + 0.3*100 + 0.3*(100-50) = 40+30+15 = 85
+	if got != 85 {
+		t.Fatalf("score = %d, want 85", got)
+	}
+	if detail == nil || len(detail.ProxyMarkers) != 2 {
+		t.Fatalf("ProxyMarkers = %v, want 2 items", detail.ProxyMarkers)
+	}
+}
+
+func TestCalculateAnonymityCombinedPenalty(t *testing.T) {
+	// 透明代理 + 头泄漏 + 代理特征：分数应被压到很低但不低于 0
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:     "1.1.1.1",
+		ProxiedIP:    "1.1.1.1",
+		HeaderLeaks:  []string{"X-Forwarded-For: 10.0.0.1"},
+		ProxyMarkers: []string{"Via: 1.1 squid", "X-Via: proxy", "Proxy-Agent: squid"},
+	}
+	got, _ := calculateAnonymity(node, probe)
+	// 0.4*0 + 0.3*(100-30) + 0.3*(100-75) = 0+21+7.5 = 28.5 -> 29
+	if got != 29 {
+		t.Fatalf("score = %d, want 29", got)
+	}
+}
+
+func TestCalculateAnonymityRotatingIP(t *testing.T) {
+	// 出口 IP 轮换：基础分 100（源 IP 隐藏且无泄漏）应封顶 100，RotatingIP 标记为 true
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:   "1.1.1.1",
+		ProxiedIP:  "2.2.2.2",
+		ProxiedIP2: "3.3.3.3",
+	}
+	got, detail := calculateAnonymity(node, probe)
+	if got != 100 {
+		t.Fatalf("score = %d, want 100 (bonus clamped)", got)
+	}
+	if detail == nil || !detail.RotatingIP {
+		t.Fatal("RotatingIP = false, want true")
+	}
+}
+
+func TestCalculateAnonymityRotatingIPBonus(t *testing.T) {
+	// 非满分场景：头泄漏扣分后 +5 轮换奖励应生效
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:    "1.1.1.1",
+		ProxiedIP:   "2.2.2.2",
+		ProxiedIP2:  "3.3.3.3",
+		HeaderLeaks: []string{"X-Forwarded-For: 10.0.0.1"},
+	}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*100 + 0.3*70 + 0.3*100 = 40+21+30 = 91；+5 = 96
+	if got != 96 {
+		t.Fatalf("score = %d, want 96", got)
+	}
+	if detail == nil || !detail.RotatingIP {
+		t.Fatal("RotatingIP = false, want true")
+	}
+}
+
+func TestCalculateAnonymityNoRotating(t *testing.T) {
+	// 两次经代理采样出口 IP 相同（固定出口）：不加分也不扣分，RotatingIP 为 false
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:   "1.1.1.1",
+		ProxiedIP:  "2.2.2.2",
+		ProxiedIP2: "2.2.2.2",
+	}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*100 + 0.3*100 + 0.3*100 = 100
+	if got != 100 {
+		t.Fatalf("score = %d, want 100", got)
+	}
+	if detail == nil || detail.RotatingIP {
+		t.Fatal("RotatingIP = true, want false")
+	}
+}
+
+func TestCalculateAnonymityReqIssues(t *testing.T) {
+	// 请求被代理改写：每项连接信息问题扣 10
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	probe := &model.AnonymityProbe{
+		DirectIP:   "1.1.1.1",
+		ProxiedIP:  "2.2.2.2",
+		ReqIssues:  []string{"回显端收到的请求 URL 与目标不一致: http://evil.example/x", "回显端收到的 Host 头与目标不一致: evil.example"},
+		ProxiedIP2: "2.2.2.2",
+	}
+	got, detail := calculateAnonymity(node, probe)
+	// 0.4*100 + 0.3*100 + 0.3*100 = 100；-2*10 = 80
+	if got != 80 {
+		t.Fatalf("score = %d, want 80", got)
+	}
+	if detail == nil || len(detail.ReqIssues) != 2 {
+		t.Fatalf("ReqIssues = %v, want 2 items", detail.ReqIssues)
+	}
+	if detail.RotatingIP {
+		t.Fatal("RotatingIP = true, want false")
+	}
+}
+
+func TestCalculateScoreUsesProbeAnonymity(t *testing.T) {
+	// CalculateScore 应使用真实探测结果而非启发式：
+	// 透明代理（IP 相同）匿名性 60，总分应低于启发式 80 的版本
+	node := &model.ProxyNode{Protocol: model.ProtocolHTTP}
+	result := model.CheckResult{
+		OK:      true,
+		Latency: 100,
+		Anonymity: &model.AnonymityProbe{
+			DirectIP:  "1.1.1.1",
+			ProxiedIP: "1.1.1.1",
+		},
+	}
+	s := CalculateScore(node, result)
+	// successRate = 0.5, latencyScore = 100, stability = 100, anonymity = 60
+	// score = 0.4*50 + 0.3*100 + 0.2*100 + 0.1*60 = 20+30+20+6 = 76
+	if s.Score != 76 {
+		t.Fatalf("expected score 76, got %d", s.Score)
+	}
+	if s.AnonymityDetail == nil {
+		t.Fatal("expected AnonymityDetail to be set")
+	}
+	if s.AnonymityDetail.Score != 60 {
+		t.Fatalf("AnonymityDetail.Score = %d, want 60", s.AnonymityDetail.Score)
+	}
+}
+
+func TestBreakdownUsesAnonymityDetail(t *testing.T) {
+	// Breakdown 优先使用节点上的探测明细，保证明细与总分一致
+	node := &model.ProxyNode{
+		Protocol: model.ProtocolHTTP,
+		Status:   model.StatusAlive,
+		Latency:  100,
+		AnonymityDetail: &model.AnonymityDetail{
+			SourceIpHidden: boolPtr(false),
+			Score:          60,
+		},
+	}
+	b := Breakdown(node)
+	if b == nil {
+		t.Fatal("expected non-nil breakdown")
+	}
+	if b.Anonymity != 60 {
+		t.Fatalf("expected anonymity 60 (from detail), got %d", b.Anonymity)
+	}
+	// score = 0.4*50 + 0.3*100 + 0.2*100 + 0.1*60 = 76
+	if b.Score != 76 {
+		t.Fatalf("expected score 76, got %d", b.Score)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

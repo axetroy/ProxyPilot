@@ -138,8 +138,12 @@ app/                   # Electron UI
 - 代理网关默认出口 `127.0.0.1:7892`，HTTP 与 SOCKS5 共用同一端口（按连接首字节自动识别分流）。
   端口被占用会自动向后顺延，实际端口以 `/api/status` 返回值为准；仅绑定本机，不要修改为对外暴露。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
-  `proxy_port` / `check_target` / `check_timeout` / `check_concurrency` /
+  `proxy_port` / `check_target` / `check_anonymity_target` / `check_timeout` / `check_concurrency` /
   `refresh_interval`；启动时 `config.LoadOverrides()` 从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。
+- 匿名性评分优先使用真实探测（`check_anonymity_target` 回显端点，默认 `https://httpbin.org/anything`）：
+  对比直连/经代理的出口 IP 与目标收到的请求头，按 源 IP 隐藏 40% + 头泄漏 30% + 代理特征 30% 加权；
+  在此基础上叠加调节项：两次经代理采样出口 IP 不同（轮换代理）+5，请求被代理改写（回显
+  URL/Host 与目标不一致）每项 -10；探测失败时回退到按协议类型的启发式（SOCKS5=95 / HTTP(S)=80 / 带认证=50）。
 
 ---
 

@@ -34,7 +34,7 @@ func main() {
 	// 加载用户在前端持久化的配置，覆盖默认值/环境变量
 	cfg.LoadOverrides(st)
 
-	poolMgr := pool.NewManager(st, validator.NewChecker(cfg.CheckTarget, cfg.CheckTimeout), busc, cfg.CheckConcurrency)
+	poolMgr := pool.NewManager(st, validator.NewCheckerWithAnonymity(cfg.CheckTarget, cfg.CheckAnonymityTarget, cfg.CheckTimeout), busc, cfg.CheckConcurrency)
 	if err := poolMgr.Load(); err != nil {
 		fmt.Fprintf(os.Stderr, "pool load: %v\n", err)
 		os.Exit(1)

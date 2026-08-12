@@ -17,9 +17,9 @@ type settingItem struct {
 	Desc    string `json:"desc"`
 }
 
-// buildChecker 基于当前配置构建节点检测器（target/timeout 变化时热替换）。
+// buildChecker 基于当前配置构建节点检测器（target/timeout/匿名性端点变化时热替换）。
 func (s *Services) buildChecker() *validator.Checker {
-	return validator.NewChecker(s.Cfg.CheckTarget, s.Cfg.CheckTimeout)
+	return validator.NewCheckerWithAnonymity(s.Cfg.CheckTarget, s.Cfg.CheckAnonymityTarget, s.Cfg.CheckTimeout)
 }
 
 // listSettings 返回所有可配置项及其当前值。
@@ -72,9 +72,9 @@ func (s *Services) updateSettings(c *gin.Context) {
 			s.Bus.Error("persist setting failed: " + err.Error())
 		}
 		switch key {
-		case config.KeyCheckTarget, config.KeyCheckTimeout:
+		case config.KeyCheckTarget, config.KeyCheckTimeout, config.KeyCheckAnonymityTgt:
 			s.Pool.SetChecker(s.buildChecker())
-			s.Bus.Info("checker updated (target/timeout)")
+			s.Bus.Info("checker updated (target/timeout/anonymity)")
 		case config.KeyCheckConcurr:
 			n := s.Cfg.CheckConcurrency
 			s.Pool.SetConcurrency(n)
