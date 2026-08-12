@@ -32,15 +32,17 @@ export default function Settings() {
   const [platform, setPlatform] = useState<Platform>('linux')
   const [appSettings, setAppSettings] = useState<AppSettings>({ closeBehavior: 'minimize' })
 
+    // 仅负责取数（重试逻辑），不直接 setState，由调用方在异步回调中写入 state
   const load = useCallback(async () => {
     const maxRetries = 10;
     for (let i = 0; i < maxRetries; i++) {
       try {
         const res = await listSettings()
         if (res.code === 0 && res.data) {
-          setSettings(res.data)
-          setDraft(Object.fromEntries(res.data.map((s) => [s.key, s.value])))
-          return
+          return {
+            settings: res.data,
+            draft: Object.fromEntries(res.data.map((s) => [s.key, s.value])),
+          }
         }
       } catch {
         // ignore, retry
@@ -48,12 +50,19 @@ export default function Settings() {
       // wait a bit before retry
       await new Promise(resolve => setTimeout(resolve, 500))
     }
-    setNotice({ type: 'error', text: '加载配置失败' })
+    return null
   }, [])
 
   useEffect(() => {
     refresh()
-    load()
+    load().then((data) => {
+      if (data) {
+        setSettings(data.settings)
+        setDraft(data.draft)
+      } else {
+        setNotice({ type: 'error', text: '加载配置失败' })
+      }
+    })
   }, [refresh, load])
 
   useEffect(() => {

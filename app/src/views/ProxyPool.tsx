@@ -77,8 +77,16 @@ export default function ProxyPool() {
     return () => window.clearTimeout(timer)
   }, [notice, clearNotice])
 
-  useEffect(() => {
+  // filter 变化时重置滚动位置：
+  // scrollTop 用「渲染期间调整 state」模式（React 官方推荐，避免 effect 内同步 setState），
+  // DOM 滚动保留在 effect（外部系统同步，合法用法）
+  const [prevFilter, setPrevFilter] = useState(deferredFilter)
+  if (prevFilter !== deferredFilter) {
+    setPrevFilter(deferredFilter)
     setScrollTop(0)
+  }
+
+  useEffect(() => {
     viewportRef.current?.scrollTo({ top: 0 })
   }, [deferredFilter])
 

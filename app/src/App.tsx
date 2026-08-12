@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Network, Rss, ScrollText, Settings } from 'lucide-react'
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
@@ -31,7 +31,8 @@ function App() {
   const status = useStatusStore((s) => s.status)
   const refreshStatus = useStatusStore((s) => s.refresh)
   const connect = useLogStore((s) => s.connect)
-  const [pageTitle, setPageTitle] = useState('仪表盘')
+  // 页面标题完全由路由派生，无需 state
+  const pageTitle = titles[location.pathname] ?? '仪表盘'
 
   useEffect(() => {
     refreshStatus()
@@ -42,10 +43,6 @@ function App() {
       window.clearInterval(timer)
     }
   }, [refreshStatus, connect])
-
-  useEffect(() => {
-    setPageTitle(titles[location.pathname] ?? '仪表盘')
-  }, [location.pathname])
 
   const aliveRate = useMemo(() => {
     if (!status.proxyCount) return '-'
