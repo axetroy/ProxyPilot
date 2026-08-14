@@ -1106,6 +1106,19 @@ electron-updater 拉取 latest*.yml
   看到下载进度（`updaterTooltip()`，状态变更通过 `onUpdaterStateChange` 通知主进程）。
 - **下载进度**：`download-progress` 事件实时推送（百分比 / 已下载 / 总量 / 网速），
   设置页内嵌进度条，任意页面弹出全局通知（Mantine Notifications）。
+  主进程对 download-progress 做 300ms 节流后广播，避免每秒数十次的进度事件洪泛渲染进程。
+  全局进度通知用固定 id：首次 `notifications.show` 创建、后续 `notifications.update` 刷新——
+  **Mantine v9 的 show 对相同 id 会直接忽略而非更新**，若全部用 show，进度条会停在初始值。
+- **安装目录（Windows 关键修复）**：electron-updater 6.8.9 的 NsisUpdater 从不给
+  `installDirectory` 赋值，`doInstall` 因而不会传 `/D=` 参数。assisted 安装器
+  （`nsis.oneClick:false` + `allowToChangeInstallationDirectory:true`）静默更新时
+  会把新版装到 NSIS 默认目录，同时 `uninstallOldVersion` 从注册表卸载旧目录，
+  导致「旧应用被删、新版装到别处找不到」。主进程从注册表
+  `Uninstall\com.axetroy.proxypilot` 的 `InstallLocation`（HKCU/HKLM）读出旧安装
+  目录，注入 `autoUpdater.installDirectory` 使 `/D=` 指向旧目录，实现原地覆盖更新。
+- **安装前清理**：`updater:install` 先执行注入的清理钩子（停核心 + 还原系统代理，
+  10s 超时兜底）再 `quitAndInstall()`，保证安装器 spawn 时应用已干净退出——
+  proxy-core 无文件锁、安装器无需强杀进程、系统代理不残留指向旧网关。
 - **开发模式**：`app.isPackaged === false` 时不发起更新检查（状态置为 `dev`），
   避免 electron-updater 误读开发环境配置。
 - **IPC 通道**：`updater:get-state` / `updater:check` / `updater:set-auto-update` /

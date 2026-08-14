@@ -3,7 +3,14 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
 import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
-import { initUpdater, scheduleStartupCheck, checkForUpdates, onUpdaterStateChange, updaterTooltip } from './updater'
+import {
+  initUpdater,
+  scheduleStartupCheck,
+  checkForUpdates,
+  onUpdaterStateChange,
+  updaterTooltip,
+  setBeforeInstallCleanup,
+} from './updater'
 import {
   initSystemProxy,
   isSystemProxyEnabled,
@@ -318,6 +325,13 @@ app.whenReady().then(async () => {
   scheduleStartupCheck()
   // 系统代理：注册 IPC，token 由主进程持有的 sessionToken 提供
   initSystemProxy(() => sessionToken)
+
+  // 更新安装前先清理：停核心 + 还原系统代理（若开启），保证安装器 spawn 时
+  // 应用已干净退出（proxy-core 无文件锁、无需安装器强杀进程、系统代理不残留）
+  setBeforeInstallCleanup(async () => {
+    await restoreSystemProxyOnQuit()
+    stopCore()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

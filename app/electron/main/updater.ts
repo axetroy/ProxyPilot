@@ -17,8 +17,19 @@
  *   - 开发模式（未打包）不做更新检查，避免 electron-updater 误读 dev 配置。
  */
 import { app, BrowserWindow, ipcMain, Notification } from 'electron'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { autoUpdater } from 'electron-updater'
 import { loadAppSettings, saveAppSettings } from './app-settings'
+
+const execFileAsync = promisify(execFile) as (
+  cmd: string,
+  args: string[],
+  options: { timeout?: number; windowsHide?: boolean },
+) => Promise<{ stdout: string; stderr: string }>
+
+// electron-builder 写入的卸载注册表键（perUser 在 HKCU，perMachine 在 HKLM）
+const WIN_UNINSTALL_KEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\com.axetroy.proxypilot'
 
 export type UpdaterStatus =
   | 'idle'
@@ -59,6 +70,59 @@ let state: UpdaterState = {
 
 // 防止自动检查与手动检查并发触发
 let checkInFlight = false
+
+// 安装前清理钩子（由 index.ts 注入：停核心 + 还原系统代理），
+// 保证安装器 spawn 时应用已干净退出，无文件锁、无需安装器杀进程。
+let beforeInstallCleanup: (() => Promise<void>) | null = null
+
+export function setBeforeInstallCleanup(fn: () => Promise<void>): void {
+  beforeInstallCleanup = fn
+}
+
+/**
+ * 读取旧版本的安装目录（Windows 注册表 InstallLocation）。
+ *
+ * 背景：electron-updater 6.8.9 的 NsisUpdater 从不给 installDirectory 赋值，
+ * 导致 doInstall 不会传 /D= 参数；assisted 安装器（nsis.oneClick:false +
+ * allowToChangeInstallationDirectory:true）静默更新时会用 NSIS 默认目录
+ * （$LOCALAPPDATA\Programs\ProxyPilot），而 uninstallOldVersion 又会从注册表
+ * 卸载旧目录，结果「旧应用被删、新版装到默认目录找不到」。这里手动读取
+ * 旧安装位置注入，让 /D= 指向旧目录，更新才能原地覆盖。
+ */
+async function readInstallLocation(): Promise<string | undefined> {
+  if (process.platform !== 'win32') return undefined
+  for (const root of ['HKCU', 'HKLM']) {
+    try {
+      const { stdout } = await execFileAsync('reg', ['query', `${root}\\${WIN_UNINSTALL_KEY}`, '/v', 'InstallLocation'], {
+        timeout: 10000,
+        windowsHide: true,
+      })
+      const line = stdout.trim().split(/\r?\n/).pop() ?? ''
+      const parts = line.trim().split(/\s+/)
+      let value = parts.length >= 2 ? parts[parts.length - 1] : undefined
+      if (value) {
+        // assisted 安装器静默更新时会把 $INSTDIR 规范化：若 /D= 目录名不含
+        // APP_FILENAME（"ProxyPilot"），会追加子目录，保证与卸载目录一致
+        if (!value.toLowerCase().includes('proxypilot')) {
+          value = `${value}\\ProxyPilot`
+        }
+        return value
+      }
+    } catch {
+      // 该根键不存在，尝试下一个
+    }
+  }
+  return undefined
+}
+
+/** 安装前先做清理（停核心、还原系统代理），再触发 quitAndInstall */
+async function installUpdate(): Promise<void> {
+  if (beforeInstallCleanup) {
+    // 10s 超时兜底：清理挂起时不再等待，直接进入安装流程
+    await Promise.race([beforeInstallCleanup(), new Promise<void>((resolve) => setTimeout(resolve, 10000))])
+  }
+  autoUpdater.quitAndInstall()
+}
 
 // 状态变更监听器（如托盘 tooltip 更新），在每次 setState 后触发
 const stateListeners: Array<(state: UpdaterState) => void> = []
@@ -150,7 +214,13 @@ export function initUpdater(): void {
       notifyIfWindowHidden({ title: '已是最新版本', body: `当前 v${state.currentVersion} 已是最新` })
     }
   })
+  let lastProgressBroadcastAt = 0
   autoUpdater.on('download-progress', (p) => {
+    // 进度事件按数据块触发非常频繁（每秒数十次），节流到 300ms 广播一次，
+    // 保证渲染进程进度条流畅更新且不被事件洪泛拖慢
+    const now = Date.now()
+    if (now - lastProgressBroadcastAt < 300) return
+    lastProgressBroadcastAt = now
     setState({
       status: 'downloading',
       progress: {
@@ -187,8 +257,15 @@ export function initUpdater(): void {
   ipcMain.handle('updater:get-state', () => getUpdaterState())
   ipcMain.handle('updater:check', () => checkForUpdates(true))
   ipcMain.handle('updater:set-auto-update', (_e, enabled: boolean) => setAutoUpdate(enabled))
-  ipcMain.handle('updater:install', () => {
-    autoUpdater.quitAndInstall()
+  ipcMain.handle('updater:install', () => installUpdate())
+
+  // 修复 electron-updater 不读取安装目录的缺陷：从注册表读出旧安装位置
+  // 注入 NsisUpdater.installDirectory，doInstall 才能带上 /D= 参数（见 readInstallLocation）
+  void readInstallLocation().then((dir) => {
+    if (dir) {
+      ;(autoUpdater as unknown as { installDirectory?: string }).installDirectory = dir
+      console.log(`[updater] 已定位旧安装目录: ${dir}`)
+    }
   })
 }
 

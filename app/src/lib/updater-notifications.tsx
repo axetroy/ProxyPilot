@@ -3,10 +3,21 @@ import { Button, Progress, Text } from '@mantine/core'
 import type { UpdaterState } from '@/types'
 import { formatBytes } from '@/lib/utils'
 
-/** 主进程更新事件 → 全局通知（任意页面可见，含下载进度与重启安装入口） */
+/**
+ * 主进程更新事件 → 全局通知（任意页面可见，含下载进度与重启安装入口）。
+ *
+ * 注意：Mantine v9 的 notifications.show 对相同 id 会【直接忽略】而不是更新
+ * （源码：if (notification.id && notifications.some((n) => n.id === notification.id))
+ * return notifications），因此进度通知必须用 show 创建、用 update 刷新，
+ * 否则下载进度条会永远停在初始值。
+ */
+let progressVisible = false
+
 export function handleUpdaterEvent(state: UpdaterState): void {
   switch (state.status) {
     case 'available': {
+      // 新一轮下载开始前重置进度通知状态
+      progressVisible = false
       notifications.show({
         id: 'update-available',
         title: '发现新版本',
@@ -19,7 +30,7 @@ export function handleUpdaterEvent(state: UpdaterState): void {
     case 'downloading': {
       const p = state.progress
       if (!p) break
-      notifications.show({
+      const content = {
         id: 'update-progress',
         title: `正在下载更新 v${state.latestVersion}`,
         message: (
@@ -32,11 +43,18 @@ export function handleUpdaterEvent(state: UpdaterState): void {
         ),
         color: 'blue',
         autoClose: false,
-      })
+      }
+      if (progressVisible) {
+        notifications.update(content)
+      } else {
+        notifications.show(content)
+        progressVisible = true
+      }
       break
     }
     case 'downloaded': {
       notifications.hide('update-progress')
+      progressVisible = false
       notifications.show({
         id: 'update-downloaded',
         title: '更新已就绪',
@@ -76,6 +94,7 @@ export function handleUpdaterEvent(state: UpdaterState): void {
     }
     case 'error': {
       notifications.hide('update-progress')
+      progressVisible = false
       notifications.show({
         id: 'update-error',
         title: '更新失败',
