@@ -87,16 +87,10 @@ func NewRouter(s *Services) *gin.Engine {
 }
 
 func (s *Services) status(c *gin.Context) {
-	total, err := s.Store.CountNodes()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
-		return
-	}
-	alive, err := s.Store.CountNodesByStatus(model.StatusAlive)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
-		return
-	}
+	// 使用内存池计数：前端每秒轮询该接口，避免每次都查询 SQLite
+	// （存储层为单连接串行化，读查询还会与检测/抓取的写查询互相等待）。
+	total := s.Pool.Count()
+	alive := s.Pool.CountAlive()
 	currentNode := s.Gateway.CurrentNode()
 	currentHTTPNode := s.Gateway.CurrentHTTPNode()
 	currentSOCKS5Node := s.Gateway.CurrentSOCKS5Node()

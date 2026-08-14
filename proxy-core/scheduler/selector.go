@@ -127,10 +127,10 @@ func (s *Selector) stickyNode(key string) *model.ProxyNode {
 	s.mu.Unlock()
 
 	// 校验绑定的节点是否仍然可用。
-	for _, n := range s.pool.Alive() {
-		if n.ID == entry.nodeID {
-			return n
-		}
+	// 按 ID 直接查找（O(1)），避免每次请求都对整个存活池做克隆+排序。
+	n := s.pool.Get(entry.nodeID)
+	if n != nil && n.Status == model.StatusAlive {
+		return n
 	}
 	// 节点已失效，清除绑定，让下一次请求重新选择。
 	s.mu.Lock()

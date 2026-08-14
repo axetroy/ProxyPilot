@@ -15,6 +15,7 @@ export default function Dashboard() {
   const start = useStatusStore((s) => s.start)
   const stop = useStatusStore((s) => s.stop)
   const checkAll = usePoolStore((s) => s.check)
+  const refreshPool = usePoolStore((s) => s.refresh)
   const [notice, setNotice] = useState<NoticeData | null>(null)
   const [loading, setLoading] = useState<'check' | 'start' | 'stop' | null>(null)
   const [copiedKey, setCopiedKey] = useState<'http' | 'socks5' | null>(null)
@@ -93,7 +94,8 @@ export default function Dashboard() {
       setLoading('check')
       await checkAll()
       setNotice({ type: 'success', text: '检测任务已发起' })
-      window.setTimeout(() => window.location.reload(), 1500)
+      // 检测结果出来后刷新代理池数据，而不是整页 reload（避免丢状态、闪白屏）
+      window.setTimeout(() => refreshPool(undefined, true), 1500)
     } catch {
       setNotice({ type: 'error', text: '检测失败，请稍后重试' })
     } finally {

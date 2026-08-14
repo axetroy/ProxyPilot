@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,12 @@ type Gateway struct {
 	bus      *bus.Bus
 
 	addr string
+
+	// forwardTransport 是普通 HTTP 转发（非 CONNECT）复用的 http.Transport。
+	// 每个转发请求都新建 Transport 会反复分配连接池结构，且立即 CloseIdleConnections
+	// 丢弃全部状态；共享一个实例则只需创建一次。
+	// DisableKeepAlives 保持开启：上游经由节点池按请求选路，复用连接会钉住单一出口节点。
+	forwardTransport *http.Transport
 
 	mu                sync.Mutex
 	mixed             *mixedServer
@@ -52,7 +59,7 @@ type ipv6CacheEntry struct {
 const ipv6CacheTTL = 10 * time.Minute
 
 func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, addr string) *Gateway {
-	return &Gateway{
+	g := &Gateway{
 		pool:      pool,
 		selector:  selector,
 		bus:       bus,
@@ -60,6 +67,15 @@ func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, 
 		limitCtx:  4,
 		ipv6Cache: make(map[string]ipv6CacheEntry),
 	}
+	g.forwardTransport = &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// addr 是上游目标 host:port，经由节点池选路连接。
+			// 显式指定 HTTP 协议，确保只从 HTTP/HTTPS 节点中挑选上游。
+			return g.UpstreamWithProtocol(ctx, addr, model.ProtocolHTTP)
+		},
+		DisableKeepAlives: true,
+	}
+	return g
 }
 
 func (g *Gateway) Running() bool {

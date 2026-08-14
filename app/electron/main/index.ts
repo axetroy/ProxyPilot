@@ -190,10 +190,29 @@ function resolveTrayIconPath(): string {
   return path.join(__dirname, '..', '..', 'build', 'trayTemplate.png')
 }
 
+// macOS Dock 可见性：仅在主窗口可见时显示 Dock 图标。
+// 隐藏到托盘后从 Dock 移除，只保留菜单栏托盘作为入口；
+// 窗口 show/hide 事件触发同步。
+function syncDockVisibility(): void {
+  if (process.platform !== 'darwin' || !app.dock) return
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    app.dock.show()
+  } else {
+    app.dock.hide()
+  }
+}
+
 function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow()
     return
+  }
+  // 必须先恢复 Dock 图标再显示窗口：Dock 隐藏时 app 处于 accessory 模式，
+  // 直接 show 窗口无法正常获得键盘焦点（macOS 限制）。
+  // 注意这里不能调 syncDockVisibility()：窗口此刻还处于隐藏状态，
+  // 它会按 isVisible()=false 把 Dock 隐藏（正好相反），需要显式 show。
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.show()
   }
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -219,8 +238,6 @@ function createTray(): void {
   // 系统代理开关状态变化时重建菜单，刷新复选框勾选状态
   onSystemProxyStateChange(buildTrayMenu)
   buildTrayMenu()
-  // Windows/Linux：单击托盘图标显示主窗口（macOS 单击默认弹出菜单）
-  tray.on('click', showMainWindow)
 }
 
 async function toggleSystemProxy(enabled: boolean): Promise<void> {
@@ -251,6 +268,18 @@ function buildTrayMenu(): void {
       { label: '退出程序', click: () => app.quit() },
     ]),
   )
+  // 点击托盘图标只弹出菜单，不显示窗口；只有点击菜单项「显示主窗口」才显示窗口。
+  // macOS：setContextMenu 后点击托盘图标由系统自动弹出菜单，
+  // 无需再注册 click 处理（重复注册会导致菜单弹出两次）。
+  // Windows/Linux：左键点击不会自动弹菜单，需要手动弹出。
+  // macOS：点击托盘图标后隐藏 Dock 图标，仅通过托盘作为入口
+  if (process.platform === 'darwin') {
+    app.dock?.hide()
+  } else {
+    tray.on('click', () => {
+      tray?.popUpContextMenu()
+    })
+  }
 }
 
 function createWindow(): void {
@@ -284,12 +313,20 @@ function createWindow(): void {
     }
   })
 
+  // 窗口可见性变化时同步 Dock 图标（隐藏到托盘 → 移除 Dock，重新显示 → 恢复）
+  mainWindow.on('show', syncDockVisibility)
+  mainWindow.on('hide', syncDockVisibility)
+
   mainWindow.on('closed', () => {
     mainWindow = null
+    syncDockVisibility()
   })
 
   // Electron 43：query-session-end 是窗口事件（Windows 关机 / 注销 / 重启前触发）
   mainWindow.on('query-session-end', () => gracefulShutdown())
+
+  // 初次创建时同步一次，兜底 'show' 事件竞态
+  syncDockVisibility()
 }
 
 ipcMain.handle('get-token', async () => {
@@ -333,13 +370,10 @@ app.whenReady().then(async () => {
     stopCore()
   })
 
+  // macOS 惯例：点击 Dock 图标重新激活应用时恢复/显示主窗口
+  // （Dock 图标仅在窗口可见时存在，此路径也覆盖窗口被销毁后的重建）
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-
-    if (mainWindow && mainWindow.isMinimized()) mainWindow.restore()
-
-    mainWindow?.show()
-    mainWindow?.focus()
+    showMainWindow()
   })
 })
 

@@ -20,16 +20,20 @@ func (h *httpServer) forward(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// addr is the upstream target host:port; connect through the node pool.
-			// 显式指定 HTTP 协议，确保只从 HTTP/HTTPS 节点中挑选上游，
-			// 避免 HTTP 流量错误地使用 SOCKS5 节点。
-			return h.g.UpstreamWithProtocol(ctx, addr, model.ProtocolHTTP)
-		},
-		DisableKeepAlives: true,
+	// 复用网关共享的 Transport（由 NewGateway 创建），避免每个请求新建/销毁；
+	// 仅当网关未走 NewGateway 构造（如测试）时兜底创建。
+	transport := h.g.forwardTransport
+	if transport == nil {
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// addr is the upstream target host:port; connect through the node pool.
+				// 显式指定 HTTP 协议，确保只从 HTTP/HTTPS 节点中挑选上游，
+				// 避免 HTTP 流量错误地使用 SOCKS5 节点。
+				return h.g.UpstreamWithProtocol(ctx, addr, model.ProtocolHTTP)
+			},
+			DisableKeepAlives: true,
+		}
 	}
-	defer transport.CloseIdleConnections()
 
 	req := r.Clone(ctx)
 	req.RequestURI = ""

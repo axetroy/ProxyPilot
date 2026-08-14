@@ -177,6 +177,17 @@ func (m *Manager) Alive() []*model.ProxyNode {
 	return out
 }
 
+// Get 返回指定 ID 节点的副本；不存在时返回 nil。
+// 用于选择器等热路径做 O(1) 按 ID 查找，避免整池克隆+排序。
+func (m *Manager) Get(id int64) *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	if n, ok := m.nodes[id]; ok {
+		return cloneNode(n)
+	}
+	return nil
+}
+
 func (m *Manager) Count() int {
 	m.mx.RLock()
 	defer m.mx.RUnlock()

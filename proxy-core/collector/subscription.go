@@ -25,18 +25,20 @@ type Manager struct {
 	sink    PoolSink
 	fetcher *Fetcher
 
-	mu     sync.Mutex
-	timers map[int64]*time.Timer
-	cancel context.CancelFunc
+	mu         sync.Mutex
+	timers     map[int64]*time.Timer
+	refreshing map[int64]bool // 正在抓取中的订阅，防止定时刷新与手动刷新并发执行
+	cancel     context.CancelFunc
 }
 
 func NewManager(store *storage.Store, bus *bus.Bus, sink PoolSink, fetchTimeout time.Duration) *Manager {
 	return &Manager{
-		store:   store,
-		bus:     bus,
-		sink:    sink,
-		fetcher: NewFetcher(fetchTimeout),
-		timers:  make(map[int64]*time.Timer),
+		store:      store,
+		bus:        bus,
+		sink:       sink,
+		fetcher:    NewFetcher(fetchTimeout),
+		timers:     make(map[int64]*time.Timer),
+		refreshing: make(map[int64]bool),
 	}
 }
 
@@ -161,6 +163,22 @@ func (m *Manager) scheduleInContext(ctx context.Context, sub *model.Subscription
 }
 
 func (m *Manager) refresh(ctx context.Context, sub *model.Subscription) error {
+	// 防重入：同一订阅的抓取未结束时，后续触发（定时器重叠、手动刷新）直接跳过，
+	// 避免慢订阅在抓取期间被并发重复拉取。
+	m.mu.Lock()
+	if m.refreshing[sub.ID] {
+		m.mu.Unlock()
+		m.bus.Debug(fmt.Sprintf("subscription %s already refreshing, skip", sub.Name))
+		return nil
+	}
+	m.refreshing[sub.ID] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.refreshing, sub.ID)
+		m.mu.Unlock()
+	}()
+
 	m.bus.Info(fmt.Sprintf("fetching subscription %s from %s", sub.Name, sub.URL))
 	body, err := m.fetcher.Fetch(ctx, sub.URL)
 	if err != nil {

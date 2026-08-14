@@ -37,7 +37,6 @@ function statusLabel(n: ProxyNode) {
 // AnonymityBadge 在列表中标注节点的匿名性：优先使用真实探测明细分数，
 // 回退到评分明细中的匿名性分数（启发式）；非存活或未评分节点显示占位符。
 function AnonymityBadge({ node }: { node: ProxyNode }) {
-  console.log(node)
   const d = node.anonymityDetail
   const score = d?.score ?? node.scoreBreakdown?.anonymity
   if (node.status !== 'alive' || score === undefined) {
