@@ -1114,7 +1114,51 @@ electron-updater 拉取 latest*.yml
 
 ---
 
-# 19. 最终架构总结
+# 19. 系统代理（一键开关）
+
+将系统 HTTP / HTTPS 代理指向本机网关，浏览器等系统应用无需逐个手动配置。
+由 Electron 主进程实现（`app/electron/main/system-proxy.ts`），不依赖 proxy-core。
+
+**平台实现**：
+
+```
+Windows 注册表 HKCU\...\Internet Settings（ProxyEnable / ProxyServer / ProxyOverride）
+        写入后通过 PowerShell InternetSetOption 刷新，使运行中的应用生效
+macOS   networksetup（-setwebproxy / -setsecurewebproxy，应用到所有启用的网络服务）
+Linux   GNOME gsettings（org.gnome.system.proxy mode=manual + http/https 代理）
+```
+
+**行为约定**：
+
+- **地址来源**：开启时主进程调用核心 `GET /api/status`，取 `httpProxyBind` 作为代理
+  目标（端口占用自动顺延后仍是实际绑定值），要求网关已运行。
+- **备份 / 还原**：开启前完整备份当前系统代理设置（含原值是否存在）；关闭时按备份
+  逐项还原（Windows 还原 ProxyEnable/ProxyServer/ProxyOverride，macOS 还原各服务
+  web/secure 代理状态，Linux 还原 mode 与各子键）。备份缺失时兜底为直接关闭代理。
+- **持久化**：开关状态、目标地址与备份存入 `userData/settings.json` 的 `systemProxy`
+  字段，应用重启后托盘/设置页状态保持一致。
+- **退出还原**：应用退出（含更新重启 `quitAndInstall`）时自动关闭并还原系统代理，
+  避免网关停止后系统代理指向失效端口导致断网。所有退出路径统一汇入
+  `gracefulShutdown()`（幂等）：还原代理 → 停核心 → `app.exit(0)`，并带 15s
+  看门狗兜底（清理挂起时强制退出）。
+
+**退出信号覆盖矩阵**（均能触发还原清理）：
+
+```
+app.quit()（托盘退出 / Cmd+Q / 关窗且行为=退出 / quitAndInstall） → before-quit ✅
+Linux Ctrl+C（SIGINT，被 Electron 劫持转 app.quit）              → before-quit ✅
+SIGTERM / SIGHUP（systemd·docker stop / kill / 终端挂断）        → 显式监听 ✅
+Windows 关机 / 注销 / 重启（query-session-end）                  → 显式监听 ✅
+SIGKILL / 任务管理器强制结束                                    → 无法捕捉（OS 直接杀死）❌
+```
+- **入口**：设置页「系统代理」卡片（开关 + 状态 + 错误提示，网关未运行时禁用）与
+  系统托盘右键菜单「系统代理」复选框（状态变化时重建菜单刷新勾选，失败弹原生通知）。
+- **IPC 通道**：`system-proxy:get-state` / `system-proxy:set`（invoke），事件推送
+  `system-proxy:event`；preload 通过 `window.proxypilot` 暴露给渲染进程。
+
+---
+
+# 20. 最终架构总结
 
 最终技术栈：
 

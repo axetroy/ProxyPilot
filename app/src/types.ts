@@ -105,6 +105,21 @@ export interface AppSettings {
   closeBehavior: 'minimize' | 'quit'
   /** 自动检查并下载更新（默认开启） */
   autoUpdate: boolean
+  /** 系统代理开关与备份（关闭或退出时按备份还原原设置） */
+  systemProxy?: {
+    enabled: boolean
+    endpoint?: string
+    backup?: unknown
+  }
+}
+
+/** 系统代理开关状态（与主进程 system-proxy.ts 对应） */
+export interface SystemProxyState {
+  enabled: boolean
+  /** 系统代理目标地址（网关 HTTP 入口），如 127.0.0.1:7892 */
+  endpoint?: string
+  error?: string
+  changedAt?: number
 }
 
 /** 更新流程状态（与主进程 updater.ts 的 UpdaterStatus 对应） */

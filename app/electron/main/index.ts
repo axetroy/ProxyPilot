@@ -1,9 +1,16 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage } from 'electron'
 import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
 import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
 import { initUpdater, scheduleStartupCheck, checkForUpdates, onUpdaterStateChange, updaterTooltip } from './updater'
+import {
+  initSystemProxy,
+  isSystemProxyEnabled,
+  setSystemProxy,
+  onSystemProxyStateChange,
+  restoreSystemProxyOnQuit,
+} from './system-proxy'
 
 // 禁用硬件加速以防止 GPU 崩溃（Windows 常见问题）
 app.disableHardwareAcceleration()
@@ -29,6 +36,7 @@ let sessionToken = ''
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+let shutdownStarted = false
 let tokenReadyPromise: Promise<void> | null = null
 let resolveTokenReady: (() => void) | null = null
 let tokenReady = false
@@ -201,17 +209,41 @@ function createTray(): void {
   onUpdaterStateChange((s) => {
     tray?.setToolTip(updaterTooltip(s))
   })
+  // 系统代理开关状态变化时重建菜单，刷新复选框勾选状态
+  onSystemProxyStateChange(buildTrayMenu)
+  buildTrayMenu()
+  // Windows/Linux：单击托盘图标显示主窗口（macOS 单击默认弹出菜单）
+  tray.on('click', showMainWindow)
+}
+
+async function toggleSystemProxy(enabled: boolean): Promise<void> {
+  const next = await setSystemProxy(enabled)
+  if (next.error) {
+    console.error(`[system-proxy] ${next.error}`)
+    // 窗口可能已隐藏到托盘，用系统原生通知提示失败原因
+    if (Notification.isSupported()) {
+      new Notification({ title: '系统代理', body: next.error }).show()
+    }
+  }
+}
+
+function buildTrayMenu(): void {
+  if (!tray) return
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: showMainWindow },
       { type: 'separator' },
+      {
+        label: '系统代理',
+        type: 'checkbox',
+        checked: isSystemProxyEnabled(),
+        click: (item) => void toggleSystemProxy(item.checked),
+      },
       { label: '检查更新', click: () => void checkForUpdates(true) },
       { type: 'separator' },
       { label: '退出程序', click: () => app.quit() },
     ]),
   )
-  // Windows/Linux：单击托盘图标显示主窗口（macOS 单击默认弹出菜单）
-  tray.on('click', showMainWindow)
 }
 
 function createWindow(): void {
@@ -248,6 +280,9 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // Electron 43：query-session-end 是窗口事件（Windows 关机 / 注销 / 重启前触发）
+  mainWindow.on('query-session-end', () => gracefulShutdown())
 }
 
 ipcMain.handle('get-token', async () => {
@@ -281,6 +316,8 @@ app.whenReady().then(async () => {
   // 更新机制：注册 IPC + 启动自动检查（默认开启，延迟数秒后检查）
   initUpdater()
   scheduleStartupCheck()
+  // 系统代理：注册 IPC，token 由主进程持有的 sessionToken 提供
+  initSystemProxy(() => sessionToken)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -300,7 +337,45 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+/**
+ * 统一的退出收尾（幂等，所有退出路径都汇到这里）：
+ * 还原系统代理（防止网关停止后系统代理指向失效端口）→ 停核心 → 退出。
+ * 看门狗兜底：即使清理挂起（如系统命令无响应），也在 15s 内强制退出，
+ * 避免 Windows 关机 / 系统信号场景下因清理卡住而被系统强杀。
+ */
+function gracefulShutdown(): void {
+  if (shutdownStarted) return
+  shutdownStarted = true
+  setTimeout(() => app.exit(0), 15000).unref()
+  void (async () => {
+    try {
+      await restoreSystemProxyOnQuit()
+    } catch (err) {
+      console.error(err)
+    }
+    stopCore()
+    app.exit(0)
+  })()
+}
+
+app.on('before-quit', (e) => {
   isQuitting = true
-  stopCore()
+  // 正常退出路径（托盘「退出程序」/ Cmd+Q / 关闭窗口且行为为退出 / 更新重启 quitAndInstall
+  // / Linux Ctrl+C 被 Electron 劫持转成的 app.quit）都会先到这里。
+  // 一律 preventDefault，由 gracefulShutdown 完成清理后 app.exit(0)，避免退出时序竞态。
+  e.preventDefault()
+  gracefulShutdown()
 })
+
+// 系统退出信号（POSIX）：SIGTERM（systemd/docker 停止、kill）、SIGINT（Ctrl+C）、
+// SIGHUP（终端挂断）。这些信号不会触发 before-quit，必须显式监听；
+// 与 gracefulShutdown 的幂等保护配合，不会与 Electron 的 SIGINT 劫持重复清理。
+if (process.platform !== 'win32') {
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+    process.on(sig, () => gracefulShutdown())
+  }
+}
+
+// Windows 系统关机 / 注销 / 重启：不经过 before-quit，由主窗口的
+// query-session-end 事件单独监听（尽力而为，系统会限时强杀）。
+// 不 preventDefault，尊重用户的关机选择，只做快速清理后退出。

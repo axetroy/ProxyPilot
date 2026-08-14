@@ -5,6 +5,7 @@ import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useLogStore } from '@/stores/logs'
 import { useUpdaterStore } from '@/stores/updater'
+import { useSystemProxyStore } from '@/stores/system-proxy'
 import { handleUpdaterEvent } from '@/lib/updater-notifications'
 import Dashboard from '@/views/Dashboard'
 import ProxyPool from '@/views/ProxyPool'
@@ -46,9 +47,10 @@ function App() {
     }
   }, [refreshStatus, connect])
 
-  // 更新机制：拉取初始状态、订阅主进程事件，并在任意页面弹出更新提醒
+  // 更新机制 / 系统代理：拉取初始状态、订阅主进程事件，并在任意页面弹出更新提醒
   useEffect(() => {
     void useUpdaterStore.getState().init()
+    void useSystemProxyStore.getState().init()
     const off = window.proxypilot?.onUpdaterEvent(handleUpdaterEvent)
     return () => {
       off?.()

@@ -17,6 +17,7 @@ import {
 } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useUpdaterStore } from '@/stores/updater'
+import { useSystemProxyStore } from '@/stores/system-proxy'
 import { formatBytes } from '@/lib/utils'
 import { getErrorMessage, getPlatform, getSubscriptionConfig, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
 import type { AppSettings, SettingItem, SubscriptionExportConfig } from '@/types'
@@ -41,6 +42,8 @@ export default function Settings() {
   const [subListenDraft, setSubListenDraft] = useState('')
   const [subSaving, setSubSaving] = useState(false)
   const updater = useUpdaterStore()
+  const systemProxy = useSystemProxyStore()
+  const [spBusy, setSpBusy] = useState(false)
 
     // 仅负责取数（重试逻辑），不直接 setState，由调用方在异步回调中写入 state
   const load = useCallback(async () => {
@@ -97,9 +100,10 @@ export default function Settings() {
       .catch(() => {})
   }, [])
 
-  // 更新状态（幂等：全局已初始化时不会重复订阅）
+  // 更新状态 / 系统代理状态（幂等：全局已初始化时不会重复订阅）
   useEffect(() => {
     void useUpdaterStore.getState().init()
+    void useSystemProxyStore.getState().init()
   }, [])
 
   async function onChangeCloseBehavior(value: string) {
@@ -126,6 +130,20 @@ export default function Settings() {
     ],
     [status.httpProxyBind],
   )
+
+  async function onToggleSystemProxy(enabled: boolean) {
+    setSpBusy(true)
+    try {
+      await systemProxy.setEnabled(enabled)
+      if (!useSystemProxyStore.getState().error) {
+        setNotice({ type: 'success', text: enabled ? '系统代理已开启' : '系统代理已关闭' })
+      }
+    } catch {
+      setNotice({ type: 'error', text: '切换系统代理失败' })
+    } finally {
+      setSpBusy(false)
+    }
+  }
 
   async function onStart() {
     try {
@@ -340,6 +358,46 @@ export default function Settings() {
             <TextInput key={f.label} label={f.label} value={f.value} disabled />
           ))}
           <TextInput label="版本" value={status.version || '-'} disabled />
+        </Stack>
+      </Card>
+
+      <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
+        <Stack gap="md">
+          <div>
+            <Text fw={700}>系统代理</Text>
+            <Text size="sm" c="dimmed" mt={4}>一键将系统 HTTP / HTTPS 代理指向本机网关，浏览器等应用无需逐个手动配置</Text>
+          </div>
+
+          <Divider />
+
+          <Group justify="space-between" wrap="wrap">
+            <div>
+              <Text fw={600}>开启系统代理</Text>
+              <Text size="sm" c="dimmed">
+                {systemProxy.enabled
+                  ? `已指向 ${systemProxy.endpoint || '本机网关'}，关闭或退出应用时自动还原原有设置`
+                  : '开启时自动备份原设置，关闭后完整还原'}
+              </Text>
+            </div>
+            <Switch
+              checked={systemProxy.enabled}
+              disabled={spBusy || (!systemProxy.enabled && !status.running)}
+              onChange={(e) => void onToggleSystemProxy(e.currentTarget.checked)}
+            />
+          </Group>
+
+          {!status.running && !systemProxy.enabled && (
+            <Alert color="yellow">需先启动网关，才能开启系统代理</Alert>
+          )}
+
+          {systemProxy.enabled &&
+            status.httpProxyBind &&
+            systemProxy.endpoint &&
+            systemProxy.endpoint !== status.httpProxyBind && (
+              <Alert color="yellow">网关地址已变化（当前 {status.httpProxyBind}），请关闭后重新开启系统代理</Alert>
+            )}
+
+          {systemProxy.error && <Alert color="red">{systemProxy.error}</Alert>}
         </Stack>
       </Card>
 

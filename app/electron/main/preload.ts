@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings } from './app-settings'
 import type { UpdaterState } from './updater'
+import type { SystemProxyState } from './system-proxy'
 
 contextBridge.exposeInMainWorld('proxypilot', {
   getToken: (): Promise<string> => ipcRenderer.invoke('get-token'),
@@ -19,6 +20,18 @@ contextBridge.exposeInMainWorld('proxypilot', {
     ipcRenderer.on('updater:event', listener)
     return () => {
       ipcRenderer.removeListener('updater:event', listener)
+    }
+  },
+
+  // ---- 系统代理 ----
+  getSystemProxyState: (): Promise<SystemProxyState> => ipcRenderer.invoke('system-proxy:get-state'),
+  setSystemProxy: (enabled: boolean): Promise<SystemProxyState> =>
+    ipcRenderer.invoke('system-proxy:set', enabled),
+  onSystemProxyEvent: (cb: (state: SystemProxyState) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: SystemProxyState) => cb(state)
+    ipcRenderer.on('system-proxy:event', listener)
+    return () => {
+      ipcRenderer.removeListener('system-proxy:event', listener)
     }
   },
 
