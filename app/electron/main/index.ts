@@ -356,10 +356,16 @@ app.on('window-all-closed', () => {
  * 还原系统代理（防止网关停止后系统代理指向失效端口）→ 停核心 → 退出。
  * 看门狗兜底：即使清理挂起（如系统命令无响应），也在 15s 内强制退出，
  * 避免 Windows 关机 / 系统信号场景下因清理卡住而被系统强杀。
+ *
+ * 收尾完成后用 app.quit() 而非 app.exit(0)：app.exit 会跳过 before-quit/will-quit/quit
+ * 事件链，导致 electron-updater 的 autoInstallOnAppQuit（退出时自动安装已下载的更新）
+ * 永远不执行。app.quit() 第二次触发 before-quit 时 shutdownStarted 已为 true，
+ * 直接放行走到 'quit' 事件，electron-updater 的 onQuit 监听器即可 spawn 安装器。
  */
 function gracefulShutdown(): void {
   if (shutdownStarted) return
   shutdownStarted = true
+  // 兜底看门狗：清理挂起时强制退出（此路径跳过 'quit'，自动安装不生效，仅作最后保障）
   setTimeout(() => app.exit(0), 15000).unref()
   void (async () => {
     try {
@@ -368,7 +374,7 @@ function gracefulShutdown(): void {
       console.error(err)
     }
     stopCore()
-    app.exit(0)
+    app.quit()
   })()
 }
 
@@ -376,7 +382,9 @@ app.on('before-quit', (e) => {
   isQuitting = true
   // 正常退出路径（托盘「退出程序」/ Cmd+Q / 关闭窗口且行为为退出 / 更新重启 quitAndInstall
   // / Linux Ctrl+C 被 Electron 劫持转成的 app.quit）都会先到这里。
-  // 一律 preventDefault，由 gracefulShutdown 完成清理后 app.exit(0)，避免退出时序竞态。
+  // 首次退出：preventDefault，由 gracefulShutdown 完成清理后再次 app.quit()；
+  // 第二次（shutdownStarted=true）：放行，让事件链走到 'quit' 触发退出自动安装。
+  if (shutdownStarted) return
   e.preventDefault()
   gracefulShutdown()
 })

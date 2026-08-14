@@ -1152,8 +1152,12 @@ Linux   GNOME gsettings（org.gnome.system.proxy mode=manual + http/https 代理
   字段，应用重启后托盘/设置页状态保持一致。
 - **退出还原**：应用退出（含更新重启 `quitAndInstall`）时自动关闭并还原系统代理，
   避免网关停止后系统代理指向失效端口导致断网。所有退出路径统一汇入
-  `gracefulShutdown()`（幂等）：还原代理 → 停核心 → `app.exit(0)`，并带 15s
-  看门狗兜底（清理挂起时强制退出）。
+  `gracefulShutdown()`（幂等）：还原代理 → 停核心 → 再次 `app.quit()`。
+  **不能用 `app.exit(0)`**：它会跳过 before-quit/will-quit/quit 事件链，导致
+  electron-updater 的 `autoInstallOnAppQuit`（下载完成后退出应用自动安装）失效；
+  二次 `app.quit()` 时 `before-quit` 因清理已完成而放行，事件链走到 `quit` 事件，
+  electron-updater 的 onQuit 监听器随即 spawn 安装器。另带 15s 看门狗兜底
+  （清理挂起时强制退出，该路径跳过自动安装，仅作最后保障）。
 
 **退出信号覆盖矩阵**（均能触发还原清理）：
 
