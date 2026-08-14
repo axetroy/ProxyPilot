@@ -1,10 +1,16 @@
 import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage } from 'electron'
 import { spawn, ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import * as path from 'node:path'
+import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
+import { initUpdater, scheduleStartupCheck, checkForUpdates, onUpdaterStateChange, updaterTooltip } from './updater'
 
 // 禁用硬件加速以防止 GPU 崩溃（Windows 常见问题）
 app.disableHardwareAcceleration()
+
+// Windows 系统通知（更新提醒等）需要显式设置 AppUserModelID，
+// 否则 toast 不会显示（与 electron-builder 的 appId 保持一致）
+app.setAppUserModelId('com.axetroy.proxypilot')
 
 // 单例锁：只允许一个实例运行，重复启动时聚焦已有窗口
 const gotTheLock = app.requestSingleInstanceLock()
@@ -26,33 +32,6 @@ let isQuitting = false
 let tokenReadyPromise: Promise<void> | null = null
 let resolveTokenReady: (() => void) | null = null
 let tokenReady = false
-
-// ---- 应用级设置（持久化到 userData/settings.json）----
-
-interface AppSettings {
-  closeBehavior: 'minimize' | 'quit'
-}
-
-function settingsFilePath(): string {
-  return path.join(app.getPath('userData'), 'settings.json')
-}
-
-function loadAppSettings(): AppSettings {
-  try {
-    const raw = JSON.parse(readFileSync(settingsFilePath(), 'utf-8')) as Partial<AppSettings>
-    return { closeBehavior: raw.closeBehavior === 'quit' ? 'quit' : 'minimize' }
-  } catch {
-    return { closeBehavior: 'minimize' }
-  }
-}
-
-function saveAppSettings(settings: AppSettings): void {
-  try {
-    writeFileSync(settingsFilePath(), JSON.stringify(settings, null, 2), 'utf-8')
-  } catch (e) {
-    console.error(`[app] 保存设置失败: ${e instanceof Error ? e.message : String(e)}`)
-  }
-}
 
 function resolveCorePath(): string {
   // Windows 下 Go 构建产物为 proxy-core.exe，其他平台为 proxy-core
@@ -218,9 +197,15 @@ function createTray(): void {
   }
   tray = new Tray(icon)
   tray.setToolTip('ProxyPilot')
+  // 托盘 tooltip 随更新状态变化：窗口隐藏到托盘时也能看到下载进度
+  onUpdaterStateChange((s) => {
+    tray?.setToolTip(updaterTooltip(s))
+  })
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: showMainWindow },
+      { type: 'separator' },
+      { label: '检查更新', click: () => void checkForUpdates(true) },
       { type: 'separator' },
       { label: '退出程序', click: () => app.quit() },
     ]),
@@ -292,6 +277,10 @@ app.whenReady().then(async () => {
     console.error(e)
   }
   createWindow()
+
+  // 更新机制：注册 IPC + 启动自动检查（默认开启，延迟数秒后检查）
+  initUpdater()
+  scheduleStartupCheck()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

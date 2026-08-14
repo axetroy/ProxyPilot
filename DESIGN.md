@@ -1049,7 +1049,72 @@ API服务
 
 ---
 
-# 18. 最终架构总结
+# 18. 更新机制设计（自动更新 / 手动检查 / 下载进度）
+
+## 更新源
+
+GitHub Releases：
+
+```
+https://github.com/axetroy/ProxyPilot/releases
+```
+
+基于 `electron-updater`（主进程 `app/electron/main/updater.ts`）。
+`electron-builder.cjs` 声明 `publish: { provider: 'github', owner, repo }` 后，
+构建时会生成更新元数据文件（Windows `latest.yml` / macOS `latest-mac.yml` /
+Linux `latest-linux.yml`），随安装包一起被 CI 上传到 Release；
+dist 脚本均带 `--publish never`，上传统一由 `softprops/action-gh-release` 完成。
+
+## 流程
+
+```
+启动 / 手动检查
+     │
+     ▼
+electron-updater 拉取 latest*.yml
+     │
+     ├─ 无新版本 ──► 提示「已是最新」（仅手动检查时）
+     │
+     └─ 有新版本 ──► 自动下载（autoDownload=true）
+           │
+           ▼
+   download-progress 事件
+           │  （updater:event 推送到渲染进程，展示进度条与网速）
+           ▼
+   update-downloaded
+           │
+           ▼
+   通知「更新已就绪」→ 用户点击「立即重启」→ quitAndInstall()
+```
+
+## 关键约定
+
+- **自动更新默认开启**：设置持久化在 Electron 主进程 `userData/settings.json`
+  （`AppSettings.autoUpdate`，缺省 `true`，与 closeBehavior 同文件）。
+  启动后延迟 5s 自动检查一次，发现新版本自动下载。
+- **可关闭自动更新**：设置页「软件更新」开关。关闭后不再自动检查/下载，
+  但手动检查仍可用；重新开启后立即检查一次。
+  下载进行中关闭时无法取消 electron-updater 的下载，但不会再提示安装、
+  退出时也不会自动安装。
+- **手动检查**：设置页「检查更新」按钮（`updater:check`），以及系统托盘右键菜单的
+  「检查更新」入口（窗口隐藏时也会触发）。
+- **提醒渠道**：窗口可见时用 Mantine 通知；窗口隐藏（最小化到托盘）时由主进程发
+  系统原生通知兜底（Windows 需 `app.setAppUserModelId` 与 appId 一致才能弹 toast）。
+  「更新已就绪」的原生通知支持点击，直接 `quitAndInstall()` 重启安装，无需先打开
+  主窗口（Windows / macOS 支持点击，Linux 仅展示）。
+  托盘图标 tooltip 也会随状态变化（如「正在下载更新 45%」），窗口隐藏时仍可直观
+  看到下载进度（`updaterTooltip()`，状态变更通过 `onUpdaterStateChange` 通知主进程）。
+- **下载进度**：`download-progress` 事件实时推送（百分比 / 已下载 / 总量 / 网速），
+  设置页内嵌进度条，任意页面弹出全局通知（Mantine Notifications）。
+- **开发模式**：`app.isPackaged === false` 时不发起更新检查（状态置为 `dev`），
+  避免 electron-updater 误读开发环境配置。
+- **IPC 通道**：`updater:get-state` / `updater:check` / `updater:set-auto-update` /
+  `updater:install`（invoke），事件推送 `updater:event`；
+  preload 通过 `window.proxypilot` 暴露给渲染进程。
+
+---
+
+# 19. 最终架构总结
 
 最终技术栈：
 

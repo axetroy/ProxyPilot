@@ -4,6 +4,8 @@ import { LayoutDashboard, Network, Rss, ScrollText, Settings } from 'lucide-reac
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useLogStore } from '@/stores/logs'
+import { useUpdaterStore } from '@/stores/updater'
+import { handleUpdaterEvent } from '@/lib/updater-notifications'
 import Dashboard from '@/views/Dashboard'
 import ProxyPool from '@/views/ProxyPool'
 import Subscriptions from '@/views/Subscriptions'
@@ -43,6 +45,15 @@ function App() {
       window.clearInterval(timer)
     }
   }, [refreshStatus, connect])
+
+  // 更新机制：拉取初始状态、订阅主进程事件，并在任意页面弹出更新提醒
+  useEffect(() => {
+    void useUpdaterStore.getState().init()
+    const off = window.proxypilot?.onUpdaterEvent(handleUpdaterEvent)
+    return () => {
+      off?.()
+    }
+  }, [])
 
   const aliveRate = useMemo(() => {
     if (!status.proxyCount) return '-'

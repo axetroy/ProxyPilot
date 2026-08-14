@@ -1,8 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
-
-interface AppSettings {
-  closeBehavior: 'minimize' | 'quit'
-}
+import type { AppSettings } from './app-settings'
+import type { UpdaterState } from './updater'
 
 contextBridge.exposeInMainWorld('proxypilot', {
   getToken: (): Promise<string> => ipcRenderer.invoke('get-token'),
@@ -10,6 +8,20 @@ contextBridge.exposeInMainWorld('proxypilot', {
   getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
   getAppSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-app-settings'),
   setAppSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('set-app-settings', settings),
+
+  // ---- 更新机制 ----
+  getUpdaterState: (): Promise<UpdaterState> => ipcRenderer.invoke('updater:get-state'),
+  checkForUpdates: (): Promise<UpdaterState> => ipcRenderer.invoke('updater:check'),
+  setAutoUpdate: (enabled: boolean): Promise<UpdaterState> => ipcRenderer.invoke('updater:set-auto-update', enabled),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+  onUpdaterEvent: (cb: (state: UpdaterState) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: UpdaterState) => cb(state)
+    ipcRenderer.on('updater:event', listener)
+    return () => {
+      ipcRenderer.removeListener('updater:event', listener)
+    }
+  },
+
   onCoreExit: (cb: () => void): void => {
     ipcRenderer.on('core:exit', () => cb())
   },

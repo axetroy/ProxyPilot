@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, UpdateSettingsResult } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, UpdateSettingsResult, UpdaterState } from '@/types'
 
 const API_BASE = 'http://127.0.0.1:17890'
 
@@ -15,6 +15,12 @@ declare global {
       getPlatform: () => Promise<string>
       getAppSettings: () => Promise<AppSettings>
       setAppSettings: (settings: AppSettings) => Promise<AppSettings>
+      // ---- 更新机制 ----
+      getUpdaterState: () => Promise<UpdaterState>
+      checkForUpdates: () => Promise<UpdaterState>
+      setAutoUpdate: (enabled: boolean) => Promise<UpdaterState>
+      installUpdate: () => Promise<void>
+      onUpdaterEvent: (cb: (state: UpdaterState) => void) => () => void
       onCoreExit: (cb: () => void) => void
       onCoreError: (cb: (msg: string) => void) => void
     }

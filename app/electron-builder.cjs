@@ -48,10 +48,18 @@ module.exports = () => {
     // 注意：必须用单引号字符串；若用 JS 模板字符串（反引号），
     // ${productName} 等宏会被立即插值，导致产物命名错误。
     artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
-    // 禁用 electron-builder 自动发布：检测到 GITHUB_TOKEN 时它会在 tag 构建
-    // 尝试自行上传到 GitHub（runner 代理下报 self-signed certificate 错误）。
-    // 上传统一由 CI 的 softprops/action-gh-release 负责。
-    publish: null,
+    // 更新源：GitHub Releases（electron-updater 运行时从这里下载）。
+    // 声明 publish 配置后 electron-builder 才会生成 latest*.yml 更新元数据
+    // （Windows 为 latest.yml，macOS 为 latest-mac.yml，Linux 为 latest-linux.yml），
+    // 随安装包一起被 CI 上传到 Release，electron-updater 据此检测新版本。
+    // 上传仍统一由 CI 的 softprops/action-gh-release 负责：dist 脚本都带
+    // `--publish never`，禁止 electron-builder 在 tag 构建时自行上传
+    // （runner 代理下会报 self-signed certificate 错误）。
+    publish: {
+      provider: 'github',
+      owner: 'axetroy',
+      repo: 'ProxyPilot',
+    },
     directories: {
       output: 'release',
     },

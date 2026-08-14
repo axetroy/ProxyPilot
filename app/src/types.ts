@@ -103,6 +103,39 @@ export interface CheckResult {
 /** 应用级设置（Electron 主进程持久化到 userData/settings.json） */
 export interface AppSettings {
   closeBehavior: 'minimize' | 'quit'
+  /** 自动检查并下载更新（默认开启） */
+  autoUpdate: boolean
+}
+
+/** 更新流程状态（与主进程 updater.ts 的 UpdaterStatus 对应） */
+export type UpdaterStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+  | 'dev'
+
+export interface UpdaterProgress {
+  percent: number
+  transferred: number
+  total: number
+  bytesPerSecond: number
+}
+
+export interface UpdaterState {
+  /** 自动更新开关（默认开启） */
+  enabled: boolean
+  status: UpdaterStatus
+  /** 触发来源：auto=启动/重新开启自动更新，manual=设置页手动检查 */
+  source: 'auto' | 'manual'
+  currentVersion: string
+  latestVersion?: string
+  progress?: UpdaterProgress
+  error?: string
+  checkedAt?: number
 }
 
 export interface ApiResponse<T = unknown> {

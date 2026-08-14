@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Copy, Minimize2, Monitor, Moon, Play, RotateCcw, Square, Sun } from 'lucide-react'
+import { Copy, Download, Minimize2, Monitor, Moon, Play, RefreshCw, RotateCcw, Square, Sun } from 'lucide-react'
 import {
   Alert,
   Button,
   Card,
   Divider,
   Group,
+  Progress,
   SegmentedControl,
   Select,
   Stack,
@@ -15,6 +16,8 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
+import { useUpdaterStore } from '@/stores/updater'
+import { formatBytes } from '@/lib/utils'
 import { getErrorMessage, getPlatform, getSubscriptionConfig, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
 import type { AppSettings, SettingItem, SubscriptionExportConfig } from '@/types'
 
@@ -32,11 +35,12 @@ export default function Settings() {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
-  const [appSettings, setAppSettings] = useState<AppSettings>({ closeBehavior: 'minimize' })
+  const [appSettings, setAppSettings] = useState<AppSettings>({ closeBehavior: 'minimize', autoUpdate: true })
   // 订阅服务配置（独立于通用设置表单）
   const [subConfig, setSubConfig] = useState<SubscriptionExportConfig | null>(null)
   const [subListenDraft, setSubListenDraft] = useState('')
   const [subSaving, setSubSaving] = useState(false)
+  const updater = useUpdaterStore()
 
     // 仅负责取数（重试逻辑），不直接 setState，由调用方在异步回调中写入 state
   const load = useCallback(async () => {
@@ -93,8 +97,13 @@ export default function Settings() {
       .catch(() => {})
   }, [])
 
+  // 更新状态（幂等：全局已初始化时不会重复订阅）
+  useEffect(() => {
+    void useUpdaterStore.getState().init()
+  }, [])
+
   async function onChangeCloseBehavior(value: string) {
-    const next: AppSettings = { closeBehavior: value as 'minimize' | 'quit' }
+    const next: AppSettings = { ...appSettings, closeBehavior: value as 'minimize' | 'quit' }
     setAppSettings(next)
     try {
       await window.proxypilot?.setAppSettings(next)
@@ -488,6 +497,83 @@ export default function Settings() {
               重置密钥
             </Button>
           </Group>
+        </Stack>
+      </Card>
+
+      <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
+        <Stack gap="md">
+          <div>
+            <Text fw={700}>软件更新</Text>
+            <Text size="sm" c="dimmed" mt={4}>从 GitHub Releases 检查并下载新版本，下载完成后重启安装</Text>
+          </div>
+
+          <Divider />
+
+          <Group justify="space-between" wrap="wrap">
+            <div>
+              <Text fw={600}>自动检查更新</Text>
+              <Text size="sm" c="dimmed">启动后自动检查并下载新版本（默认开启）；关闭后仍可手动检查</Text>
+            </div>
+            <Switch
+              checked={updater.enabled}
+              onChange={(e) => void updater.setAutoUpdate(e.currentTarget.checked)}
+            />
+          </Group>
+
+          <Divider />
+
+          <Group justify="space-between" wrap="wrap">
+            <Text size="sm" c="dimmed">
+              当前版本 <Text span fw={600}>{updater.currentVersion || '-'}</Text>
+              {status.version ? <>（核心 {status.version}）</> : null}
+            </Text>
+            <Button
+              leftSection={<RefreshCw size={16} />}
+              loading={updater.status === 'checking'}
+              disabled={updater.status === 'downloading'}
+              onClick={() => void updater.check()}
+            >
+              检查更新
+            </Button>
+          </Group>
+
+          {updater.status === 'available' && (
+            <Alert color="blue">发现新版本 v{updater.latestVersion}，正在自动下载…</Alert>
+          )}
+
+          {updater.status === 'downloading' && updater.progress && (
+            <div>
+              <Group justify="space-between" mb={6}>
+                <Text size="sm" c="dimmed">正在下载 v{updater.latestVersion}</Text>
+                <Text size="sm" fw={600}>{Math.round(updater.progress.percent)}%</Text>
+              </Group>
+              <Progress value={updater.progress.percent} size="sm" />
+              <Text size="xs" c="dimmed" mt={6}>
+                {formatBytes(updater.progress.transferred)} / {formatBytes(updater.progress.total)} · {formatBytes(updater.progress.bytesPerSecond)}/s
+              </Text>
+            </div>
+          )}
+
+          {updater.status === 'downloaded' && (
+            <Group justify="space-between" wrap="wrap">
+              <Alert color="green" style={{ flex: 1 }}>新版本 v{updater.latestVersion} 已下载完成，重启应用即可安装</Alert>
+              <Button color="green" leftSection={<Download size={16} />} onClick={() => void updater.install()}>
+                立即重启安装
+              </Button>
+            </Group>
+          )}
+
+          {updater.status === 'not-available' && updater.source === 'manual' && (
+            <Alert color="green">已是最新版本（当前 v{updater.currentVersion}）</Alert>
+          )}
+
+          {updater.status === 'error' && (
+            <Alert color="red">检查更新失败：{updater.error || '未知错误'}</Alert>
+          )}
+
+          {updater.status === 'dev' && (
+            <Alert color="yellow">开发模式下不支持检查更新</Alert>
+          )}
         </Stack>
       </Card>
     </Stack>
