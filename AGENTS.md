@@ -39,7 +39,7 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
 - 推送 `v*` tag（如 `v0.1.0`）触发发布，先跑 `test` 矩阵（Go vet/test/lint + 前端 typecheck/build）
 - `release` job（ubuntu）：`goreleaser release` 构建 proxy-core 六目标并创建 GitHub Release
 - `build-app` job（win/linux/mac × x64/arm64 矩阵）：`npm run dist:<platform>[:arch]` 构建安装包
-  （Windows NSIS x64+arm64 / Linux AppImage x64+arm64 / macOS dmg x64+arm64），
+  （Windows NSIS x64+arm64 / Linux AppImage x64+arm64 / macOS dmg+zip x64+arm64），
   通过 `softprops/action-gh-release` 上传到同一 Release。
   同系统内架构交叉编译（如 linux/x64 编译 linux/arm64）：`dist:*:arm64` 脚本会先按
   `GOOS/GOARCH` 交叉编译 proxy-core，再以 `--arm64` 参数让 electron-builder 产出对应架构
@@ -56,12 +56,14 @@ goreleaser release --clean           # 发布（需 GITHUB_TOKEN，配置见 .go
   由 `app/electron-builder.cjs` 的 `artifactName` 配置（注意必须用单引号字符串，
   反引号模板字符串会把 `${productName}` 等宏立即插值导致命名错误）
 - **自动更新**：`electron-builder.cjs` 声明 `publish: { provider: 'github', owner: 'axetroy',
-  repo: 'ProxyPilot' }` 以生成 `latest*.yml` 更新元数据（Windows `latest.yml` / macOS
-  `latest-mac.yml` / Linux `latest-linux.yml`），随安装包一起被 CI 上传；所有 dist 脚本
-  都带 `--publish never`，禁止 electron-builder 在 tag 构建时自行上传
-  （runner 代理下报 self-signed certificate 错误），上传统一由
-  `softprops/action-gh-release` 完成。实现见 `app/electron/main/updater.ts`，
-  设计见 DESIGN.md「更新机制设计」。
+  repo: 'ProxyPilot' }` 以生成更新元数据（`latest*.yml`），CI 统一改名为「平台-架构」格式
+  （`windows-x64.yml` / `windows-arm64.yml` / `linux-x64.yml` / `darwin-x64.yml` /
+  `darwin-arm64.yml`）；electron-updater 已被 patch（`patches/electron-updater+6.8.9.patch`，
+  由 patch-package 在 `npm install` 时自动应用）按本机平台+架构读取对应文件，避免同名
+  yml 互相覆盖导致下载错架构安装包（v0.1.11 事故）。所有 dist 脚本都带 `--publish never`，
+  禁止 electron-builder 在 tag 构建时自行上传（runner 代理下报 self-signed certificate
+  错误），上传统一由 `softprops/action-gh-release` 完成。实现见
+  `app/electron/main/updater.ts`，设计见 DESIGN.md「更新机制设计」。
 - 发布需 `GITHUB_TOKEN`（仓库默认提供，`contents: write` 权限）
 
 ### app（Electron 前端）

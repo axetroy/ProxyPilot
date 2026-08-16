@@ -1,0 +1,26 @@
+diff --git a/node_modules/electron-updater/out/providers/Provider.js b/node_modules/electron-updater/out/providers/Provider.js
+index 5530dda..06f67db 100644
+--- a/node_modules/electron-updater/out/providers/Provider.js
++++ b/node_modules/electron-updater/out/providers/Provider.js
+@@ -37,9 +37,19 @@ class Provider {
+             return this.runtimeOptions.platform === "darwin" ? "-mac" : "";
+         }
+     }
+-    // due to historical reasons for windows we use channel name without platform specifier
++    // [codebuff patch] 更新元数据文件名改为 `${平台}-${架构}.yml`：
++    //   windows-x64.yml / windows-arm64.yml / linux-x64.yml / darwin-x64.yml / darwin-arm64.yml
++    // electron-builder 构建端对同一平台的多架构会生成同名 latest*.yml（Windows/macOS
++    // 固定 latest.yml / latest-mac.yml），并行上传到同一 Release 时互相覆盖
++    // （v0.1.11 事故：x64 用户下载到 arm64 安装包，安装器不解压任何文件却先卸载旧版，
++    // 应用直接消失）。CI 已把产物改名为上述文件名（见 .github/workflows/ci.yml），
++    // 这里必须与之一致：默认 channel 即读取与本机平台+架构对应的文件。
++    // 由 patch-package 维护（patches/electron-updater+6.8.9.patch），勿手动修改。
+     getDefaultChannelName() {
+-        return this.getCustomChannelName("latest");
++        const platformMap = { win32: "windows", darwin: "darwin", linux: "linux" };
++        const platform = platformMap[this.runtimeOptions.platform] || this.runtimeOptions.platform;
++        const arch = process.env["TEST_UPDATER_ARCH"] || process.arch;
++        return `${platform}-${arch}`;
+     }
+     getCustomChannelName(channel) {
+         return `${channel}${this.getChannelFilePrefix()}`;

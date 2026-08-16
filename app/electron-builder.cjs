@@ -49,9 +49,12 @@ module.exports = () => {
     // ${productName} 等宏会被立即插值，导致产物命名错误。
     artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
     // 更新源：GitHub Releases（electron-updater 运行时从这里下载）。
-    // 声明 publish 配置后 electron-builder 才会生成 latest*.yml 更新元数据
-    // （Windows 为 latest.yml，macOS 为 latest-mac.yml，Linux 为 latest-linux.yml），
-    // 随安装包一起被 CI 上传到 Release，electron-updater 据此检测新版本。
+    // 声明 publish 配置后 electron-builder 才会生成更新元数据（latest*.yml）。
+    // CI 会把它们统一改名为「平台-架构」格式（windows-x64.yml / darwin-arm64.yml 等，
+    // 见 .github/workflows/ci.yml），electron-updater 已被 patch（patches/
+    // electron-updater+6.8.9.patch，patch-package 在 npm install 时自动应用）按本机
+    // 平台+架构读取对应文件——避免同一平台多架构 job 生成同名 yml 上传互相覆盖
+    // （v0.1.11 事故：x64 用户下载到 arm64 安装包，应用被卸载后未重装）。
     // 上传仍统一由 CI 的 softprops/action-gh-release 负责：dist 脚本都带
     // `--publish never`，禁止 electron-builder 在 tag 构建时自行上传
     // （runner 代理下会报 self-signed certificate 错误）。
@@ -109,7 +112,10 @@ module.exports = () => {
       icon: 'build/icon.png',
       // 架构由 CLI --arm64/--x64 决定（dist:mac / dist:mac:x64），
       // 同平台多架构分开构建以保证 proxy-core 架构匹配。dmg 只能在 macOS 上构建。
-      target: 'dmg',
+      // 同时产出 zip：electron-updater 的 MacUpdater 依赖 Squirrel.Mac，只能消费
+      // .zip 更新包（findFile(files, "zip", ["pkg", "dmg"]) 找不到 zip 会直接抛
+      // ERR_UPDATER_ZIP_FILE_NOT_FOUND，dmg 不能作为更新源），dmg 仅供手动安装。
+      target: ['dmg', 'zip'],
       category: 'public.app-category.utilities',
       // 未配置 Apple Developer 证书：明确不签名（identity: null），
       // 否则 electron-builder 会尝试自动发现证书导致构建失败。

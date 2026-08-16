@@ -40,7 +40,8 @@
     "dist:mac": "npm run build:core:mac && npm run electron:build && cross-env PP_CORE_BIN=proxy-core electron-builder --mac --arm64 --publish never",
     "dist:mac:x64": "npm run build:core:mac:x64 && npm run electron:build && cross-env PP_CORE_BIN=proxy-core electron-builder --mac --x64 --publish never",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --max-warnings=0"
+    "lint": "eslint src --max-warnings=0",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@mantine/core": "^9.5.1",
@@ -77,6 +78,7 @@
     "eslint": "^9.39.5",
     "eslint-plugin-react-compiler": "^19.1.0-rc.2",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "patch-package": "^8.0.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^7.0.2",

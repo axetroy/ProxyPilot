@@ -188,6 +188,46 @@ jobs:
           # electron-builder 下载 AppImage 等工具时需要 GitHub token，避免 rate limit 报错
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 更新元数据统一命名为「平台-架构」格式（windows-x64.yml / windows-arm64.yml /
+      # linux-x64.yml / darwin-x64.yml / darwin-arm64.yml），与 app/electron/main/updater.ts
+      # 中 patch 过的 electron-updater 默认文件名一致（见 patches/electron-updater+6.8.9.patch）。
+      # electron-builder 构建端不区分 Windows/macOS 架构（统一生成 latest.yml /
+      # latest-mac.yml），Linux 区分但命名不同（latest-linux.yml / latest-linux-arm64.yml），
+      # 这里统一改名（mv，不保留旧命名文件），避免多个架构 job 上传同名文件互相覆盖
+      # （v0.1.11 事故：Windows 的 latest.yml 被 win-arm64 job 覆盖，x64 用户下载到 arm64
+      # 安装包，安装器不解压任何文件却先卸载旧版，应用直接消失）。
+      - name: Publish update metadata windows-x64.yml (win-x64)
+        if: matrix.platform == 'win' && matrix.arch == 'x64'
+        working-directory: app
+        shell: bash
+        run: mv release/latest.yml release/windows-x64.yml
+
+      - name: Publish update metadata windows-arm64.yml (win-arm64)
+        if: matrix.platform == 'win' && matrix.arch == 'arm64'
+        working-directory: app
+        shell: bash
+        run: mv release/latest.yml release/windows-arm64.yml
+
+      - name: Publish update metadata linux-x64.yml (linux-x64)
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        working-directory: app
+        run: mv release/latest-linux.yml release/linux-x64.yml
+
+      - name: Publish update metadata linux-arm64.yml (linux-arm64)
+        if: matrix.platform == 'linux' && matrix.arch == 'arm64'
+        working-directory: app
+        run: mv release/latest-linux-arm64.yml release/linux-arm64.yml
+
+      - name: Publish update metadata darwin-x64.yml (mac-x64)
+        if: matrix.platform == 'mac' && matrix.arch == 'x64'
+        working-directory: app
+        run: mv release/latest-mac.yml release/darwin-x64.yml
+
+      - name: Publish update metadata darwin-arm64.yml (mac-arm64)
+        if: matrix.platform == 'mac' && matrix.arch == 'arm64'
+        working-directory: app
+        run: mv release/latest-mac.yml release/darwin-arm64.yml
+
       - name: Upload artifacts to GitHub Release
         uses: softprops/action-gh-release@v3
         with:

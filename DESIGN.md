@@ -1061,9 +1061,18 @@ https://github.com/axetroy/ProxyPilot/releases
 
 基于 `electron-updater`（主进程 `app/electron/main/updater.ts`）。
 `electron-builder.cjs` 声明 `publish: { provider: 'github', owner, repo }` 后，
-构建时会生成更新元数据文件（Windows `latest.yml` / macOS `latest-mac.yml` /
-Linux `latest-linux.yml`），随安装包一起被 CI 上传到 Release；
+构建时会生成更新元数据文件（`latest*.yml`），CI 统一改名为「平台-架构」格式
+（`windows-x64.yml` / `windows-arm64.yml` / `linux-x64.yml` / `darwin-x64.yml` /
+`darwin-arm64.yml`）；electron-updater 已被 patch（`patches/electron-updater+6.8.9.patch`，
+由 patch-package 在 `npm install` 时自动应用）按本机平台+架构读取对应文件，
+避免同名 yml 互相覆盖导致下载错架构安装包（v0.1.11 事故）。
 dist 脚本均带 `--publish never`，上传统一由 `softprops/action-gh-release` 完成。
+
+macOS 的更新包是 **zip**（`MacUpdater` 依赖 Squirrel.Mac，只消费 `.zip`：
+`findFile(files, "zip", ["pkg", "dmg"])` 找不到 zip 会抛 `ERR_UPDATER_ZIP_FILE_NOT_FOUND`，
+dmg 被显式排除、不能作为更新源，仅供手动安装），因此 `electron-builder.cjs` 的
+mac target 为 `['dmg', 'zip']`——两者都随 Release 上传，`latest-mac.yml` 同时列出
+两个文件，自动更新只取 zip。
 
 ## 流程
 
@@ -1113,9 +1122,10 @@ electron-updater 拉取 latest*.yml
   `installDirectory` 赋值，`doInstall` 因而不会传 `/D=` 参数。assisted 安装器
   （`nsis.oneClick:false` + `allowToChangeInstallationDirectory:true`）静默更新时
   会把新版装到 NSIS 默认目录，同时 `uninstallOldVersion` 从注册表卸载旧目录，
-  导致「旧应用被删、新版装到别处找不到」。主进程从注册表
-  `Uninstall\com.axetroy.proxypilot` 的 `InstallLocation`（HKCU/HKLM）读出旧安装
-  目录，注入 `autoUpdater.installDirectory` 使 `/D=` 指向旧目录，实现原地覆盖更新。
+  导致「旧应用被删、新版装到别处找不到」。主进程从注册表 `Software\<APP_GUID>`
+  （APP_GUID = UUID.v5(appId, electron-builder 固定命名空间)，兜底查卸载键）的
+  `InstallLocation`（HKCU/HKLM）读出旧安装目录，注入 `autoUpdater.installDirectory`
+  使 `/D=` 指向旧目录，实现原地覆盖更新。
 - **安装前清理**：`updater:install` 先执行注入的清理钩子（停核心 + 还原系统代理，
   10s 超时兜底）再 `quitAndInstall()`，保证安装器 spawn 时应用已干净退出——
   proxy-core 无文件锁、安装器无需强杀进程、系统代理不残留指向旧网关。

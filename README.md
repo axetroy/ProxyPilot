@@ -299,7 +299,7 @@ npm run dist:mac    # 指定 macOS 平台
 | Windows | `ProxyPilot Setup <version>.exe` | NSIS 安装包（可选安装目录、桌面/开始菜单快捷方式） |
 | Windows | `win-unpacked/` | 解包目录（`ProxyPilot.exe` + `resources/proxy-core.exe`） |
 | Linux | `ProxyPilot-<version>.AppImage` 等 | 按 electron-builder 默认目标生成 |
-| macOS | `ProxyPilot-<version>.dmg` 等 | 按 electron-builder 默认目标生成 |
+| macOS | `ProxyPilot-<version>.dmg` / `.zip` | dmg 供手动安装，zip 供自动更新（Squirrel.Mac 只接受 zip） |
 
 > 打包配置见 `app/electron-builder.cjs`（通过环境变量 `PP_CORE_BIN` 指定随包分发的 proxy-core 二进制：Windows 为 `proxy-core.exe`，Linux/macOS 为 `proxy-core`）。
 
