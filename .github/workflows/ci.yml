@@ -126,7 +126,12 @@ jobs:
   build-app:
     name: Build app (${{ matrix.platform }}-${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    # 依赖 release job 先完成：goreleaser 负责创建 GitHub Release，各 build-app
+    # job 的 softprops/action-gh-release 只往已存在的 Release 上传。若并行执行，
+    # softprops 在 release 尚未建好时会自行创建 draft，与 goreleaser 的 release
+    # 互相重复（v0.1.12 日志："Creating new GitHub release" → "duplicate draft" →
+    # "Removing duplicate draft"），且上传会因资产竞态而失败。
+    needs: [test, release]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -227,6 +232,14 @@ jobs:
         if: matrix.platform == 'mac' && matrix.arch == 'arm64'
         working-directory: app
         run: mv release/latest-mac.yml release/darwin-arm64.yml
+
+      # electron-builder 每个 job 都会生成 builder-debug.yml（构建配置转储，无发布
+      # 价值）与 checksums.txt（仅含该 job 自身产物的校验和，发布级不完整）。
+      # 若不删除，6 个并行 job 上传同名资产会互相覆盖/删除（v0.1.12 的 linux-x64
+      # job 即在 builder-debug.yml 上传竞态中失败），因此上传前统一清理。
+      - name: Remove non-release artifacts (builder-debug.yml / checksums.txt)
+        working-directory: app
+        run: rm -f release/builder-debug.yml release/checksums.txt
 
       - name: Upload artifacts to GitHub Release
         uses: softprops/action-gh-release@v3
