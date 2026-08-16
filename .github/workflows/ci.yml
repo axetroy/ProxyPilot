@@ -237,8 +237,11 @@ jobs:
       # 价值）与 checksums.txt（仅含该 job 自身产物的校验和，发布级不完整）。
       # 若不删除，6 个并行 job 上传同名资产会互相覆盖/删除（v0.1.12 的 linux-x64
       # job 即在 builder-debug.yml 上传竞态中失败），因此上传前统一清理。
+      # 必须显式 shell: bash：Windows runner 默认 PowerShell 下 rm 是 Remove-Item
+      # 的别名，-f 会被当作参数解析报错（v0.1.13 的 win-x64/win-arm64 job 失败）。
       - name: Remove non-release artifacts (builder-debug.yml / checksums.txt)
         working-directory: app
+        shell: bash
         run: rm -f release/builder-debug.yml release/checksums.txt
 
       - name: Upload artifacts to GitHub Release
