@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Menu, Modal, Progress, Select, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
 import { useSubsStore } from '@/stores/subscriptions'
@@ -104,6 +104,7 @@ export default function ProxyPool() {
 
   const [filter, setFilter] = useState('')
   const deferredFilter = useDeferredValue(filter)
+  const [subFilter, setSubFilter] = useState<string | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [pending, setPending] = useState<ProxyNode | null>(null)
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
@@ -147,7 +148,7 @@ export default function ProxyPool() {
     return () => window.clearTimeout(timer)
   }, [notice, clearNotice])
 
-  // filter 变化时重置滚动位置：
+  // filter / subFilter 变化时重置滚动位置：
   // scrollTop 用「渲染期间调整 state」模式（React 官方推荐，避免 effect 内同步 setState），
   // DOM 滚动保留在 effect（外部系统同步，合法用法）
   const [prevFilter, setPrevFilter] = useState(deferredFilter)
@@ -155,20 +156,26 @@ export default function ProxyPool() {
     setPrevFilter(deferredFilter)
     setScrollTop(0)
   }
+  const [prevSubFilter, setPrevSubFilter] = useState(subFilter)
+  if (prevSubFilter !== subFilter) {
+    setPrevSubFilter(subFilter)
+    setScrollTop(0)
+  }
 
   useEffect(() => {
     viewportRef.current?.scrollTo({ top: 0 })
-  }, [deferredFilter])
+  }, [deferredFilter, subFilter])
 
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
-    if (!normalizedFilter) return nodes
     return nodes.filter((n) => {
+      if (subFilter !== null && n.subscriptionId !== Number(subFilter)) return false
+      if (!normalizedFilter) return true
       const subName = subscriptionName(subs, n.subscriptionId) ?? ''
       return `${n.host}:${n.port} ${n.protocol} ${geoText(n)} ${subName}`.toLowerCase().includes(normalizedFilter)
     })
-  }, [nodes, deferredFilter, subs])
+  }, [nodes, deferredFilter, subs, subFilter])
 
   const totalHeight = list.length * ROW_HEIGHT
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
@@ -217,10 +224,19 @@ export default function ProxyPool() {
           <Group gap="sm" wrap="wrap">
             <TextInput
               leftSection={<Search size={16} />}
-              placeholder="筛选主机 / 地区"
+              placeholder="筛选主机 / 地区 / 订阅"
               value={filter}
               onChange={(e) => setFilter(e.currentTarget.value)}
               style={{ width: 260 }}
+            />
+            <Select
+              placeholder="全部订阅"
+              clearable
+              value={subFilter}
+              onChange={setSubFilter}
+              data={subs.map((s) => ({ value: String(s.id), label: s.name }))}
+              style={{ width: 180 }}
+              comboboxProps={{ withinPortal: true }}
             />
             <Button leftSection={<Zap size={16} />} variant="light" loading={checkingAll} onClick={onCheckAll}>
               {checkingAll ? '检测中...' : '检测新节点'}
