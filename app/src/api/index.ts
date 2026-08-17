@@ -1,7 +1,12 @@
 import axios, { type AxiosInstance } from 'axios'
 import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
-const API_BASE = 'http://127.0.0.1:17890'
+// 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
+let API_BASE = 'http://127.0.0.1:17890'
+
+export function getApiBaseUrl(): string {
+  return API_BASE
+}
 
 let token = ''
 let apiReadyPromise: Promise<void> | null = null
@@ -39,6 +44,12 @@ export async function initApi(): Promise<void> {
   }
   if (window.proxypilot) {
     token = await window.proxypilot.getToken()
+    const base = await window.proxypilot.getApiBase()
+    if (base) {
+      API_BASE = base
+      // axios 实例创建时的 baseURL 是默认值，这里按实际地址更新
+      http.defaults.baseURL = base
+    }
   }
   resolveApiReady?.()
   resolveApiReady = null
@@ -247,7 +258,8 @@ export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {
 
   const connect = () => {
     if (closed) return
-    ws = new WebSocket(`ws://127.0.0.1:17890/ws?token=${encodeURIComponent(token)}`)
+    const wsBase = API_BASE.replace(/^http/, 'ws')
+    ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`)
     ws.onmessage = (msg) => {
       try {
         onEvent(JSON.parse(msg.data as string) as LogEvent)

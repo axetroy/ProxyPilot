@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -85,13 +86,21 @@ func main() {
 	go func() { _ = col.Run(ctx) }()
 	go poolMgr.RefreshLoop(ctx)
 
-	srv := &http.Server{Addr: cfg.APIBind, Handler: router}
+	// API 监听端口：被占用时向后顺延（与网关端口顺延一致），实际端口通过
+	// stdout 的 PROXYPILOT_API 告诉 Electron，由前端按实际地址访问。
+	// 只有连续 maxAPIPortProbe 个端口都不可用时才视为致命错误退出。
+	resolvedAPIBind, ln, err := resolveAPIBind(cfg.APIBind)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "api listen: %v\n", err)
+		os.Exit(1)
+	}
+	srv := &http.Server{Handler: router}
 	go func() {
-		busc.Info(fmt.Sprintf("ProxyPilot core %s listening on %s", config.Version, cfg.APIBind))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			busc.Error(fmt.Sprintf("api server: %v", err))
 		}
 	}()
+	busc.Info(fmt.Sprintf("ProxyPilot core %s listening on %s", config.Version, resolvedAPIBind))
 
 	// 订阅服务：独立端口，仅暴露订阅端点。默认仅监听本机；
 	// 如需局域网设备拉取订阅，用户需在设置中显式把监听地址改为 0.0.0.0:17891。
@@ -110,7 +119,7 @@ func main() {
 
 	// Print the session token for the Electron wrapper to pick up.
 	fmt.Printf("PROXYPILOT_TOKEN=%s\n", cfg.SessionToken)
-	fmt.Printf("PROXYPILOT_API=http://%s\n", cfg.APIBind)
+	fmt.Printf("PROXYPILOT_API=http://%s\n", resolvedAPIBind)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -127,4 +136,29 @@ func main() {
 		_ = subSrv.Shutdown(shutdownCtx)
 	}
 	gw.Stop()
+}
+
+// maxAPIPortProbe API 端口被占用时向后顺延的最大尝试次数（与网关端口顺延一致）。
+const maxAPIPortProbe = 100
+
+// resolveAPIBind 尝试绑定 API 监听端口；被占用时向后顺延（17890 → 17891 → ...），
+// 返回实际绑定的地址与 listener。顺延是为了在端口冲突时 core 仍能启动，实际地址
+// 通过 stdout 的 PROXYPILOT_API 通知 Electron，前端按该地址访问（端口不写死）。
+func resolveAPIBind(bind string) (string, net.Listener, error) {
+	host, portStr, err := net.SplitHostPort(bind)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid api bind %q: %w", bind, err)
+	}
+	startPort, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid api port %q: %w", portStr, err)
+	}
+	for port := startPort; port < startPort+maxAPIPortProbe; port++ {
+		addr := net.JoinHostPort(host, strconv.Itoa(port))
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return addr, ln, nil
+		}
+	}
+	return "", nil, fmt.Errorf("no free port found starting from %s (tried %d ports)", bind, maxAPIPortProbe)
 }

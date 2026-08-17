@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage } fr
 import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
+import { isProxyPilotStatus } from './core-process'
 import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
 import {
   initUpdater,
@@ -36,7 +37,12 @@ if (!gotTheLock) {
   })
 }
 
-const API_BASE = 'http://127.0.0.1:17890'
+// 默认 API 地址；core 启动后按 stdout 的 PROXYPILOT_API 更新为实际端口
+// （API 端口被占用时会向后顺延，实际地址由 core 告知）。
+const DEFAULT_API_BASE = 'http://127.0.0.1:17890'
+let apiBase = DEFAULT_API_BASE
+let apiBaseReadyPromise: Promise<void> | null = null
+let resolveApiBaseReady: (() => void) | null = null
 
 let core: ChildProcess | null = null
 let sessionToken = ''
@@ -67,21 +73,13 @@ function resolveCorePath(): string {
   return packaged
 }
 
-async function killExistingCore(): Promise<void> {
-  if (process.platform !== 'win32') return
-  await new Promise<void>((resolve) => {
-    const taskkill = spawn('taskkill', ['/F', '/IM', 'proxy-core.exe', '/T'], {
-      stdio: 'ignore',
-    })
-    taskkill.on('error', () => resolve())
-    taskkill.on('exit', () => resolve())
-  })
-  await new Promise((resolve) => setTimeout(resolve, 500))
-}
-
 async function startCore(): Promise<void> {
   if (core) return
-  await killExistingCore()
+  // 每次启动都重新初始化就绪信号，core 重启后按新输出值更新
+  apiBase = DEFAULT_API_BASE
+  apiBaseReadyPromise = new Promise<void>((resolve) => {
+    resolveApiBaseReady = resolve
+  })
   tokenReady = false
   tokenReadyPromise = new Promise<void>((resolve) => {
     resolveTokenReady = resolve
@@ -120,6 +118,12 @@ async function startCore(): Promise<void> {
       resolveTokenReady?.()
       resolveTokenReady = null
     }
+    const mApi = text.match(/PROXYPILOT_API=(http:\/\/\S+)/)
+    if (mApi) {
+      apiBase = mApi[1]
+      resolveApiBaseReady?.()
+      resolveApiBaseReady = null
+    }
     process.stdout.write(text)
   })
   core.stderr?.on('data', (chunk: Buffer) => {
@@ -147,8 +151,14 @@ function stopCore(): void {
 async function waitForCore(timeoutMs = 20000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   let lastErr = ''
+  // core 启动后会在 stdout 输出 PROXYPILOT_TOKEN 与 PROXYPILOT_API（实际端口）。
+  // 先等两者就绪，避免 API 端口顺延后仍拿默认端口探测而误判。
+  // 用带超时的等待：core 崩溃/输出缺失时不会永久挂起。
   if (tokenReadyPromise) {
-    await tokenReadyPromise
+    await withTimeout(tokenReadyPromise, timeoutMs, 'proxy-core 未在超时时间内输出会话 token')
+  }
+  if (apiBaseReadyPromise) {
+    await withTimeout(apiBaseReadyPromise, timeoutMs, 'proxy-core 未在超时时间内输出 API 地址')
   }
   while (Date.now() < deadline) {
     if (!core) {
@@ -156,9 +166,14 @@ async function waitForCore(timeoutMs = 20000): Promise<void> {
     }
     try {
       const headers: Record<string, string> = sessionToken ? { 'X-Token': sessionToken } : {}
-      const res = await fetch(`${API_BASE}/api/status`, { headers })
+      const res = await fetch(`${apiBase}/api/status`, { headers })
       if (res.ok) {
-        return
+        // 校验响应确实来自 ProxyPilot core：若端口被其他进程占用，立即失败，
+        // 避免 UI 连到错误服务
+        if (isProxyPilotStatus(await res.json())) {
+          return
+        }
+        throw new Error(`端口 ${apiBase.replace('http://', '')} 已被其他进程占用（非 ProxyPilot 服务）`)
       }
       lastErr = `HTTP ${res.status}`
     } catch (e) {
@@ -168,9 +183,21 @@ async function waitForCore(timeoutMs = 20000): Promise<void> {
   }
   throw new Error(
     `proxy-core 未在 ${timeoutMs}ms 内就绪（最后错误: ${lastErr}）。` +
-      `请确认端口 ${API_BASE.replace('http://', '')} 未被其他进程占用，` +
+      `请确认端口 ${apiBase.replace('http://', '')} 未被其他进程占用，` +
       `且 proxy-core 可正常运行。`,
   )
+}
+
+// withTimeout 给 Promise 加超时，避免等待永不落地的信号（如 core 崩溃后
+// tokenReadyPromise 永远不会 resolve）导致启动流程永久挂起。
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
 }
 
 function resolveIconPath(): string {
@@ -305,6 +332,11 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
   }
 
+  // 开发模式：自动打开开发者工具，便于调试渲染进程
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools()
+  }
+
   mainWindow.on('close', (e) => {
     // 默认最小化到托盘；仅当用户选择「退出程序」或应用真正退出时才关闭窗口
     if (!isQuitting && loadAppSettings().closeBehavior === 'minimize') {
@@ -336,7 +368,7 @@ ipcMain.handle('get-token', async () => {
   }
   return sessionToken
 })
-ipcMain.handle('get-api-base', () => API_BASE)
+ipcMain.handle('get-api-base', () => apiBase)
 ipcMain.handle('get-platform', () => process.platform)
 ipcMain.handle('get-app-settings', () => loadAppSettings())
 ipcMain.handle('set-app-settings', (_e, settings: AppSettings) => {
@@ -361,7 +393,7 @@ app.whenReady().then(async () => {
   initUpdater()
   scheduleStartupCheck()
   // 系统代理：注册 IPC，token 由主进程持有的 sessionToken 提供
-  initSystemProxy(() => sessionToken)
+  initSystemProxy(() => sessionToken, () => apiBase)
 
   // 更新安装前先清理：停核心 + 还原系统代理（若开启），保证安装器 spawn 时
   // 应用已干净退出（proxy-core 无文件锁、无需安装器强杀进程、系统代理不残留）

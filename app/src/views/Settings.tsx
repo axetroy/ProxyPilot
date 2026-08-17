@@ -19,7 +19,7 @@ import { useStatusStore } from '@/stores/status'
 import { useUpdaterStore } from '@/stores/updater'
 import { useSystemProxyStore } from '@/stores/system-proxy'
 import { formatBytes } from '@/lib/utils'
-import { getErrorMessage, getPlatform, getSubscriptionConfig, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
+import { getApiBaseUrl, getErrorMessage, getPlatform, getSubscriptionConfig, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
 import type { AppSettings, SettingItem, SubscriptionExportConfig } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
@@ -125,7 +125,7 @@ export default function Settings() {
 
   const fields = useMemo(
     () => [
-      { label: '核心 API', value: 'http://127.0.0.1:17890' },
+      { label: '核心 API', value: getApiBaseUrl() },
       { label: '代理（HTTP / SOCKS5 共用，当前）', value: status.httpProxyBind || '-' },
     ],
     [status.httpProxyBind],

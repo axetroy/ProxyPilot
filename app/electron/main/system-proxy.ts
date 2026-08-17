@@ -74,8 +74,10 @@ let state: SystemProxyState = {
 // 状态变更监听器（托盘菜单需要重建以刷新勾选状态）
 const stateListeners: Array<(state: SystemProxyState) => void> = []
 
-// 读取核心状态所需的 token（由 index.ts 注入，避免模块间循环依赖）
+// 读取核心状态所需的 token / API 地址（由 index.ts 注入，避免模块间循环依赖）。
+// API 地址可能因端口占用而顺延，必须用 core 输出的实际地址而非写死的 17890。
 let getToken: (() => string) | null = null
+let getApiBaseUrl: (() => string) | null = null
 
 export function onSystemProxyStateChange(listener: (state: SystemProxyState) => void): void {
   stateListeners.push(listener)
@@ -405,9 +407,10 @@ function parseEndpoint(endpoint: string): { host: string; port: number } {
 /** 从核心 API 获取网关当前实际绑定地址（端口可能自动顺延） */
 async function resolveGatewayEndpoint(): Promise<string> {
   const token = getToken?.() ?? ''
+  const apiBase = getApiBaseUrl?.() ?? 'http://127.0.0.1:17890'
   let res: Response
   try {
-    res = await fetch('http://127.0.0.1:17890/api/status', {
+    res = await fetch(`${apiBase}/api/status`, {
       headers: token ? { 'X-Token': token } : {},
       signal: AbortSignal.timeout(5000),
     })
@@ -463,9 +466,11 @@ export async function setSystemProxy(enabled: boolean): Promise<SystemProxyState
   return state
 }
 
-/** 注册 IPC（在 app ready 后调用一次），tokenProvider 提供核心 API 鉴权 token */
-export function initSystemProxy(tokenProvider: () => string): void {
+/** 注册 IPC（在 app ready 后调用一次）。tokenProvider 提供核心 API 鉴权 token，
+ *  apiBaseProvider 提供核心 API 实际地址（端口可能顺延）。 */
+export function initSystemProxy(tokenProvider: () => string, apiBaseProvider?: () => string): void {
   getToken = tokenProvider
+  getApiBaseUrl = apiBaseProvider ?? null
   ipcMain.handle('system-proxy:get-state', () => getSystemProxyState())
   ipcMain.handle('system-proxy:set', async (_e, enabled: boolean) => {
     await setSystemProxy(Boolean(enabled))

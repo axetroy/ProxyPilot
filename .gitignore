@@ -16,6 +16,7 @@ release/
 # Go
 proxy-core/proxy-core
 proxy-core/proxy-core.exe
+proxy-core/proxy-core.exe~
 
 # Editor
 .vscode/
