@@ -83,11 +83,22 @@ func (s *socksServer) handleConnWithReader(conn net.Conn, br *bufio.Reader) {
 	if _, err := io.ReadFull(br, buf[:4]); err != nil {
 		return
 	}
-	if buf[0] != 0x05 || buf[1] != 0x01 {
+	if buf[0] != 0x05 {
 		_ = writeReply(conn, 0x07)
 		return
 	}
+	switch buf[1] {
+	case 0x01: // CONNECT
+		s.handleConnect(conn, br, buf)
+	case 0x03: // UDP ASSOCIATE
+		s.handleUDPAssociate(conn, br, buf)
+	default:
+		_ = writeReply(conn, 0x07)
+	}
+}
 
+// handleConnect 处理 SOCKS5 CONNECT（CMD=0x01）：建立到目标地址的隧道并双向转发。
+func (s *socksServer) handleConnect(conn net.Conn, br *bufio.Reader, buf []byte) {
 	target, port, err := readTarget(br, buf)
 	if err != nil {
 		_ = writeReply(conn, 0x01)

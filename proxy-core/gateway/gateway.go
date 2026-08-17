@@ -279,6 +279,31 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 	return nil, fmt.Errorf("all upstream attempts failed for %s: %w", target, lastErr)
 }
 
+// NewUDPRelay 为本地 SOCKS5 UDP 中继选择 SOCKS5 上游节点并建立 UDP 通道。
+// 只有池中存在存活的 SOCKS5 节点才能成功：HTTP/HTTPS 节点只支持 CONNECT 隧道，
+// 无法承载 UDP 流量，因此不做跨协议回退。
+func (g *Gateway) NewUDPRelay() (udpBackend, error) {
+	node := g.selector.NextStrict(model.ProtocolSOCKS5)
+	if node == nil {
+		return nil, errNoSOCKS5UDP
+	}
+	sess, err := validator.UDPAssociate(node, 10*time.Second)
+	if err != nil {
+		g.selector.FailOn(node.ID)
+		return nil, err
+	}
+	g.selector.Success(node.ID)
+
+	g.mu.Lock()
+	g.currentNode = node
+	g.currentSOCKS5Node = node
+	g.mu.Unlock()
+	if g.bus != nil {
+		g.bus.Debug(fmt.Sprintf("udp relay established via node=%s", node.Key()))
+	}
+	return &upstreamSOCKS5UDP{sess: sess}, nil
+}
+
 // targetHost 从 target（形如 "example.com:443" 或 "1.2.3.4:8080"）中提取纯域名/IP。
 // 如果 target 不带端口，则原样返回。提取出的 host 用于域名粘性选择。
 func targetHost(target string) string {

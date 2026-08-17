@@ -323,6 +323,49 @@ func TestStickyKeySeparatesProtocolAndHost(t *testing.T) {
 	}
 }
 
+// ---------- NextStrict ----------
+
+func TestNextStrictFiltersByProtocol(t *testing.T) {
+	m := newTestPool(t)
+	httpNode := addAlive(t, m, "http-a", 90, 100)
+	socks := addAliveWithProtocol(t, m, "socks-a", 80, 100, model.ProtocolSOCKS5)
+
+	s := NewSelector(m)
+	got := s.NextStrict(model.ProtocolSOCKS5)
+	if got == nil || got.ID != socks.ID {
+		t.Fatalf("expected socks5 node %d, got %+v", socks.ID, got)
+	}
+	got = s.NextStrict(model.ProtocolHTTP)
+	if got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected http node %d, got %+v", httpNode.ID, got)
+	}
+}
+
+func TestNextStrictNoCrossProtocolFallback(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "http-a", 90, 100) // 池中只有 HTTP 节点
+
+	s := NewSelector(m)
+	if got := s.NextStrict(model.ProtocolSOCKS5); got != nil {
+		t.Fatalf("expected nil for socks5 with only http nodes, got %+v", got)
+	}
+	// 对比：NextForProtocol（软限制）此时会回退到 HTTP 节点。
+	if got := s.NextForProtocol(model.ProtocolSOCKS5); got == nil {
+		t.Fatal("expected cross-protocol fallback in NextForProtocol")
+	}
+}
+
+func TestNextStrictEmptyPool(t *testing.T) {
+	m := newTestPool(t)
+	s := NewSelector(m)
+	if got := s.NextStrict(model.ProtocolSOCKS5); got != nil {
+		t.Fatalf("expected nil with empty pool, got %+v", got)
+	}
+	if got := s.NextStrict(model.ProtocolHTTP); got != nil {
+		t.Fatalf("expected nil with empty pool, got %+v", got)
+	}
+}
+
 func TestStickyBindingDroppedWhenNodeDies(t *testing.T) {
 	checker := &mockChecker{fail: map[int64]bool{}}
 	m := newTestPoolWithChecker(t, checker)

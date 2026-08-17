@@ -818,8 +818,15 @@ CONNECT host:443
 
 支持：
 
-* TCP
+* TCP（CONNECT）
+* UDP（UDP ASSOCIATE）
 * DNS代理
+
+UDP ASSOCIATE：本地为每个会话分配一个仅绑定 127.0.0.1 的 UDP 中继端口，
+客户端经该端口收发 SOCKS5 UDP 数据报（RSV|FRAG|ATYP|DST.ADDR|DST.PORT|DATA，
+不支持分片）。数据报必须经代理池中的 **SOCKS5 节点**转发（HTTP/HTTPS 节点只
+支持 CONNECT 隧道，无法承载 UDP，此时返回 `0x07` 命令不支持）；转发依赖上游
+SOCKS5 节点同样支持 UDP ASSOCIATE。会话随 TCP 控制连接关闭而结束。
 
 ---
 

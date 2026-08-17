@@ -184,7 +184,8 @@ func (s *Selector) stickyNode(key string) *model.ProxyNode {
 	return nil
 }
 
-// selectBest 在指定协议族内挑选最优节点。
+// selectBest 在指定协议族内挑选最优节点；协议族内没有候选时回退到全部存活节点
+// （软限制：SOCKS5 流量没有 SOCKS5 节点时也可以复用 HTTP 节点）。
 // 排序优先级：存活（优先）→ 有效分数（降序）→ 延迟（升序）→ ID（升序）→ host（升序）。
 // 有效分数 = 原始分数 × 失败惩罚（失败窗口内按 0.5^failures 衰减），
 // 与代理池列表的排序口径保持一致：存活优先，分数优先，同分比延迟。
@@ -193,28 +194,58 @@ func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
 	if len(alive) == 0 {
 		return nil
 	}
-
-	var candidates []*model.ProxyNode
-	switch protocol {
-	case model.ProtocolSOCKS5:
-		for _, n := range alive {
-			if n.Protocol == model.ProtocolSOCKS5 {
-				candidates = append(candidates, n)
-			}
-		}
-	case model.ProtocolHTTP, model.ProtocolHTTPS:
-		for _, n := range alive {
-			if n.Protocol == model.ProtocolHTTP || n.Protocol == model.ProtocolHTTPS {
-				candidates = append(candidates, n)
-			}
-		}
-	default:
-		candidates = alive
-	}
+	candidates := filterByProtocol(alive, protocol)
 	if len(candidates) == 0 {
 		candidates = alive
 	}
+	s.sortCandidates(candidates)
+	return candidates[0]
+}
 
+// NextStrict 返回指定协议族内的最优存活节点，且不做跨协议回退。
+// 用于必须匹配特定协议的场景：UDP 中继只能经 SOCKS5 节点承载，
+// HTTP/HTTPS 节点无法转发 UDP，因此协议族内为空时必须返回 nil 而不是回退。
+func (s *Selector) NextStrict(protocol model.ProxyProtocol) *model.ProxyNode {
+	alive := s.pool.Alive()
+	if len(alive) == 0 {
+		return nil
+	}
+	candidates := filterByProtocol(alive, protocol)
+	if len(candidates) == 0 {
+		return nil
+	}
+	s.sortCandidates(candidates)
+	return candidates[0]
+}
+
+// filterByProtocol 返回 nodes 中属于指定协议族的存活节点。
+// SOCKS5 只匹配 SOCKS5 节点；HTTP/HTTPS 匹配两者；protocol 为空时不筛选。
+func filterByProtocol(nodes []*model.ProxyNode, protocol model.ProxyProtocol) []*model.ProxyNode {
+	switch protocol {
+	case model.ProtocolSOCKS5:
+		var out []*model.ProxyNode
+		for _, n := range nodes {
+			if n.Protocol == model.ProtocolSOCKS5 {
+				out = append(out, n)
+			}
+		}
+		return out
+	case model.ProtocolHTTP, model.ProtocolHTTPS:
+		var out []*model.ProxyNode
+		for _, n := range nodes {
+			if n.Protocol == model.ProtocolHTTP || n.Protocol == model.ProtocolHTTPS {
+				out = append(out, n)
+			}
+		}
+		return out
+	default:
+		return nodes
+	}
+}
+
+// sortCandidates 对候选节点按 存活 → 有效分数 → 延迟 → ID → host 排序，
+// 同时清理过期的失败记录。传入切片会被原地排序（上游克隆，安全）。
+func (s *Selector) sortCandidates(candidates []*model.ProxyNode) {
 	s.mu.Lock()
 	penalties := make(map[int64]int, len(candidates))
 	for _, n := range candidates {
@@ -246,7 +277,6 @@ func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
 		}
 		return a.Host < b.Host
 	})
-	return candidates[0]
 }
 
 // FailOn records a consecutive failure for the node so its weight drops and
