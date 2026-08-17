@@ -99,7 +99,7 @@ export default function Subscriptions() {
                   <Table.Td>{sub.id}</Table.Td>
                   <Table.Td>{sub.name}</Table.Td>
                   <Table.Td>
-                    <Text size="xs" title={sub.url} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Text size="xs" title={sub.url} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {sub.url}
                     </Text>
                   </Table.Td>
