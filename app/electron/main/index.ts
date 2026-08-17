@@ -332,9 +332,20 @@ function createWindow(): void {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
   }
 
-  // 开发模式：自动打开开发者工具，便于调试渲染进程
+  // 开发模式：不自动打开开发者工具，改用 F12 / Ctrl+Shift+I 手动切换。
+  // 应用菜单被移除（Menu.setApplicationMenu(null)），默认快捷键失效，
+  // 这里手动监听键盘事件，让开发者工具随时可切换（再次按下即关闭）
   if (!app.isPackaged) {
-    mainWindow.webContents.openDevTools()
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      const isF12 = input.key === 'F12' && !input.alt && !input.control && !input.shift && !input.meta
+      const isCtrlShiftI =
+        input.key.toLowerCase() === 'i' && input.control && input.shift && !input.alt && !input.meta
+      if (isF12 || isCtrlShiftI) {
+        event.preventDefault()
+        mainWindow?.webContents.toggleDevTools()
+      }
+    })
   }
 
   mainWindow.on('close', (e) => {
