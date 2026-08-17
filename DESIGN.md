@@ -689,12 +689,30 @@ DEAD
 "type":"http",
 "score":90,
 "latency":100,
+"country":"美国",
+"province":"",
+"city":"",
 "lastCheck":"2026-08-08"
 }
 
 ```
 
----
+--- 
+
+## 节点地区解析（离线 GeoIP）
+
+- 数据源使用 ip2region（Apache-2.0）IPv4 xdb 数据，经 `go:embed` 随 proxy-core
+  二进制内嵌（约 11MB），**完全离线、不依赖任何外部 API**；全内存加载（10 微秒级
+  查询）、单例并发安全，天然适配无 CGO 的 goreleaser 六目标交叉编译。IPv6 数据文件
+  过大（36MB+）而代理节点几乎全为 IPv4，暂不内置，IPv6 节点地区留空。
+- 解析时机：节点检测完成时（`pool.evalOne`）解析并写入 `proxy_nodes`
+  的 `country/province/city` 三列（已有库启动时自动 `ALTER TABLE` 迁移补列）。
+  优先级：匿名性探测成功时的**节点出口 IP**（`ProxiedIP`，最准确，代表真实代理
+  所在地）→ 节点 host（IP 直接查，域名做本地 DNS 解析后查）。
+- 数据口径：国内数据精确到城市（中文），海外数据通常只有国家（英文，
+  部分运营商/机构出现在城市场位），保留 IP 段统一标记为 `Reserved`。
+- UI：代理池表格新增「地区」列展示 `国家 · 省份 · 城市`（连续同名段自动合并），
+  搜索框可按主机名/协议/地区关键字过滤。
 
 # 11. Proxy Scheduler设计
 

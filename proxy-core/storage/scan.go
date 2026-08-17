@@ -24,6 +24,7 @@ func scanNode(sc scanner) (*model.ProxyNode, error) {
 	err := sc.Scan(
 		&n.ID, &n.Host, &n.Port, &n.Protocol, &n.Username, &n.Password,
 		&n.Latency, &n.Score, &n.Status,
+		&n.Country, &n.Province, &n.City,
 		&n.SuccessCount, &n.FailCount,
 		&lastCheck, &createdAt, &updatedAt,
 	)

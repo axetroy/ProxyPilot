@@ -8,6 +8,9 @@ export interface ProxyNode {
   latency: number
   score: number
   status: 'new' | 'checking' | 'alive' | 'dead'
+  country?: string
+  province?: string
+  city?: string
   successCount: number
   failCount: number
   lastCheck: string

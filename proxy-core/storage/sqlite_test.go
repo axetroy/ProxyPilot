@@ -1,8 +1,12 @@
 package storage
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 )
@@ -143,7 +147,7 @@ func TestUpdateNodeCheck(t *testing.T) {
 	n := baseNode("1.1.1.1", 8080, model.ProtocolHTTP)
 	_, _ = st.SaveNode(n)
 
-	if err := st.UpdateNodeCheck(n.ID, model.StatusAlive, 100, 90, true); err != nil {
+	if err := st.UpdateNodeCheck(n.ID, model.StatusAlive, 100, 90, true, "中国", "广东省", "深圳市"); err != nil {
 		t.Fatalf("update check: %v", err)
 	}
 	got, _ := st.GetNode(n.ID)
@@ -153,8 +157,11 @@ func TestUpdateNodeCheck(t *testing.T) {
 	if got.SuccessCount != 1 || got.FailCount != 0 {
 		t.Fatalf("counters after success: %+v", got)
 	}
+	if got.Country != "中国" || got.Province != "广东省" || got.City != "深圳市" {
+		t.Fatalf("geo fields after success: %+v", got)
+	}
 
-	if err := st.UpdateNodeCheck(n.ID, model.StatusDead, 0, 10, false); err != nil {
+	if err := st.UpdateNodeCheck(n.ID, model.StatusDead, 0, 10, false, "", "", ""); err != nil {
 		t.Fatalf("update check: %v", err)
 	}
 	got, _ = st.GetNode(n.ID)
@@ -163,6 +170,10 @@ func TestUpdateNodeCheck(t *testing.T) {
 	}
 	if got.SuccessCount != 1 || got.FailCount != 1 {
 		t.Fatalf("counters after failure: %+v", got)
+	}
+	// 地区字段在检测失败且无解析结果时应被清空
+	if got.Country != "" {
+		t.Fatalf("geo fields should be reset after failure: %+v", got)
 	}
 }
 
@@ -644,5 +655,71 @@ func TestCountSubscriptionRefs(t *testing.T) {
 	c, _ = st.CountSubscriptionRefs(n1.ID)
 	if c != 1 {
 		t.Errorf("refs after detach = %d, want 1", c)
+	}
+}
+
+// 旧版数据库（没有地区列）在 storage.New 打开时应自动 ALTER 补列，且能正常读写地区字段。
+func TestMigrateAddsGeoColumnsToLegacyDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE proxy_nodes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		protocol TEXT NOT NULL,
+		username TEXT NOT NULL DEFAULT '',
+		password TEXT NOT NULL DEFAULT '',
+		latency INTEGER NOT NULL DEFAULT 0,
+		score INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'new',
+		success_count INTEGER NOT NULL DEFAULT 0,
+		fail_count INTEGER NOT NULL DEFAULT 0,
+		last_check DATETIME,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		UNIQUE(host, port, protocol)
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	_, err = legacy.Exec(`INSERT INTO proxy_nodes
+		(host, port, protocol, latency, score, status, created_at, updated_at)
+		VALUES ('9.9.9.9', 443, 'http', 10, 99, 'alive', datetime('now'), datetime('now'))`)
+	if err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	st, err := New(path)
+	if err != nil {
+		t.Fatalf("open legacy db with migrate: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	nodes, err := st.ListNode()
+	if err != nil {
+		t.Fatalf("ListNode after migrate: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(nodes))
+	}
+
+	// 补列后可正常写入并读回地区字段
+	node := nodes[0]
+	if err := st.UpdateNodeCheck(node.ID, model.StatusAlive, 50, 80, true, "中国", "香港", "香港"); err != nil {
+		t.Fatalf("UpdateNodeCheck after migrate: %v", err)
+	}
+	got, err := st.GetNode(node.ID)
+	if err != nil {
+		t.Fatalf("GetNode after migrate: %v", err)
+	}
+	if got.Country != "中国" || got.Province != "香港" {
+		t.Fatalf("geo fields after migrate: %+v", got)
 	}
 }

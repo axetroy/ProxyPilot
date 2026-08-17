@@ -35,6 +35,18 @@ function statusLabel(n: ProxyNode) {
   }
 }
 
+// geoText 拼接节点地区文案：国家 · 省份 · 城市，
+// 连续重复段（直辖市省=市同名）自动合并，未知段忽略。
+function geoText(n: ProxyNode): string {
+  const parts: string[] = []
+  for (const v of [n.country, n.province, n.city]) {
+    if (v && v !== parts[parts.length - 1]) {
+      parts.push(v)
+    }
+  }
+  return parts.join(' · ')
+}
+
 // AnonymityBadge 在列表中标注节点的匿名性：优先使用真实探测明细分数，
 // 回退到评分明细中的匿名性分数（启发式）；非存活或未评分节点显示占位符。
 function AnonymityBadge({ node }: { node: ProxyNode }) {
@@ -87,10 +99,10 @@ export default function ProxyPool() {
   const VIEWPORT_HEIGHT = 520
   const OVERSCAN = 8
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
-  // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度：
-  // 70+180+90+90+70+84+60+120 = 764，+7×8 gap +24 padding = 844。
-  const GRID_COLUMNS = '70px minmax(180px, 2.2fr) 90px 90px 70px 84px 60px 120px'
-  const GRID_MIN_WIDTH = 844
+  // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度（确保操作列无需横向滚动即可见）：
+  // 60+150+72+110+70+64+68+62+92 = 748，+8×8 gap +24 padding = 836。
+  const GRID_COLUMNS = '60px minmax(150px, 1.9fr) 72px minmax(110px, 1.4fr) 70px 64px 68px 62px 92px'
+  const GRID_MIN_WIDTH = 836
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -125,7 +137,9 @@ export default function ProxyPool() {
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
-    return normalizedFilter ? nodes.filter((n) => n.host.toLowerCase().includes(normalizedFilter)) : nodes
+    return normalizedFilter
+      ? nodes.filter((n) => `${n.host}:${n.port} ${n.protocol} ${geoText(n)}`.toLowerCase().includes(normalizedFilter))
+      : nodes
   }, [nodes, deferredFilter])
 
   const totalHeight = list.length * ROW_HEIGHT
@@ -170,12 +184,12 @@ export default function ProxyPool() {
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <div>
             <Text fw={700}>代理池管理</Text>
-            <Text size="sm" c="dimmed" mt={4}>按评分、状态和主机名快速筛选和管理节点</Text>
+            <Text size="sm" c="dimmed" mt={4}>按评分、状态、主机名和地区快速筛选和管理节点</Text>
           </div>
           <Group gap="sm" wrap="wrap">
             <TextInput
               leftSection={<Search size={16} />}
-              placeholder="筛选主机"
+              placeholder="筛选主机 / 地区"
               value={filter}
               onChange={(e) => setFilter(e.currentTarget.value)}
               style={{ width: 260 }}
@@ -263,6 +277,7 @@ export default function ProxyPool() {
               <Text size="xs">ID</Text>
               <Text size="xs">主机</Text>
               <Text size="xs">协议</Text>
+              <Text size="xs">地区</Text>
               <Text size="xs">延迟</Text>
               <Text size="xs">评分</Text>
               <Text size="xs">匿名</Text>
@@ -293,6 +308,11 @@ export default function ProxyPool() {
                     <Text size="sm">{n.id}</Text>
                     <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
                     <Badge variant="light">{n.protocol}</Badge>
+                    <Tooltip label={geoText(n) || '未检测到地区'} disabled={!geoText(n)}>
+                      <Text size="sm" c={geoText(n) ? undefined : 'dimmed'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {geoText(n) || '—'}
+                      </Text>
+                    </Tooltip>
                     <Text size="sm">{n.latency}ms</Text>
                     <Tooltip label="查看评分明细">
                       <Button size="xs" variant="subtle" px={4} onClick={() => setScoreTarget(n)}>
@@ -302,9 +322,9 @@ export default function ProxyPool() {
                     <AnonymityBadge node={n} />
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
                     <Group justify="flex-end" gap={6} wrap="nowrap">
-                      <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={10}>
-                        检测
-                      </Button>
+<Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={6}>
+                    检测
+                  </Button>
                       <Menu position="bottom-end" shadow="md" width={200} withinPortal>
                         <Menu.Target>
                           <Tooltip label="更多操作">

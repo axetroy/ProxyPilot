@@ -113,6 +113,7 @@ proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPi
   parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）与导出（proxy_export.go）
   pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
   scheduler/           # 出口选择：weight = score/latency，失败惩罚窗口 30s，粘性绑定 10min，支持固定出口指定（Pin/Unpin）
+  geoip/               # 离线 IP 地区解析（ip2region xdb 数据 go:embed 内嵌，无外部 API）
   storage/             # SQLite（modernc.org/sqlite，无 CGO）
   validator/           # 节点连通性检测（HTTP 探测 + TCP 隧道）
 

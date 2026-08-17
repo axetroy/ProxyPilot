@@ -32,6 +32,9 @@ type ProxyNode struct {
 	Latency        int64         `json:"latency"`
 	Score          int           `json:"score"`
 	Status         ProxyStatus   `json:"status"`
+	Country        string        `json:"country,omitempty"`  // 节点出口地区：国家（离线 GeoIP 解析，检测时填充）
+	Province       string        `json:"province,omitempty"` // 省份/州
+	City           string        `json:"city,omitempty"`     // 城市
 	SuccessCount   int           `json:"successCount"`
 	FailCount      int           `json:"failCount"`
 	LastCheck      time.Time     `json:"lastCheck"`

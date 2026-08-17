@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -52,6 +53,9 @@ func (s *Store) migrate() error {
 			latency INTEGER NOT NULL DEFAULT 0,
 			score INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'new',
+			country TEXT NOT NULL DEFAULT '',
+			province TEXT NOT NULL DEFAULT '',
+			city TEXT NOT NULL DEFAULT '',
 			success_count INTEGER NOT NULL DEFAULT 0,
 			fail_count INTEGER NOT NULL DEFAULT 0,
 			last_check DATETIME,
@@ -93,7 +97,51 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	// 已有数据库升级：为 proxy_nodes 补充地区列（CREATE TABLE IF NOT EXISTS 不会改动旧表）。
+	// SQLite 不支持 ADD COLUMN IF NOT EXISTS，需先查 PRAGMA table_info 判断列是否已存在。
+	return s.migrateProxyNodesColumns()
+}
+
+// migrateProxyNodesColumns 为旧版 proxy_nodes 表补齐 GeoIP 地区列。
+func (s *Store) migrateProxyNodesColumns() error {
+	cols, err := s.tableColumns("proxy_nodes")
+	if err != nil {
+		return err
+	}
+	has := func(name string) bool {
+		_, ok := cols[name]
+		return ok
+	}
+	for _, c := range []string{"country", "province", "city"} {
+		if has(c) {
+			continue
+		}
+		if _, err := s.db.Exec(fmt.Sprintf(
+			`ALTER TABLE proxy_nodes ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, c)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// tableColumns 返回指定表的所有列名（用于迁移判断列是否已存在）。
+func (s *Store) tableColumns(table string) (map[string]struct{}, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt *string
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
+	}
+	return out, rows.Err()
 }
 
 // ---------- settings ----------
@@ -124,15 +172,17 @@ func (s *Store) SetSetting(key, value string) error {
 
 func (s *Store) UpsertNode(n *model.ProxyNode) error {
 	res, err := s.db.Exec(`INSERT INTO proxy_nodes
-		(host, port, protocol, username, password, latency, score, status, success_count, fail_count, last_check, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(host, port, protocol, username, password, latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(host, port, protocol) DO UPDATE SET
 			username=excluded.username, password=excluded.password,
 			latency=excluded.latency, score=excluded.score, status=excluded.status,
+			country=excluded.country, province=excluded.province, city=excluded.city,
 			success_count=excluded.success_count, fail_count=excluded.fail_count,
 			last_check=excluded.last_check, updated_at=excluded.updated_at`,
 		n.Host, n.Port, string(n.Protocol), n.Username, n.Password,
 		n.Latency, n.Score, string(n.Status),
+		n.Country, n.Province, n.City,
 		n.SuccessCount, n.FailCount,
 		nullTime(n.LastCheck), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
@@ -163,11 +213,12 @@ func (s *Store) SaveNode(n *model.ProxyNode) (bool, error) {
 		n.UpdatedAt = now
 	}
 	res, err := s.db.Exec(`INSERT INTO proxy_nodes
-		(host, port, protocol, username, password, latency, score, status, success_count, fail_count, last_check, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(host, port, protocol, username, password, latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(host, port, protocol) DO NOTHING`,
 		n.Host, n.Port, string(n.Protocol), n.Username, n.Password,
 		n.Latency, n.Score, string(n.Status),
+		n.Country, n.Province, n.City,
 		n.SuccessCount, n.FailCount,
 		nullTime(n.LastCheck), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
@@ -218,7 +269,7 @@ func (s *Store) AttachNodeToSubscription(proxyID, subscriptionID int64) error {
 // ListNodesBySubscription 返回订阅关联的所有节点。
 func (s *Store) ListNodesBySubscription(subscriptionID int64) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT p.id, p.host, p.port, p.protocol, p.username, p.password,
-		p.latency, p.score, p.status, p.success_count, p.fail_count, p.last_check, p.created_at, p.updated_at
+		p.latency, p.score, p.status, p.country, p.province, p.city, p.success_count, p.fail_count, p.last_check, p.created_at, p.updated_at
 		FROM proxy_nodes p
 		JOIN subscription_nodes sn ON sn.proxy_id = p.id
 		WHERE sn.subscription_id = ?`, subscriptionID)
@@ -250,9 +301,12 @@ func (s *Store) CountSubscriptionRefs(proxyID int64) (int, error) {
 	return c, err
 }
 
-func (s *Store) UpdateNodeCheck(id int64, status model.ProxyStatus, latency, score int64, ok bool) error {
+// UpdateNodeCheck 在检测完成后更新节点状态与评分，同时回填 GeoIP 地区字段。
+// country/province/city 为空表表示未命中离线定位，保持原有值置空。
+func (s *Store) UpdateNodeCheck(id int64, status model.ProxyStatus, latency, score int64, ok bool, country, province, city string) error {
 	sqlStmt := `UPDATE proxy_nodes SET
 		status=?, latency=?, score=?,
+		country=?, province=?, city=?,
 		success_count=success_count+?, fail_count=fail_count+?,
 		last_check=?, updated_at=? WHERE id=?`
 	successInc, failInc := 0, 0
@@ -263,7 +317,7 @@ func (s *Store) UpdateNodeCheck(id int64, status model.ProxyStatus, latency, sco
 	}
 	now := time.Now().UTC()
 	_, err := s.db.Exec(sqlStmt,
-		string(status), latency, score, successInc, failInc, nullTime(now), now, id)
+		string(status), latency, score, country, province, city, successInc, failInc, nullTime(now), now, id)
 	return err
 }
 
@@ -277,14 +331,14 @@ func (s *Store) DeleteNode(id int64) error {
 
 func (s *Store) GetNode(id int64) (*model.ProxyNode, error) {
 	row := s.db.QueryRow(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
 		FROM proxy_nodes WHERE id=?`, id)
 	return scanNode(row)
 }
 
 func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
 		FROM proxy_nodes ORDER BY CASE WHEN status='alive' THEN 0 ELSE 1 END,
 		score DESC, latency ASC, id ASC, host ASC`)
 	if err != nil {
@@ -304,7 +358,7 @@ func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 
 func (s *Store) ListNodesByStatus(status model.ProxyStatus) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
 		FROM proxy_nodes WHERE status=? ORDER BY score DESC, latency ASC, id ASC, host ASC`, string(status))
 	if err != nil {
 		return nil, err

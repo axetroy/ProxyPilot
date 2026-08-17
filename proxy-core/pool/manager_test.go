@@ -568,3 +568,58 @@ func TestSetConcurrency(t *testing.T) {
 		t.Errorf("concurrency after negative = %d, want 1", got)
 	}
 }
+
+// geoChecker 返回带出口 IP 的探测结果，用于验证地区解析。
+type geoChecker struct{ proxiedIP string }
+
+func (c *geoChecker) Check(node *model.ProxyNode) (model.CheckResult, error) {
+	return model.CheckResult{
+		OK: true, Latency: 50,
+		Anonymity: &model.AnonymityProbe{ProxiedIP: c.proxiedIP},
+	}, nil
+}
+
+// 检测完成后，节点应填充离线 GeoIP 解析的地区（优先使用匿名性探测到的出口 IP）。
+func TestCheckNodeFillsGeoLocation(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &geoChecker{proxiedIP: "8.8.8.8"})
+	m.AddNodes([]*model.ProxyNode{newNode("dummy.example.com", 443, model.ProtocolHTTP)})
+	ns := m.List()
+	if len(ns) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(ns))
+	}
+
+	m.CheckNode(ns[0])
+
+	got := m.Get(ns[0].ID)
+	if got == nil {
+		t.Fatal("node not found after check")
+	}
+	if got.Country != "United States" {
+		t.Errorf("country = %q, want United States (from exit ip)", got.Country)
+	}
+	// host 是域名但出口 IP 命中，不应依赖 DNS。
+	if got.Country == "" {
+		t.Errorf("geo not resolved: %+v", got)
+	}
+}
+
+// 无出口 IP 时，回退到节点 host 解析（host 为公网 IP 时纯本地查询）。
+func TestCheckNodeFillsGeoFromHost(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{newNode("114.114.114.114", 80, model.ProtocolHTTP)})
+	ns := m.List()
+
+	m.CheckNode(ns[0])
+	got := m.Get(ns[0].ID)
+	if got.Country != "中国" {
+		t.Errorf("country = %q, want 中国 (from host ip)", got.Country)
+	}
+	// 内网 host 解析为 Reserved，展示层可见但非空。
+	m2, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m2.AddNodes([]*model.ProxyNode{newNode("127.0.0.1", 80, model.ProtocolHTTP)})
+	ns = m2.List()
+	m2.CheckNode(ns[0])
+	if got := m2.Get(ns[0].ID); got.Country != "Reserved" {
+		t.Errorf("country = %q, want Reserved for private host", got.Country)
+	}
+}
