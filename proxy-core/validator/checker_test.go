@@ -101,11 +101,25 @@ func TestHTTPProxyURLWithAuth(t *testing.T) {
 func TestProxyURLWith(t *testing.T) {
 	node := &model.ProxyNode{Host: "10.0.0.1", Port: 3128, Protocol: model.ProtocolHTTPS}
 	u := proxyURLWith(node)
-	if u.Scheme != "http" {
-		t.Errorf("scheme = %q, want http (proxyURLWith always http)", u.Scheme)
+	if u.Scheme != "" {
+		t.Errorf("scheme = %q, want empty (scheme set by httpProxyURL)", u.Scheme)
 	}
 	if u.Host != "10.0.0.1:3128" {
 		t.Errorf("host = %q", u.Host)
+	}
+}
+
+func TestHTTPProxyURLHTTPS(t *testing.T) {
+	node := &model.ProxyNode{Host: "6.7.8.9", Port: 8443, Protocol: model.ProtocolHTTPS}
+	u, err := httpProxyURL(node)
+	if err != nil {
+		t.Fatalf("httpProxyURL: %v", err)
+	}
+	if u.Scheme != "https" {
+		t.Errorf("scheme = %q, want https", u.Scheme)
+	}
+	if u.Host != "6.7.8.9:8443" {
+		t.Errorf("host = %q, want 6.7.8.9:8443", u.Host)
 	}
 }
 
@@ -464,6 +478,88 @@ func TestConnectTCPSOCKS5(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || string(body) != "socks-ok" {
 		t.Errorf("response = %d %q, want 200 socks-ok", resp.StatusCode, body)
+	}
+}
+
+// TestConnectTCPHTTPS 验证 https:// 代理节点（ProtocolHTTPS）：客户端到代理
+// 服务器的连接先做 TLS 握手，再在其上发 CONNECT。用 httptest.NewTLSServer 提供
+// 自签 TLS 层（证书不可信，ConnectTCP 走 InsecureSkipVerify 才能握手成功）。
+func TestConnectTCPHTTPS(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "https-ok")
+	}))
+	defer target.Close()
+	targetHost, targetPortStr, _ := net.SplitHostPort(strings.TrimPrefix(target.URL, "http://"))
+
+	// TLS CONNECT 代理：外层是 TLS，收到 CONNECT 后 hijack 并直连目标转发
+	proxy := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "expected CONNECT", http.StatusBadRequest)
+			return
+		}
+		out, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			_ = out.Close()
+			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+			return
+		}
+		client, _, err := hj.Hijack()
+		if err != nil {
+			_ = out.Close()
+			return
+		}
+		if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			_ = client.Close()
+			_ = out.Close()
+			return
+		}
+		done := make(chan struct{}, 2)
+		go func() { _, _ = io.Copy(out, client); _ = out.Close(); done <- struct{}{} }()
+		go func() { _, _ = io.Copy(client, out); _ = client.Close(); done <- struct{}{} }()
+		<-done
+		<-done
+	}))
+	defer proxy.Close()
+	_, proxyPortStr, _ := net.SplitHostPort(strings.TrimPrefix(proxy.URL, "https://"))
+	proxyPort, _ := strconv.Atoi(proxyPortStr)
+
+	node := &model.ProxyNode{Host: "127.0.0.1", Port: proxyPort, Protocol: model.ProtocolHTTPS}
+	conn, err := ConnectTCP(node, net.JoinHostPort(targetHost, targetPortStr), 5*time.Second)
+	if err != nil {
+		t.Fatalf("ConnectTCP https: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", net.JoinHostPort(targetHost, targetPortStr)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "https-ok" {
+		t.Errorf("response = %d %q, want 200 https-ok", resp.StatusCode, body)
+	}
+}
+
+// TestConnectTCPHTTPSWrongProtocol 验证：节点标为 https 但代理实际是明文 HTTP
+// CONNECT 时，TLS 握手会失败并返回错误（而不是静默建立明文隧道）。
+func TestConnectTCPHTTPSWrongProtocol(t *testing.T) {
+	proxyAddr, closeProxy := startMockHTTPProxy(t)
+	defer closeProxy()
+	host, portStr, _ := net.SplitHostPort(proxyAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	node := &model.ProxyNode{Host: host, Port: port, Protocol: model.ProtocolHTTPS}
+	_, err := ConnectTCP(node, "example.com:80", 5*time.Second)
+	if err == nil {
+		t.Fatal("expected TLS handshake failure against plain HTTP proxy")
 	}
 }
 

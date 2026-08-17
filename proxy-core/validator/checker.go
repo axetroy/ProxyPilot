@@ -3,6 +3,7 @@ package validator
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -68,6 +69,8 @@ func (c *Checker) Check(node *model.ProxyNode) (model.CheckResult, error) {
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 		DisableKeepAlives:     true,
+		// https:// 代理的地址常为 IP 或自签证书，跳过校验否则可用代理也会被判死
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.target, nil)
@@ -170,6 +173,8 @@ func (c *Checker) fetchEcho(node *model.ProxyNode, viaProxy bool) (echoResult, e
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 		DisableKeepAlives:     true,
+		// 同上：https 代理跳过证书校验
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	if viaProxy {
 		transport.Proxy = func(*http.Request) (*url.URL, error) { return httpProxyURL(node) }
@@ -216,7 +221,7 @@ func (c *Checker) fetchEcho(node *model.ProxyNode, viaProxy bool) (echoResult, e
 }
 
 func proxyURLWith(node *model.ProxyNode) *url.URL {
-	u := &url.URL{Scheme: "http"}
+	u := &url.URL{}
 	u.Host = net.JoinHostPort(node.Host, strconv.Itoa(node.Port))
 	if node.Username != "" {
 		u.User = url.UserPassword(node.Username, node.Password)
@@ -226,14 +231,22 @@ func proxyURLWith(node *model.ProxyNode) *url.URL {
 
 func httpProxyURL(node *model.ProxyNode) (*url.URL, error) {
 	u := proxyURLWith(node)
-	if node.Protocol == model.ProtocolSOCKS5 {
+	switch node.Protocol {
+	case model.ProtocolSOCKS5:
 		u.Scheme = "socks5"
+	case model.ProtocolHTTPS:
+		// https:// 代理：到代理服务器的连接走 TLS，由 http.Transport 自动建立。
+		u.Scheme = "https"
+	default:
+		u.Scheme = "http"
 	}
 	return u, nil
 }
 
 // ConnectTCP establishes a TCP tunnel to addr through the node (CONNECT for http
 // proxies, SOCKS5 handshake for socks5). Returns the tunneled connection.
+// ProtocolHTTPS 节点要求客户端到代理服务器的连接本身走 TLS（https:// 代理），
+// 因此先在 TCP 之上完成 TLS 握手，再在其上发送 CONNECT。
 func ConnectTCP(node *model.ProxyNode, addr string, timeout time.Duration) (net.Conn, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -251,7 +264,25 @@ func ConnectTCP(node *model.ProxyNode, addr string, timeout time.Duration) (net.
 	}
 	var handshakeErr error
 	switch node.Protocol {
-	case model.ProtocolHTTP, model.ProtocolHTTPS:
+	case model.ProtocolHTTPS:
+		// https:// 代理：与代理服务器之间先建立 TLS 隧道，再发 CONNECT。
+		// InsecureSkipVerify 关闭证书校验：代理地址常为 IP/自签证书，
+		// 校验没有意义且会直接导致可用代理被判死。
+		tlsConn := tls.Client(conn, &tls.Config{
+			ServerName:         node.Host,
+			InsecureSkipVerify: true,
+		})
+		if err := tlsConn.Handshake(); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		handshakeErr = httpConnect(tlsConn, node, addr)
+		if handshakeErr != nil {
+			_ = tlsConn.Close()
+			return nil, handshakeErr
+		}
+		return tlsConn, nil
+	case model.ProtocolHTTP:
 		handshakeErr = httpConnect(conn, node, addr)
 	default:
 		handshakeErr = fmt.Errorf("unsupported protocol %q", node.Protocol)
