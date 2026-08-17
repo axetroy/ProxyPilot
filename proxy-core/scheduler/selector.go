@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
@@ -34,6 +35,10 @@ type Selector struct {
 	mu       sync.Mutex
 	failures map[int64]*failure
 	sticky   map[string]stickyEntry // 目标域名 -> 绑定的出口节点
+
+	// pinID 用户通过界面指定的固定出口节点 ID（0 表示未指定）。
+	// 指定后，节点存活时所有协议流量都固定使用该节点，不再按评分自动选择。
+	pinID atomic.Int64
 }
 
 type failure struct {
@@ -47,6 +52,32 @@ func NewSelector(pool *pool.Manager) *Selector {
 		failures: make(map[int64]*failure),
 		sticky:   make(map[string]stickyEntry),
 	}
+}
+
+// Pin 指定固定出口节点（id > 0）。之后节点存活时所有流量固定走该节点；
+// id <= 0 等价于 Unpin。
+func (s *Selector) Pin(id int64) {
+	s.pinID.Store(id)
+}
+
+// Unpin 取消固定出口指定，恢复按评分自动选择。
+func (s *Selector) Unpin() {
+	s.pinID.Store(0)
+}
+
+// PinnedID 返回当前指定的节点 ID（0 表示未指定）。
+func (s *Selector) PinnedID() int64 {
+	return s.pinID.Load()
+}
+
+// Pinned 返回当前指定的节点快照（不要求存活，供状态展示）；
+// 未指定时返回 nil。
+func (s *Selector) Pinned() *model.ProxyNode {
+	id := s.pinID.Load()
+	if id <= 0 {
+		return nil
+	}
+	return s.pool.Get(id)
 }
 
 // Next returns the recommended node: highest weight = score / latency,
@@ -72,14 +103,28 @@ func stickyKey(protocol model.ProxyProtocol, host string) string {
 }
 
 // NextForHost 返回指定协议下、针对目标域名 host 的推荐节点。
-// 相比 NextForProtocol，它额外实现了"域名粘性"：
-//  1. 如果该域名在粘性窗口内已经绑定过某个节点，且该节点仍然存活，
-//     则直接复用该节点，保证同一网站短时间内始终走同一个出口 IP；
-//  2. 否则按权重（score / latency，并叠加失败惩罚）重新选择最优节点，
-//     并把结果绑定到该域名，供后续请求复用。
+// 核心逻辑：
+//  0. 若用户指定了固定出口且该节点存活，则直接返回它（不使用评分最高的，也不受流量协议限制）；
+//  1. 否则尝试命中"域名粘性"：同一域名在窗口内复用同一出口 IP，避免同一网站短时间内多个 IP 访问触发防控；
+//  2. 都没有则按权重（score / latency，并叠加失败惩罚）重新选择最优节点，并把结果绑定到该域名。
+//
+// 说明：指定节点跨协议使用是安全的——ConnectTCP 会按节点自身协议选择握手方式
+// （SOCKS5 握手 / HTTP CONNECT），因此任何协议流量都能复用同一个指定节点。
 //
 // host 为空时退化为普通的按协议选择（不做粘性）。
 func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model.ProxyNode {
+	// 0. 指定固定出口：节点存活时始终使用它，满足"指定了就必须用它"的需求。
+	if id := s.pinID.Load(); id > 0 {
+		n := s.pool.Get(id)
+		if n == nil {
+			// 指定的节点已被删除或被自动淘汰，固定出口不再有意义，自动取消。
+			// （dead 节点不取消，等其重新检测存活后自动恢复固定。）
+			s.pinID.Store(0)
+		} else if n.Status == model.StatusAlive {
+			return n
+		}
+	}
+
 	// 粘性绑定按"协议 + 域名"区分，避免跨协议复用节点。
 	key := stickyKey(protocol, host)
 

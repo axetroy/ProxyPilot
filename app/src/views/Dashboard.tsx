@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Clipboard, Copy, Play, RefreshCw, Square } from 'lucide-react'
+import { Check, Clipboard, Copy, Pin, PinOff, Play, RefreshCw, Square } from 'lucide-react'
 import { Alert, Badge, Button, Card, Code, Divider, Group, Modal, SimpleGrid, Stack, Tabs, Text, TextInput } from '@mantine/core'
 import './dashboard.css'
 import { useStatusStore } from '@/stores/status'
@@ -16,6 +16,7 @@ export default function Dashboard() {
   const stop = useStatusStore((s) => s.stop)
   const checkAll = usePoolStore((s) => s.check)
   const refreshPool = usePoolStore((s) => s.refresh)
+  const unpin = usePoolStore((s) => s.unpin)
   const [notice, setNotice] = useState<NoticeData | null>(null)
   const [loading, setLoading] = useState<'check' | 'start' | 'stop' | null>(null)
   const [copiedKey, setCopiedKey] = useState<'http' | 'socks5' | null>(null)
@@ -182,6 +183,49 @@ export default function Dashboard() {
           {notice.text}
         </Alert>
       )}
+
+      <Card padding="lg" radius="md" withBorder>
+        <Group justify="space-between" align="center" wrap="wrap">
+          {status.pinnedNode ? (
+            <Group gap="sm" wrap="nowrap">
+              <Pin size={18} color="var(--mantine-color-blue-6)" />
+              <div>
+                <Text fw={600}>
+                  固定出口：<Badge variant="light" color="blue">{status.pinnedNode.protocol}</Badge>
+                  {' '}{`${status.pinnedNode.host}:${status.pinnedNode.port}`}
+                </Text>
+                <Text size="sm" c={status.pinnedNode.status === 'alive' ? 'dimmed' : 'red'} mt={2}>
+                  {status.pinnedNode.status === 'alive'
+                    ? `流量固定走该节点（评分 ${status.pinnedNode.score}），不再按评分自动选择`
+                    : `节点当前不可用（${formatNodeStatus(status.pinnedNode)}），流量暂回退自动选择，存活后自动恢复固定`}
+                </Text>
+              </div>
+            </Group>
+          ) : (
+            <Group gap="sm" wrap="nowrap">
+              <PinOff size={18} color="var(--mantine-color-dimmed)" />
+              <div>
+                <Text fw={600}>自动选择出口</Text>
+                <Text size="sm" c="dimmed" mt={2}>未指定固定出口，按评分自动选择最优节点</Text>
+              </div>
+            </Group>
+          )}
+          {status.pinnedNode && (
+            <Button
+              size="sm"
+              variant="light"
+              color="green"
+              leftSection={<PinOff size={14} />}
+              onClick={async () => {
+                const ok = await unpin()
+                if (ok) setNotice({ type: 'success', text: '已取消固定出口，恢复自动选择' })
+              }}
+            >
+              取消指定
+            </Button>
+          )}
+        </Group>
+      </Card>
 
       <Card padding="lg" radius="md" withBorder>
         <Group justify="space-between" align="center" wrap="wrap">

@@ -344,3 +344,191 @@ func TestStickyBindingDroppedWhenNodeDies(t *testing.T) {
 		t.Fatalf("expected node b after a died, got %+v", got)
 	}
 }
+
+// ---------- 指定固定出口（pin） ----------
+
+func TestPinForcesNode(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 200)
+
+	s := NewSelector(m)
+	// 未指定时选最优（a）
+	if got := s.Next(); got == nil || got.ID != a.ID {
+		t.Fatalf("expected node a before pin, got %+v", got)
+	}
+
+	s.Pin(b.ID)
+	// 指定 b 后固定返回 b（即使 a 评分更高）
+	for i := 0; i < 3; i++ {
+		if got := s.Next(); got == nil || got.ID != b.ID {
+			t.Fatalf("expected pinned node b, got %+v", got)
+		}
+	}
+	if s.PinnedID() != b.ID {
+		t.Errorf("PinnedID() = %d, want %d", s.PinnedID(), b.ID)
+	}
+	if p := s.Pinned(); p == nil || p.ID != b.ID {
+		t.Errorf("Pinned() = %+v, want node b", p)
+	}
+}
+
+func TestPinForcesNodeForHostAndProtocol(t *testing.T) {
+	m := newTestPool(t)
+	httpNode := addAlive(t, m, "http-a", 90, 100)
+	addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	s.Pin(httpNode.ID)
+
+	if got := s.NextForHost(model.ProtocolHTTP, "example.com"); got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected pinned http node for host, got %+v", got)
+	}
+	if got := s.NextForProtocol(model.ProtocolHTTP); got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected pinned http node for protocol, got %+v", got)
+	}
+}
+
+func TestUnpinRestoresAutoSelect(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	s.Pin(b.ID)
+	s.Unpin()
+	if s.PinnedID() != 0 {
+		t.Errorf("PinnedID() = %d after unpin, want 0", s.PinnedID())
+	}
+	if p := s.Pinned(); p != nil {
+		t.Errorf("Pinned() = %+v after unpin, want nil", p)
+	}
+	// 恢复按评分选择 a
+	if got := s.Next(); got == nil || got.ID != a.ID {
+		t.Fatalf("expected node a after unpin, got %+v", got)
+	}
+}
+
+func TestPinIgnoresDeadNode(t *testing.T) {
+	checker := &mockChecker{fail: map[int64]bool{}}
+	m := newTestPoolWithChecker(t, checker)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	s.Pin(a.ID)
+
+	// a 检测失败变 dead 后，指定节点不可用，应回退自动选择 b
+	checker.fail[a.ID] = true
+	m.CheckNode(a)
+
+	if got := s.Next(); got == nil || got.ID != b.ID {
+		t.Fatalf("expected fallback to b when pinned node dead, got %+v", got)
+	}
+	// 指定仍然保留（等节点复活后恢复），不自动清除
+	if s.PinnedID() != a.ID {
+		t.Errorf("PinnedID() = %d, want still %d", s.PinnedID(), a.ID)
+	}
+
+	// 节点复活后恢复固定使用 a
+	delete(checker.fail, a.ID)
+	m.CheckNode(a)
+	if got := s.Next(); got == nil || got.ID != a.ID {
+		t.Fatalf("expected pinned node a after revive, got %+v", got)
+	}
+}
+
+func TestPinForcesNodeAcrossProtocols(t *testing.T) {
+	m := newTestPool(t)
+	httpNode := addAlive(t, m, "http-a", 50, 100)
+	socks := addAliveWithProtocol(t, m, "socks-a", 90, 100, model.ProtocolSOCKS5)
+
+	// 指定 HTTP 节点后，SOCKS5 流量也应固定走它（指定优先于协议族划分），
+	// 因为 ConnectTCP 会按节点自身协议完成握手。
+	s := NewSelector(m)
+	s.Pin(httpNode.ID)
+	if got := s.NextForProtocol(model.ProtocolSOCKS5); got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected pinned http node for socks5 traffic, got %+v", got)
+	}
+	if got := s.Next(); got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected pinned http node for generic Next, got %+v", got)
+	}
+
+	// 指定 SOCKS5 节点后，HTTP 流量也应固定走它。
+	s2 := NewSelector(m)
+	s2.Pin(socks.ID)
+	if got := s2.NextForProtocol(model.ProtocolHTTP); got == nil || got.ID != socks.ID {
+		t.Fatalf("expected pinned socks5 node for http traffic, got %+v", got)
+	}
+}
+
+func TestPinOverridesSticky(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	// 先让 example.com 在自动模式下绑定到最高分的 a
+	if got := s.NextForHost(model.ProtocolHTTP, "example.com"); got == nil || got.ID != a.ID {
+		t.Fatalf("expected node a first, got %+v", got)
+	}
+
+	// 指定 b 后，即使 example.com 已有粘性绑定到 a，也固定返回 b（指定优先于粘性）
+	s.Pin(b.ID)
+	for i := 0; i < 2; i++ {
+		if got := s.NextForHost(model.ProtocolHTTP, "example.com"); got == nil || got.ID != b.ID {
+			t.Fatalf("expected pinned node b despite sticky, got %+v", got)
+		}
+	}
+
+	// 取消指定后，恢复粘性/自动选择（原粘性绑定 a 仍然有效）
+	s.Unpin()
+	if got := s.NextForHost(model.ProtocolHTTP, "example.com"); got == nil || got.ID != a.ID {
+		t.Fatalf("expected sticky node a after unpin, got %+v", got)
+	}
+}
+
+func TestPinAutoClearedWhenNodeRemoved(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	s.Pin(a.ID)
+
+	// 手动从池中删除指定的节点（模拟用户删除或自动淘汰）
+	if err := m.Remove(a.ID); err != nil {
+		t.Fatalf("remove node failed: %v", err)
+	}
+
+	// 指定节点已不存在，应自动取消并回退自动选择 b
+	if got := s.Next(); got == nil || got.ID != b.ID {
+		t.Fatalf("expected fallback to b after pinned node removed, got %+v", got)
+	}
+	// 内存中的指定已被自动清除，避免悬空
+	if s.PinnedID() != 0 {
+		t.Errorf("PinnedID() = %d, want 0 after node removed", s.PinnedID())
+	}
+	if p := s.Pinned(); p != nil {
+		t.Errorf("Pinned() = %+v after node removed, want nil", p)
+	}
+}
+
+func TestPinSocksMatchesSocks(t *testing.T) {
+	m := newTestPool(t)
+	httpNode := addAlive(t, m, "http-a", 95, 10)
+	socks := addAliveWithProtocol(t, m, "socks-a", 50, 100, model.ProtocolSOCKS5)
+
+	s := NewSelector(m)
+	s.Pin(socks.ID)
+
+	// SOCKS5 流量固定走指定 SOCKS5 节点
+	if got := s.NextForProtocol(model.ProtocolSOCKS5); got == nil || got.ID != socks.ID {
+		t.Fatalf("expected pinned socks5 node, got %+v", got)
+	}
+	// HTTP 流量同样固定走指定 SOCKS5 节点（指定优先于协议族划分）
+	if got := s.NextForProtocol(model.ProtocolHTTP); got == nil || got.ID != socks.ID {
+		t.Fatalf("expected pinned socks5 node for http traffic, got %+v", got)
+	}
+	_ = httpNode
+}

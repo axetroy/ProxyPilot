@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -45,12 +46,27 @@ func main() {
 	sel := scheduler.NewSelector(poolMgr)
 	gw := gateway.NewGateway(poolMgr, sel, busc, cfg.ProxyAddr())
 
+	// 恢复用户上次指定的固定出口节点（存在且合法时）。
+	if v, err := st.GetSetting(config.KeyPinnedProxy); err == nil && v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+			if poolMgr.Get(id) != nil {
+				sel.Pin(id)
+				busc.Info(fmt.Sprintf("restored pinned exit node id=%d", id))
+			} else {
+				// 节点已不存在（被删除/自动淘汰），清除悬空指定，避免下次启动再次恢复。
+				_ = st.SetSetting(config.KeyPinnedProxy, "")
+				busc.Info("cleared stale pinned exit node (node no longer exists)")
+			}
+		}
+	}
+
 	services := &api.Services{
 		Cfg:       cfg,
 		Store:     st,
 		Pool:      poolMgr,
 		Collector: col,
 		Gateway:   gw,
+		Selector:  sel,
 		Bus:       busc,
 	}
 	router := api.NewRouter(services)

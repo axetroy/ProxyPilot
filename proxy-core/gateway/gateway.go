@@ -263,7 +263,9 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 
 		conn, err := validator.ConnectTCP(node, target, 10*time.Second)
 		if err != nil {
-			g.bus.Debug(fmt.Sprintf("upstream dial via %s failed: %v", node.Key(), err))
+			if g.bus != nil {
+				g.bus.Debug(fmt.Sprintf("upstream dial via %s failed: %v", node.Key(), err))
+			}
 			g.selector.FailOn(node.ID)
 			lastErr = err
 			continue

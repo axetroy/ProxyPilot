@@ -32,6 +32,9 @@ const (
 	KeySubListen  = "subscription_listen"
 	KeySubHost    = "subscription_host"
 	KeySubToken   = "subscription_token"
+	// 固定出口节点 ID（用户指定使用哪个代理）。单独管理，
+	// 不进 Settings() 列表（避免与通用设置表单混在一起）。
+	KeyPinnedProxy = "pinned_proxy_id"
 )
 
 // SettingDef 描述一个可在前端配置的项。

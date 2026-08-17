@@ -219,6 +219,96 @@ func TestSetAddr(t *testing.T) {
 	}
 }
 
+// 指定固定出口后，Upstream 应固定使用指定节点，而不是池中评分最高的。
+// 复现场景：用户设置了固定出口，但请求仍走评分最高的节点。
+func TestUpstreamUsesPinnedNode(t *testing.T) {
+	// 两个都可达但端口不同的节点：一个评分高（100），一个评分低（40）
+	highAddr, closeHigh := startDirectCONNECTProxy(t)
+	t.Cleanup(closeHigh)
+	lowAddr, closeLow := startDirectCONNECTProxy(t)
+	t.Cleanup(closeLow)
+
+	_, highPortStr, err := net.SplitHostPort(highAddr)
+	if err != nil {
+		t.Fatalf("parse high addr: %v", err)
+	}
+	highPort, _ := strconv.Atoi(highPortStr)
+	_, lowPortStr, err := net.SplitHostPort(lowAddr)
+	if err != nil {
+		t.Fatalf("parse low addr: %v", err)
+	}
+	lowPort, _ := strconv.Atoi(lowPortStr)
+
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	poolMgr := pool.NewManager(st, nil, bus.New(), 4)
+	poolMgr.AddNodes([]*model.ProxyNode{
+		{Host: "127.0.0.1", Port: highPort, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 100, Latency: 1},
+		{Host: "127.0.0.1", Port: lowPort, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 40, Latency: 5},
+	})
+
+	var lowScoreNode *model.ProxyNode
+	var highScoreNode *model.ProxyNode
+	for _, n := range poolMgr.List() {
+		if n.Port == lowPort {
+			lowScoreNode = n
+		} else {
+			highScoreNode = n
+		}
+	}
+	if lowScoreNode == nil || highScoreNode == nil {
+		t.Fatal("failed to resolve high/low score nodes")
+	}
+
+	sel := scheduler.NewSelector(poolMgr)
+	g := NewGateway(poolMgr, sel, bus.New(), "127.0.0.1:0")
+	if err := g.Start(); err != nil {
+		t.Fatalf("Start gateway: %v", err)
+	}
+	t.Cleanup(g.Stop)
+
+	echoAddr := startEchoServer(t)
+
+	// 指定前：自动选评分最高的节点
+	conn, err := g.Upstream(context.Background(), echoAddr)
+	if err != nil {
+		t.Fatalf("Upstream before pin: %v", err)
+	}
+	_ = conn.Close()
+	if cur := g.CurrentNode(); cur == nil || cur.ID != highScoreNode.ID {
+		t.Errorf("CurrentNode before pin = %+v, want high-score node (id=%d)", cur, highScoreNode.ID)
+	}
+
+	// 指定低分节点后：固定走它，即使池中有评分更高的节点
+	sel.Pin(lowScoreNode.ID)
+	conn, err = g.Upstream(context.Background(), echoAddr)
+	if err != nil {
+		t.Fatalf("Upstream after pin: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if cur := g.CurrentNode(); cur == nil || cur.ID != lowScoreNode.ID {
+		t.Errorf("CurrentNode after pin = %+v, want pinned low-score node (id=%d)", cur, lowScoreNode.ID)
+	}
+
+	// 隧道可用：字节应回显
+	payload := "pinned-ok"
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(buf) != payload {
+		t.Errorf("echo = %q, want %q", buf, payload)
+	}
+}
+
 // httpServer.Start 独立监听（非混合模式）。
 func TestHTTPServerStart(t *testing.T) {
 	g := NewGateway(nil, nil, nil, "127.0.0.1:0")

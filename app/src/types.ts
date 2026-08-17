@@ -66,6 +66,8 @@ export interface SystemStatus {
   currentNode?: ProxyNode
   currentHttpNode?: ProxyNode
   currentSocks5Node?: ProxyNode
+  /** 用户指定的固定出口节点（未指定或节点已删除时为 undefined） */
+  pinnedNode?: ProxyNode
   httpProxyBind: string
   socks5ProxyBind: string
   version: string

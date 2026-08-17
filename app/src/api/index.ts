@@ -131,6 +131,20 @@ export async function deleteProxy(id: number): Promise<ApiResponse<void>> {
   return data
 }
 
+/** 指定某个节点为固定出口（不再按评分自动选择） */
+export async function pinProxy(id: number): Promise<ApiResponse<ProxyNode>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<ProxyNode>>('/api/proxy/pin', { id })
+  return data
+}
+
+/** 取消固定出口指定，恢复按评分自动选择 */
+export async function unpinProxy(): Promise<ApiResponse<void>> {
+  await ensureApiReady()
+  const { data } = await http.delete<ApiResponse<void>>('/api/proxy/pin')
+  return data
+}
+
 export async function checkProxy(id?: number): Promise<ApiResponse<CheckResult | { started: boolean }>> {
   await ensureApiReady()
   const { data } = await http.post<ApiResponse<CheckResult | { started: boolean }>>(

@@ -55,6 +55,7 @@ func newTestServices(t *testing.T) *Services {
 		Pool:      poolMgr,
 		Collector: col,
 		Gateway:   gw,
+		Selector:  sel,
 		Bus:       b,
 	}
 }
@@ -505,6 +506,142 @@ func TestCheckProxiesAll(t *testing.T) {
 	w := doRequest(t, r, http.MethodPost, "/api/proxy/check", map[string]any{})
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status code = %d, want 202", w.Code)
+	}
+}
+
+// ---------- pinned proxy（指定固定出口） ----------
+
+func TestPinProxyEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 90},
+		{Host: "5.6.7.8", Port: 8081, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 50},
+	})
+	nodes := s.Pool.List()
+	pinID := nodes[0].ID
+
+	w := doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": pinID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("pin status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	if resp.Code != 0 {
+		t.Errorf("resp.Code = %d, want 0", resp.Code)
+	}
+	if s.Selector.PinnedID() != pinID {
+		t.Errorf("PinnedID() = %d, want %d", s.Selector.PinnedID(), pinID)
+	}
+	// 应持久化
+	if v, _ := s.Store.GetSetting(config.KeyPinnedProxy); v != fmt.Sprintf("%d", pinID) {
+		t.Errorf("persisted pinned setting = %q, want %d", v, pinID)
+	}
+
+	// status 响应应包含 pinnedNode
+	w2 := doRequest(t, r, http.MethodGet, "/api/status", nil)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", w2.Code)
+	}
+	resp2 := decodeResponse(t, w2)
+	data, ok := resp2.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp2.Data)
+	}
+	pm, hasPin := data["pinnedNode"].(map[string]any)
+	if !hasPin {
+		t.Fatal("expected pinnedNode in status response")
+	}
+	if int64(pm["id"].(float64)) != pinID {
+		t.Errorf("pinnedNode id = %v, want %d", pm["id"], pinID)
+	}
+}
+
+func TestUnpinProxyEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	pinID := s.Pool.List()[0].ID
+
+	doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": pinID})
+	w := doRequest(t, r, http.MethodDelete, "/api/proxy/pin", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unpin status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	if s.Selector.PinnedID() != 0 {
+		t.Errorf("PinnedID() = %d after unpin, want 0", s.Selector.PinnedID())
+	}
+	if v, _ := s.Store.GetSetting(config.KeyPinnedProxy); v != "" {
+		t.Errorf("persisted pinned setting = %q after unpin, want empty", v)
+	}
+
+	// 取消后 /api/status 的响应体不应再包含 pinnedNode（omitempty 缺席）
+	w2 := doRequest(t, r, http.MethodGet, "/api/status", nil)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", w2.Code)
+	}
+	resp2 := decodeResponse(t, w2)
+	data, ok := resp2.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp2.Data)
+	}
+	if _, hasPin := data["pinnedNode"]; hasPin {
+		t.Error("expected pinnedNode absent from status response after unpin")
+	}
+}
+
+func TestPinProxyErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 不存在的节点 -> 404
+	w := doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": 99999})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing node pin status = %d, want 404", w.Code)
+	}
+	// 非法 id（<=0）-> 400
+	w2 := doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": 0})
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("zero id pin status = %d, want 400", w2.Code)
+	}
+	// 缺 id -> 400
+	w3 := doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{})
+	if w3.Code != http.StatusBadRequest {
+		t.Fatalf("missing id pin status = %d, want 400", w3.Code)
+	}
+}
+
+func TestDeleteProxyClearsPin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	pinID := s.Pool.List()[0].ID
+
+	doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": pinID})
+	if s.Selector.PinnedID() != pinID {
+		t.Fatalf("setup: PinnedID() = %d, want %d", s.Selector.PinnedID(), pinID)
+	}
+
+	w := doRequest(t, r, http.MethodDelete, fmt.Sprintf("/api/proxy/%d", pinID), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	// 删除的正是固定节点时，应自动取消指定并清除持久化
+	if s.Selector.PinnedID() != 0 {
+		t.Errorf("PinnedID() = %d after deleting pinned node, want 0", s.Selector.PinnedID())
+	}
+	if v, _ := s.Store.GetSetting(config.KeyPinnedProxy); v != "" {
+		t.Errorf("persisted pinned setting = %q after delete, want empty", v)
 	}
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
+	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 )
 
@@ -23,6 +25,7 @@ type Services struct {
 	Pool      *pool.Manager
 	Collector *collector.Manager
 	Gateway   *gateway.Gateway
+	Selector  *scheduler.Selector
 	Bus       *bus.Bus
 }
 
@@ -79,6 +82,8 @@ func NewRouter(s *Services) *gin.Engine {
 	r.PUT("/api/subscription", s.updateSubscriptionConfig)
 	r.GET("/api/proxies", s.listProxies)
 	r.DELETE("/api/proxy/:id", s.deleteProxy)
+	r.PUT("/api/proxy/pin", s.pinProxy)
+	r.DELETE("/api/proxy/pin", s.unpinProxy)
 	r.POST("/api/proxy/check", s.checkProxies)
 	r.POST("/api/gateway/start", s.startGateway)
 	r.POST("/api/gateway/stop", s.stopGateway)
@@ -94,7 +99,7 @@ func (s *Services) status(c *gin.Context) {
 	currentNode := s.Gateway.CurrentNode()
 	currentHTTPNode := s.Gateway.CurrentHTTPNode()
 	currentSOCKS5Node := s.Gateway.CurrentSOCKS5Node()
-	c.JSON(http.StatusOK, ok(buildSystemStatus(
+	st := buildSystemStatus(
 		s.Gateway.Running(),
 		total,
 		alive,
@@ -104,7 +109,12 @@ func (s *Services) status(c *gin.Context) {
 		s.Gateway.HTTPAddr(),
 		s.Gateway.SOCKSAddr(),
 		config.Version,
-	)))
+	)
+	// 附加用户指定的固定出口节点（未指定时为空）。
+	if s.Selector != nil {
+		st.PinnedNode = s.Selector.Pinned()
+	}
+	c.JSON(http.StatusOK, ok(st))
 }
 
 func (s *Services) listSubscriptions(c *gin.Context) {
@@ -240,6 +250,55 @@ func (s *Services) deleteProxy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
 		return
 	}
+	// 删除的正是固定出口节点时，自动取消指定，避免留下悬空引用。
+	if s.Selector != nil && s.Selector.PinnedID() == id {
+		s.Selector.Unpin()
+		_ = s.Store.SetSetting(config.KeyPinnedProxy, "")
+		s.Bus.Info("deleted node was pinned, unpinned exit node")
+	}
+	c.JSON(http.StatusOK, ok(nil))
+}
+
+// pinPayload 指定固定出口节点的请求体。
+type pinPayload struct {
+	ID int64 `json:"id" binding:"required"`
+}
+
+// pinProxy 把某个节点指定为固定出口（之后不再按评分自动选择）。
+func (s *Services) pinProxy(c *gin.Context) {
+	var payload pinPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, "请求体格式错误"))
+		return
+	}
+	if payload.ID <= 0 {
+		c.JSON(http.StatusBadRequest, fail(400, "无效的节点 ID"))
+		return
+	}
+	if s.Selector == nil {
+		c.JSON(http.StatusInternalServerError, fail(1, "selector unavailable"))
+		return
+	}
+	node := s.Pool.Get(payload.ID)
+	if node == nil {
+		c.JSON(http.StatusNotFound, fail(404, "节点不存在"))
+		return
+	}
+	s.Selector.Pin(payload.ID)
+	if err := s.Store.SetSetting(config.KeyPinnedProxy, strconv.FormatInt(payload.ID, 10)); err != nil {
+		s.Bus.Error("persist pinned proxy failed: " + err.Error())
+	}
+	s.Bus.Info(fmt.Sprintf("pinned exit node: %s", node.Key()))
+	c.JSON(http.StatusOK, ok(node))
+}
+
+// unpinProxy 取消固定出口指定，恢复按评分自动选择。
+func (s *Services) unpinProxy(c *gin.Context) {
+	if s.Selector != nil {
+		s.Selector.Unpin()
+	}
+	_ = s.Store.SetSetting(config.KeyPinnedProxy, "")
+	s.Bus.Info("unpinned exit node, back to auto selection")
 	c.JSON(http.StatusOK, ok(nil))
 }
 

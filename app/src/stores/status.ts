@@ -30,6 +30,13 @@ export const useStatusStore = create<StatusState>((set, get) => ({
         status: {
           ...state.status,
           ...res.data,
+          // 后端这些指针字段带 omitempty，未命中时 JSON 中会缺席，
+          // 直接展开会残留旧值（如取消固定出口后 pinnedNode 不消失）。
+          // 这里显式同步，让 nil/null/undefined 也能清除旧状态。
+          currentNode: res.data.currentNode,
+          currentHttpNode: res.data.currentHttpNode,
+          currentSocks5Node: res.data.currentSocks5Node,
+          pinnedNode: res.data.pinnedNode,
         },
       }))
     }

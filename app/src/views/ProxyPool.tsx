@@ -1,7 +1,8 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Code, Group, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Check, Copy, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
+import { Alert, Badge, Box, Button, Card, Code, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
+import { useStatusStore } from '@/stores/status'
 import { getPlatform, type Platform } from '@/api'
 import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
 import type { ProxyNode } from '@/types'
@@ -66,6 +67,10 @@ export default function ProxyPool() {
   const remove = usePoolStore((s) => s.remove)
   const check = usePoolStore((s) => s.check)
   const clearNotice = usePoolStore((s) => s.clearNotice)
+  const pin = usePoolStore((s) => s.pin)
+  const unpin = usePoolStore((s) => s.unpin)
+  // 当前指定的固定出口（由 App 每秒轮询 /api/status 更新）
+  const pinnedNode = useStatusStore((s) => s.status.pinnedNode)
 
   const [filter, setFilter] = useState('')
   const deferredFilter = useDeferredValue(filter)
@@ -83,9 +88,9 @@ export default function ProxyPool() {
   const OVERSCAN = 8
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
   // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度：
-  // 70+180+90+90+70+84+60+180 = 824，+7×8 gap +24 padding = 904。
-  const GRID_COLUMNS = '70px minmax(180px, 2.2fr) 90px 90px 70px 84px 60px 180px'
-  const GRID_MIN_WIDTH = 904
+  // 70+180+90+90+70+84+60+120 = 764，+7×8 gap +24 padding = 844。
+  const GRID_COLUMNS = '70px minmax(180px, 2.2fr) 90px 90px 70px 84px 60px 120px'
+  const GRID_MIN_WIDTH = 844
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -138,6 +143,14 @@ export default function ProxyPool() {
     window.setTimeout(() => refresh(), 1500)
   }
 
+  async function onPin(n: ProxyNode) {
+    await pin(n.id)
+  }
+
+  async function onUnpin() {
+    await unpin()
+  }
+
   async function copyCommand(key: string, text: string) {
     try {
       await navigator.clipboard.writeText(text)
@@ -185,6 +198,34 @@ export default function ProxyPool() {
       {(notice || localNotice) && (
         <Alert color={notice?.type === 'success' || localNotice?.type === 'success' ? 'green' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }}>
           {(notice || localNotice)?.text}
+        </Alert>
+      )}
+
+      {pinnedNode ? (
+        <Alert color="blue" variant="light" withCloseButton onClose={onUnpin}>
+          <Group gap="xs" wrap="nowrap">
+            <Pin size={16} />
+            <Box>
+              <Text size="sm">
+                固定出口已指定：<Badge variant="light">{pinnedNode.protocol}</Badge>{' '}
+                <Text span fw={600} inherit>{`${pinnedNode.host}:${pinnedNode.port}`}</Text>
+              </Text>
+              {pinnedNode.status === 'alive' ? (
+                <Text size="sm" mt={2}>流量固定走该节点（评分 {pinnedNode.score}），不再按评分自动选择；点击关闭可取消指定</Text>
+              ) : (
+                <Text size="sm" c="red" mt={2}>
+                  节点当前不可用（{statusLabel(pinnedNode)}），流量暂回退自动选择，存活后自动恢复固定
+                </Text>
+              )}
+            </Box>
+          </Group>
+        </Alert>
+      ) : (
+        <Alert color="gray" variant="light">
+          <Group gap="xs" wrap="nowrap">
+            <PinOff size={16} />
+            <Text size="sm">未指定固定出口，自动按评分选择最优节点；可在任意节点行点击「指定」固定使用</Text>
+          </Group>
         </Alert>
       )}
 
@@ -260,18 +301,37 @@ export default function ProxyPool() {
                     </Tooltip>
                     <AnonymityBadge node={n} />
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
-                    <Group justify="flex-end" gap="xs">
-                      <Tooltip label="复制代理命令">
-                        <Button size="xs" variant="subtle" onClick={() => { setCopyTarget(n); setActiveTab(defaultTab) }}>
-                          <Copy size={14} />
-                        </Button>
-                      </Tooltip>
-                      <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)}>
+                    <Group justify="flex-end" gap={6} wrap="nowrap">
+                      <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={10}>
                         检测
                       </Button>
-                      <Button size="xs" color="red" variant="subtle" onClick={() => setPending(n)}>
-                        <Trash2 size={14} />
-                      </Button>
+                      <Menu position="bottom-end" shadow="md" width={200} withinPortal>
+                        <Menu.Target>
+                          <Tooltip label="更多操作">
+                            <Button size="xs" variant="subtle" px={6} aria-label="更多操作">
+                              <MoreHorizontal size={16} />
+                            </Button>
+                          </Tooltip>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          {pinnedNode?.id === n.id ? (
+                            <Menu.Item color="green" leftSection={<PinOff size={14} />} onClick={onUnpin}>
+                              取消指定
+                            </Menu.Item>
+                          ) : (
+                            <Menu.Item leftSection={<Pin size={14} />} onClick={() => onPin(n)}>
+                              指定为固定出口
+                            </Menu.Item>
+                          )}
+                          <Menu.Item leftSection={<Copy size={14} />} onClick={() => { setCopyTarget(n); setActiveTab(defaultTab) }}>
+                            复制代理命令
+                          </Menu.Item>
+                          <Menu.Divider />
+                          <Menu.Item color="red" leftSection={<Trash2 size={14} />} onClick={() => setPending(n)}>
+                            删除代理
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
                     </Group>
                   </Box>
                 ))
