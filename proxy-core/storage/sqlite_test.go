@@ -589,6 +589,60 @@ func TestListNodesBySubscription(t *testing.T) {
 	}
 }
 
+// TestListNodePopulatesSubscriptionID 回归测试：ListNode / GetNode / ListNodesByStatus
+// 必须返回节点关联的订阅 ID（此前查询缺少订阅关联，前端详情看不到订阅来源）。
+func TestListNodePopulatesSubscriptionID(t *testing.T) {
+	st := newTestStore(t)
+	sub := saveSub(t, st, "sub-a")
+	n := saveNode(t, st, "1.1.1.1", 8080)
+	if err := st.AttachNodeToSubscription(n.ID, sub.ID); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	// 未关联的节点也保留（确保 LEFT JOIN 语义下不会丢节点）
+	n2 := saveNode(t, st, "2.2.2.2", 8081)
+
+	all, err := st.ListNode()
+	if err != nil {
+		t.Fatalf("ListNode: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListNode len = %d, want 2", len(all))
+	}
+	byID := map[int64]*model.ProxyNode{}
+	for _, node := range all {
+		byID[node.ID] = node
+	}
+	if byID[n.ID].SubscriptionID != sub.ID {
+		t.Errorf("ListNode SubscriptionID = %d, want %d", byID[n.ID].SubscriptionID, sub.ID)
+	}
+	if byID[n2.ID].SubscriptionID != 0 {
+		t.Errorf("unattached node SubscriptionID = %d, want 0", byID[n2.ID].SubscriptionID)
+	}
+
+	one, err := st.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if one.SubscriptionID != sub.ID {
+		t.Errorf("GetNode SubscriptionID = %d, want %d", one.SubscriptionID, sub.ID)
+	}
+
+	n.Status = model.StatusAlive
+	if err := st.UpdateNodeCheck(n.ID, model.StatusAlive, 10, 80, true, "", "", ""); err != nil {
+		t.Fatalf("UpdateNodeCheck: %v", err)
+	}
+	alive, err := st.ListNodesByStatus(model.StatusAlive)
+	if err != nil {
+		t.Fatalf("ListNodesByStatus: %v", err)
+	}
+	if len(alive) != 1 {
+		t.Fatalf("alive len = %d, want 1", len(alive))
+	}
+	if alive[0].SubscriptionID != sub.ID {
+		t.Errorf("ListNodesByStatus SubscriptionID = %d, want %d", alive[0].SubscriptionID, sub.ID)
+	}
+}
+
 func TestDetachNodeFromSubscription(t *testing.T) {
 	st := newTestStore(t)
 	sub := saveSub(t, st, "sub-a")

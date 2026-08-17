@@ -20,7 +20,7 @@
     "preview": "vite preview",
     "dev:renderer": "vite",
     "dev:electron": "tsc -p tsconfig.electron.json && electron .",
-    "build:core": "cd ../proxy-core && go build -o proxy-core .",
+    "build:core": "cd ../proxy-core && node -e \"const{execSync}=require('child_process');const out=process.platform==='win32'?'proxy-core.exe':'proxy-core';execSync('go build -o '+out+' .',{stdio:'inherit'})\"",
     "build:core:win": "cd ../proxy-core && cross-env GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o proxy-core.exe .",
     "build:core:win:arm64": "cd ../proxy-core && cross-env GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -o proxy-core.exe .",
     "build:core:linux": "cd ../proxy-core && cross-env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o proxy-core .",

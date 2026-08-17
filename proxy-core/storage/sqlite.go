@@ -269,7 +269,8 @@ func (s *Store) AttachNodeToSubscription(proxyID, subscriptionID int64) error {
 // ListNodesBySubscription 返回订阅关联的所有节点。
 func (s *Store) ListNodesBySubscription(subscriptionID int64) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT p.id, p.host, p.port, p.protocol, p.username, p.password,
-		p.latency, p.score, p.status, p.country, p.province, p.city, p.success_count, p.fail_count, p.last_check, p.created_at, p.updated_at
+		p.latency, p.score, p.status, p.country, p.province, p.city, p.success_count, p.fail_count, p.last_check, p.created_at, p.updated_at,
+		sn.subscription_id
 		FROM proxy_nodes p
 		JOIN subscription_nodes sn ON sn.proxy_id = p.id
 		WHERE sn.subscription_id = ?`, subscriptionID)
@@ -331,14 +332,16 @@ func (s *Store) DeleteNode(id int64) error {
 
 func (s *Store) GetNode(id int64) (*model.ProxyNode, error) {
 	row := s.db.QueryRow(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at,
+		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes WHERE id=?`, id)
 	return scanNode(row)
 }
 
 func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at,
+		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes ORDER BY CASE WHEN status='alive' THEN 0 ELSE 1 END,
 		score DESC, latency ASC, id ASC, host ASC`)
 	if err != nil {
@@ -358,7 +361,8 @@ func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 
 func (s *Store) ListNodesByStatus(status model.ProxyStatus) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
-		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at
+		latency, score, status, country, province, city, success_count, fail_count, last_check, created_at, updated_at,
+		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes WHERE status=? ORDER BY score DESC, latency ASC, id ASC, host ASC`, string(status))
 	if err != nil {
 		return nil, err

@@ -1,11 +1,12 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Code, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
+import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
+import { useSubsStore } from '@/stores/subscriptions'
 import { getPlatform, type Platform } from '@/api'
 import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
-import type { ProxyNode } from '@/types'
+import type { ProxyNode, Subscription } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -47,6 +48,20 @@ function geoText(n: ProxyNode): string {
   return parts.join(' · ')
 }
 
+// subscriptionName 通过 subscriptionId 关联订阅列表取名称；无订阅或未找到返回 undefined。
+function subscriptionName(subs: Subscription[], id?: number): string | undefined {
+  if (!id) return undefined
+  return subs.find((s) => s.id === id)?.name
+}
+
+// formatTime 格式化时间字符串为本地时间；空值返回占位符。
+function formatTime(v?: string): string {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString()
+}
+
 // AnonymityBadge 在列表中标注节点的匿名性：优先使用真实探测明细分数，
 // 回退到评分明细中的匿名性分数（启发式）；非存活或未评分节点显示占位符。
 function AnonymityBadge({ node }: { node: ProxyNode }) {
@@ -83,6 +98,9 @@ export default function ProxyPool() {
   const unpin = usePoolStore((s) => s.unpin)
   // 当前指定的固定出口（由 App 每秒轮询 /api/status 更新）
   const pinnedNode = useStatusStore((s) => s.status.pinnedNode)
+  // 订阅列表：节点详情展示「来自哪个订阅」时用于关联 subscriptionId → 名称
+  const subs = useSubsStore((s) => s.subs)
+  const refreshSubs = useSubsStore((s) => s.refresh)
 
   const [filter, setFilter] = useState('')
   const deferredFilter = useDeferredValue(filter)
@@ -90,6 +108,7 @@ export default function ProxyPool() {
   const [pending, setPending] = useState<ProxyNode | null>(null)
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
   const [scoreTarget, setScoreTarget] = useState<ProxyNode | null>(null)
+  const [detailTarget, setDetailTarget] = useState<ProxyNode | null>(null)
   const [platform, setPlatform] = useState<Platform>('linux')
   const [activeTab, setActiveTab] = useState<string | null>('darwin')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -100,9 +119,9 @@ export default function ProxyPool() {
   const OVERSCAN = 8
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
   // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度（确保操作列无需横向滚动即可见）：
-  // 60+150+72+110+70+64+68+62+92 = 748，+8×8 gap +24 padding = 836。
-  const GRID_COLUMNS = '60px minmax(150px, 1.9fr) 72px minmax(110px, 1.4fr) 70px 64px 68px 62px 92px'
-  const GRID_MIN_WIDTH = 836
+  // 60+180+72+70+64+68+62+92 = 668，+7×8 gap +24 padding = 748。
+  const GRID_COLUMNS = '60px minmax(180px, 2.2fr) 72px 70px 64px 68px 62px 92px'
+  const GRID_MIN_WIDTH = 748
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -114,6 +133,13 @@ export default function ProxyPool() {
   useEffect(() => {
     getPlatform().then(setPlatform).catch(() => setPlatform('linux'))
   }, [])
+
+  // 代理池页也需要订阅列表（节点详情显示订阅来源）。订阅页加载过就直接用，否则拉一次。
+  useEffect(() => {
+    if (subs.length === 0) {
+      refreshSubs()
+    }
+  }, [subs.length, refreshSubs])
 
   useEffect(() => {
     if (!notice) return
@@ -137,10 +163,12 @@ export default function ProxyPool() {
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
-    return normalizedFilter
-      ? nodes.filter((n) => `${n.host}:${n.port} ${n.protocol} ${geoText(n)}`.toLowerCase().includes(normalizedFilter))
-      : nodes
-  }, [nodes, deferredFilter])
+    if (!normalizedFilter) return nodes
+    return nodes.filter((n) => {
+      const subName = subscriptionName(subs, n.subscriptionId) ?? ''
+      return `${n.host}:${n.port} ${n.protocol} ${geoText(n)} ${subName}`.toLowerCase().includes(normalizedFilter)
+    })
+  }, [nodes, deferredFilter, subs])
 
   const totalHeight = list.length * ROW_HEIGHT
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
@@ -275,9 +303,8 @@ export default function ProxyPool() {
               }}
             >
               <Text size="xs">ID</Text>
-              <Text size="xs">主机</Text>
+              <Text size="xs">主机 · 地区</Text>
               <Text size="xs">协议</Text>
-              <Text size="xs">地区</Text>
               <Text size="xs">延迟</Text>
               <Text size="xs">评分</Text>
               <Text size="xs">匿名</Text>
@@ -306,13 +333,18 @@ export default function ProxyPool() {
                     }}
                   >
                     <Text size="sm">{n.id}</Text>
-                    <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
-                    <Badge variant="light">{n.protocol}</Badge>
-                    <Tooltip label={geoText(n) || '未检测到地区'} disabled={!geoText(n)}>
-                      <Text size="sm" c={geoText(n) ? undefined : 'dimmed'} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Box
+                      style={{ cursor: 'pointer', minWidth: 0 }}
+                      onClick={() => setDetailTarget(n)}
+                    >
+                      <Tooltip label="查看节点详情" position="top-start">
+                        <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
+                      </Tooltip>
+                      <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {geoText(n) || '—'}
                       </Text>
-                    </Tooltip>
+                    </Box>
+                    <Badge variant="light">{n.protocol}</Badge>
                     <Text size="sm">{n.latency}ms</Text>
                     <Tooltip label="查看评分明细">
                       <Button size="xs" variant="subtle" px={4} onClick={() => setScoreTarget(n)}>
@@ -343,6 +375,9 @@ export default function ProxyPool() {
                               指定为固定出口
                             </Menu.Item>
                           )}
+                          <Menu.Item leftSection={<Info size={14} />} onClick={() => setDetailTarget(n)}>
+                            查看详情
+                          </Menu.Item>
                           <Menu.Item leftSection={<Copy size={14} />} onClick={() => { setCopyTarget(n); setActiveTab(defaultTab) }}>
                             复制代理命令
                           </Menu.Item>
@@ -378,6 +413,12 @@ export default function ProxyPool() {
       <Modal opened={scoreTarget !== null} onClose={() => setScoreTarget(null)} title="评分明细" size="md">
         {scoreTarget && (
           <ScoreBreakdownModal node={scoreTarget} />
+        )}
+      </Modal>
+
+      <Modal opened={detailTarget !== null} onClose={() => setDetailTarget(null)} title="节点详情" size="md">
+        {detailTarget && (
+          <NodeDetailModal node={detailTarget} subs={subs} />
         )}
       </Modal>
 
@@ -451,6 +492,60 @@ function anonymityHint(node: ProxyNode, value: number): string {
     parts.push(`连接信息问题 ${d.reqIssues?.length} 项`)
   }
   return parts.join(' · ')
+}
+
+function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[] }) {
+  const subName = subscriptionName(subs, node.subscriptionId)
+  const geo = geoText(node)
+  return (
+    <Stack gap="md">
+      <Group justify="space-between" align="flex-start" wrap="wrap">
+        <div>
+          <Group gap="xs">
+            <Badge variant="light">{node.protocol}</Badge>
+            <Text size="sm" fw={600}>{`${node.host}:${node.port}`}</Text>
+          </Group>
+          <Text size="xs" c="dimmed" mt={4}>地区：{geo || '—'} · 延迟 {node.latency}ms</Text>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <Text size="xl" fw={700} c={node.score >= 60 ? 'green' : node.score >= 40 ? 'yellow' : 'red'}>{node.score}</Text>
+          <Text size="xs" c="dimmed">综合评分</Text>
+        </div>
+      </Group>
+
+      <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
+        <Grid>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">订阅来源</Text>
+            <Text size="sm">{subName ?? '—'}</Text>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">状态</Text>
+            <Badge color={statusColor(node)}>{statusLabel(node)}</Badge>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">认证</Text>
+            <Text size="sm">{node.username ? `${node.username}${node.password ? '（有密码）' : ''}` : '无'}</Text>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">成功率</Text>
+            <Text size="sm">{node.successCount} 次成功 / {node.failCount} 次失败</Text>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">最近检测</Text>
+            <Text size="sm">{formatTime(node.lastCheck)}</Text>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">创建时间</Text>
+            <Text size="sm">{formatTime(node.createdAt)}</Text>
+          </Grid.Col>
+        </Grid>
+      </Box>
+
+      <Text size="xs" c="dimmed">评分明细</Text>
+      <ScoreBreakdownModal node={node} />
+    </Stack>
+  )
 }
 
 function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
