@@ -115,9 +115,7 @@ func parseRegion(region string) Location {
 	if len(parts) > 0 {
 		loc.Country = clean(parts[0])
 	}
-	if len(parts) > 1 {
-		// parts[1] 是"区域"（通常为 0，代表全国），暂不单独暴露。
-	}
+	// parts[1] 是"区域"（通常为 0，代表全国），暂不单独暴露。
 	if len(parts) > 2 {
 		loc.Province = clean(parts[2])
 	}
