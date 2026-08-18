@@ -73,13 +73,12 @@ export default function Subscriptions() {
       </Card>
 
       <Card padding="md" radius="md" withBorder>
-        <Table.ScrollContainer minWidth={1000}>
+        <Table.ScrollContainer minWidth={850}>
           <Table striped highlightOnHover withTableBorder>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
               <Table.Th>名称</Table.Th>
-              <Table.Th>URL</Table.Th>
               <Table.Th>间隔</Table.Th>
               <Table.Th>启用</Table.Th>
               <Table.Th>代理数</Table.Th>
@@ -89,23 +88,18 @@ export default function Subscriptions() {
           </Table.Thead>
           <Table.Tbody>
             {subs.length === 0 ? (
-              <Table.Tr>
-                <Table.Td colSpan={8} style={{ textAlign: 'center', color: 'var(--mantine-color-dimmed)' }}>
-                  暂无订阅
-                </Table.Td>
-              </Table.Tr>
+                <Table.Tr>
+                  <Table.Td colSpan={7} style={{ textAlign: 'center', color: 'var(--mantine-color-dimmed)' }}>
+                    暂无订阅
+                  </Table.Td>
+                </Table.Tr>
             ) : (
               subs.map((sub) => (
                 <Table.Tr key={sub.id}>
                   <Table.Td>{sub.id}</Table.Td>
                   <Table.Td>
-                    <Text size="sm" title={sub.name} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Text size="sm" title={`${sub.name}\n${sub.url}`} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {sub.name}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" title={sub.url} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {sub.url}
                     </Text>
                   </Table.Td>
                   <Table.Td>{sub.interval}s</Table.Td>
