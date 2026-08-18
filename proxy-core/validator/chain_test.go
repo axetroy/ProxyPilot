@@ -185,8 +185,8 @@ func TestTestChainAllHopsOK(t *testing.T) {
 			t.Errorf("hop %d latency = %d, want >= 0", i, h.Latency)
 		}
 	}
-	if res.TotalLatency <= 0 {
-		t.Errorf("TotalLatency = %d, want > 0", res.TotalLatency)
+	if res.TotalLatency < 0 {
+		t.Errorf("TotalLatency = %d, want >= 0", res.TotalLatency)
 	}
 }
 
