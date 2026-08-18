@@ -204,7 +204,6 @@ export default function Dashboard() {
       <Card padding="lg" radius="md" withBorder>
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Group gap="sm" align="flex-start" wrap="nowrap">
-            <GitBranch size={20} color="var(--mantine-color-blue-6)" />
             <div>
               <Text fw={600}>出口策略</Text>
               <Text size="sm" c="dimmed" mt={2}>
