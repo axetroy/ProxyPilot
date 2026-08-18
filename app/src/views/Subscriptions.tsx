@@ -73,7 +73,8 @@ export default function Subscriptions() {
       </Card>
 
       <Card padding="md" radius="md" withBorder>
-        <Table striped highlightOnHover withTableBorder>
+        <Table.ScrollContainer minWidth={1000}>
+          <Table striped highlightOnHover withTableBorder>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>ID</Table.Th>
@@ -97,7 +98,11 @@ export default function Subscriptions() {
               subs.map((sub) => (
                 <Table.Tr key={sub.id}>
                   <Table.Td>{sub.id}</Table.Td>
-                  <Table.Td>{sub.name}</Table.Td>
+                  <Table.Td>
+                    <Text size="sm" title={sub.name} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sub.name}
+                    </Text>
+                  </Table.Td>
                   <Table.Td>
                     <Text size="xs" title={sub.url} style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {sub.url}
@@ -126,7 +131,8 @@ export default function Subscriptions() {
               ))
             )}
           </Table.Tbody>
-        </Table>
+          </Table>
+        </Table.ScrollContainer>
       </Card>
 
       {/* 编辑订阅 Modal */}
