@@ -41,6 +41,9 @@ func TestNewDefaults(t *testing.T) {
 	if c.RefreshInterval != 15*time.Minute {
 		t.Errorf("RefreshInterval = %v, want 15m", c.RefreshInterval)
 	}
+	if c.HistoryRetentionDays != 7 {
+		t.Errorf("HistoryRetentionDays = %d, want 7", c.HistoryRetentionDays)
+	}
 	if c.SessionToken == "" {
 		t.Error("SessionToken should not be empty")
 	}
@@ -72,6 +75,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 	_ = os.Setenv("PROXYPILOT_CHECK_TIMEOUT", "3s")
 	_ = os.Setenv("PROXYPILOT_CHECK_CONCURRENCY", "8")
 	_ = os.Setenv("PROXYPILOT_REFRESH_INTERVAL", "1m")
+	_ = os.Setenv("PROXYPILOT_HISTORY_RETENTION_DAYS", "14")
 
 	c := New()
 	if c.APIBind != "0.0.0.0:9999" {
@@ -100,7 +104,10 @@ func TestApplyEnvOverrides(t *testing.T) {
 		t.Errorf("CheckConcurrency = %d", c.CheckConcurrency)
 	}
 	if c.RefreshInterval != time.Minute {
-		t.Errorf("RefreshInterval = %v", c.RefreshInterval)
+		t.Errorf("RefreshInterval = %v, want 1m", c.RefreshInterval)
+	}
+	if c.HistoryRetentionDays != 14 {
+		t.Errorf("HistoryRetentionDays = %d, want 14", c.HistoryRetentionDays)
 	}
 }
 
@@ -151,6 +158,7 @@ func unsetEnv(t *testing.T) {
 		"PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
 		"PROXYPILOT_CHECK_TIMEOUT", "PROXYPILOT_CHECK_CONCURRENCY", "PROXYPILOT_REFRESH_INTERVAL",
 		"PROXYPILOT_SUB_ENABLED", "PROXYPILOT_SUB_LISTEN", "PROXYPILOT_SUB_TOKEN",
+		"PROXYPILOT_HISTORY_RETENTION_DAYS",
 	}
 	for _, k := range keys {
 		if v, ok := os.LookupEnv(k); ok {
@@ -272,6 +280,7 @@ func TestSettingValue(t *testing.T) {
 		{KeyCheckTimeout, "10s"},
 		{KeyCheckConcurr, "32"},
 		{KeyRefreshPeriod, "15m0s"},
+		{KeyHistoryRetention, "7"},
 	}
 	for _, tc := range cases {
 		got, ok := c.SettingValue(tc.key)

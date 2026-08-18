@@ -35,6 +35,8 @@ const (
 	// 固定出口节点 ID（用户指定使用哪个代理）。单独管理，
 	// 不进 Settings() 列表（避免与通用设置表单混在一起）。
 	KeyPinnedProxy = "pinned_proxy_id"
+	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
+	KeyHistoryRetention = "history_retention_days"
 )
 
 // SettingDef 描述一个可在前端配置的项。
@@ -58,6 +60,7 @@ func Settings() []SettingDef {
 		{Key: KeySubEnabled, Default: "1", Desc: "订阅导出开关（0 关闭 / 1 开启）", Validate: validateBool},
 		{Key: KeySubListen, Default: "127.0.0.1:17891", Desc: "订阅服务监听地址（如需局域网设备订阅改为 0.0.0.0:17891）", Validate: validateHostPort},
 		{Key: KeySubHost, Default: "", Desc: "对外展示的订阅 IP（监听为 0.0.0.0 时用于生成订阅 URL）", Validate: validateIPOrEmpty},
+		{Key: KeyHistoryRetention, Default: "7", Desc: "检测历史保留天数（瘦身数据库时清理更早的记录）", Validate: validatePositiveInt},
 	}
 }
 
@@ -139,6 +142,7 @@ type Config struct {
 	SubListen            string // 订阅服务监听地址（默认仅本机，对外暴露需显式配置 0.0.0.0）
 	SubHost              string // 对外展示的订阅 IP（监听为通配地址时用于生成订阅 URL，空则回退 127.0.0.1）
 	SubToken             string // 订阅密钥（独立于 SessionToken，随订阅 URL 提供给外部客户端）
+	HistoryRetentionDays int    // 检测历史保留天数（瘦身数据库时清理更早的记录）
 }
 
 func New() *Config {
@@ -155,6 +159,7 @@ func New() *Config {
 		SubEnabled:           true,
 		SubListen:            "127.0.0.1:17891",
 		SubToken:             generatedSessionToken(),
+		HistoryRetentionDays: 7,
 	}
 	c.SessionToken = generatedSessionToken()
 	c.ApplyEnv()
@@ -246,6 +251,11 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_SUB_TOKEN"); v != "" {
 		c.SubToken = v
 	}
+	if v := os.Getenv("PROXYPILOT_HISTORY_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.HistoryRetentionDays = n
+		}
+	}
 }
 
 func generatedSessionToken() string {
@@ -299,6 +309,12 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 		return func(v string) { c.SubListen = v }, true
 	case KeySubHost:
 		return func(v string) { c.SubHost = v }, true
+	case KeyHistoryRetention:
+		return func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				c.HistoryRetentionDays = n
+			}
+		}, true
 	default:
 		return nil, false
 	}
@@ -353,6 +369,8 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return c.SubListen, true
 	case KeySubHost:
 		return c.SubHost, true
+	case KeyHistoryRetention:
+		return strconv.Itoa(c.HistoryRetentionDays), true
 	default:
 		return "", false
 	}

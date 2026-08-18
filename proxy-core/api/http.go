@@ -80,6 +80,8 @@ func NewRouter(s *Services) *gin.Engine {
 	r.GET("/api/export", s.exportProxies)
 	r.GET("/api/subscription", s.getSubscription)
 	r.PUT("/api/subscription", s.updateSubscriptionConfig)
+	r.GET("/api/db/status", s.dbStatus)
+	r.POST("/api/db/compact", s.compactDb)
 	r.GET("/api/proxies", s.listProxies)
 	r.DELETE("/api/proxy/:id", s.deleteProxy)
 	r.PUT("/api/proxy/pin", s.pinProxy)

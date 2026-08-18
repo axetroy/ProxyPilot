@@ -475,6 +475,79 @@ func TestDeleteNodeRemovesHistory(t *testing.T) {
 	}
 }
 
+// ---------- 数据库维护（手动瘦身） ----------
+
+// TestPurgeHistoryBefore 验证过期检测历史可被统计并清理，未过期的保留。
+func TestPurgeHistoryBefore(t *testing.T) {
+	st := newTestStore(t)
+	n := saveNode(t, st, "1.1.1.1", 8080)
+	for i := 0; i < 3; i++ {
+		if err := st.AddCheckHistory(model.CheckHistory{ProxyID: n.ID, Success: true, Latency: 10}); err != nil {
+			t.Fatalf("add history: %v", err)
+		}
+	}
+	// 把最早一条改成 30 天前（模拟长期运行积累的过期记录）
+	if _, err := st.db.Exec(`UPDATE check_history SET created_at = ? WHERE id = (SELECT MIN(id) FROM check_history)`,
+		time.Now().UTC().Add(-30*24*time.Hour)); err != nil {
+		t.Fatalf("make history old: %v", err)
+	}
+
+	if c, err := st.HistoryCount(); err != nil || c != 3 {
+		t.Fatalf("HistoryCount = %d (err=%v), want 3", c, err)
+	}
+
+	// 截止 7 天前：应只有最早一条可清理
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	purgeable, err := st.HistoryCountOlderThan(cutoff)
+	if err != nil {
+		t.Fatalf("HistoryCountOlderThan: %v", err)
+	}
+	if purgeable != 1 {
+		t.Fatalf("purgeable = %d, want 1", purgeable)
+	}
+
+	deleted, err := st.PurgeHistoryBefore(cutoff)
+	if err != nil {
+		t.Fatalf("PurgeHistoryBefore: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	if c, _ := st.HistoryCount(); c != 2 {
+		t.Fatalf("HistoryCount after purge = %d, want 2", c)
+	}
+}
+
+// TestCompact 验证 VACUUM 收缩在文件库上可正常执行，且文件大小可查询。
+func TestCompact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compact.db")
+	st, err := New(path)
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	n := saveNode(t, st, "1.1.1.1", 8080)
+	for i := 0; i < 50; i++ {
+		_ = st.AddCheckHistory(model.CheckHistory{ProxyID: n.ID, Success: true})
+	}
+	if st.DBFileSize() <= 0 {
+		t.Fatalf("DBFileSize = %d, want > 0", st.DBFileSize())
+	}
+	// 全部清空并收缩
+	if _, err := st.db.Exec(`DELETE FROM check_history`); err != nil {
+		t.Fatalf("delete history: %v", err)
+	}
+	if err := st.Compact(); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	// 收缩后应仍有合法的数据库文件（能继续读写）
+	count, err := st.CountNodes()
+	if err != nil || count != 1 {
+		t.Fatalf("CountNodes after compact = %d (err=%v), want 1", count, err)
+	}
+}
+
 func TestSaveNodeTimestampsDefaulted(t *testing.T) {
 	st := newTestStore(t)
 	// 不设置 CreatedAt/UpdatedAt

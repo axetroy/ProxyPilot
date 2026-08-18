@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -222,6 +222,20 @@ export async function updateSettings(updates: Record<string, string>): Promise<A
 export async function getSubscriptionConfig(): Promise<ApiResponse<SubscriptionExportConfig>> {
   await ensureApiReady()
   const { data } = await http.get<ApiResponse<SubscriptionExportConfig>>('/api/subscription')
+  return data
+}
+
+/** 查询数据库状态（大小 / 检测历史 / 可清理条数） */
+export async function getDbStatus(): Promise<ApiResponse<DbStatus>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<DbStatus>>('/api/db/status')
+  return data
+}
+
+/** 手动瘦身数据库：清理过期检测历史并 VACUUM 收缩文件 */
+export async function compactDb(): Promise<ApiResponse<CompactResult>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<CompactResult>>('/api/db/compact')
   return data
 }
 

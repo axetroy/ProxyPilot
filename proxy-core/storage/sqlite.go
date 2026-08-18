@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -11,7 +12,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	Path string // 数据库文件路径（内存库为 ":memory:"）
 }
 
 func New(path string) (*Store, error) {
@@ -32,7 +34,7 @@ func New(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, Path: path}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
@@ -530,4 +532,56 @@ func (s *Store) RecentHistory(proxyID int64, limit int) ([]model.CheckHistory, e
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// ---------- 数据库维护（手动瘦身） ----------
+
+// HistoryCount 返回检测历史的总条数。
+func (s *Store) HistoryCount() (int64, error) {
+	var c int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM check_history`).Scan(&c)
+	return c, err
+}
+
+// HistoryCountOlderThan 返回 created_at 早于 before 的检测历史条数（即当前可清理的条数）。
+func (s *Store) HistoryCountOlderThan(before time.Time) (int64, error) {
+	var c int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM check_history WHERE created_at < ?`, before.UTC()).Scan(&c)
+	return c, err
+}
+
+// PurgeHistoryBefore 删除 created_at 早于 before 的检测历史，返回删除条数。
+func (s *Store) PurgeHistoryBefore(before time.Time) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM check_history WHERE created_at < ?`, before.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DBFileSize 返回数据库文件大小（字节）；内存库或文件不存在时返回 0。
+func (s *Store) DBFileSize() int64 {
+	if s.Path == "" || s.Path == ":memory:" {
+		return 0
+	}
+	info, err := os.Stat(s.Path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// Compact 收缩数据库物理文件：先 WAL checkpoint 截断 WAL，再 VACUUM 重写主库，
+// 让已删除的行真正从文件中移除。调用前应保证没有其它长时间事务在运行。
+func (s *Store) Compact() error {
+	// WAL 模式下先 checkpoint，否则 VACUUM 无法把已删除页从主库中彻底移除。
+	rows, err := s.db.Query(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	if err == nil {
+		for rows.Next() {
+			// 读取结果行确保 checkpoint 完整执行（busy, log, checkpointed）
+		}
+		_ = rows.Close()
+	}
+	_, err = s.db.Exec(`VACUUM`)
+	return err
 }

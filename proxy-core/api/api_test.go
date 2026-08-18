@@ -71,6 +71,7 @@ func unsetEnv(t *testing.T) {
 		"PROXYPILOT_TOKEN", "PROXYPILOT_CHECK_TARGET",
 		"PROXYPILOT_CHECK_TIMEOUT", "PROXYPILOT_CHECK_CONCURRENCY", "PROXYPILOT_REFRESH_INTERVAL",
 		"PROXYPILOT_SUB_ENABLED", "PROXYPILOT_SUB_LISTEN", "PROXYPILOT_SUB_TOKEN",
+		"PROXYPILOT_HISTORY_RETENTION_DAYS",
 	}
 	for _, k := range keys {
 		if v, ok := os.LookupEnv(k); ok {
@@ -730,6 +731,72 @@ func TestUpdateSettingsHotReload(t *testing.T) {
 	}
 	if s.Cfg.RefreshInterval != 10*time.Minute {
 		t.Errorf("RefreshInterval = %v, want 10m", s.Cfg.RefreshInterval)
+	}
+}
+
+// ---------- 数据库维护（手动瘦身） ----------
+
+func TestDbStatusEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 写入两条检测历史，状态应如实上报
+	n := &model.ProxyNode{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP}
+	s.Pool.AddNodes([]*model.ProxyNode{n})
+	node := s.Pool.List()[0]
+	for i := 0; i < 2; i++ {
+		if err := s.Store.AddCheckHistory(model.CheckHistory{ProxyID: node.ID, Success: true, Latency: 10}); err != nil {
+			t.Fatalf("add history: %v", err)
+		}
+	}
+
+	w := doRequest(t, r, http.MethodGet, "/api/db/status", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	if resp.Code != 0 {
+		t.Errorf("resp.Code = %d, want 0", resp.Code)
+	}
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	if int64(data["historyCount"].(float64)) != 2 {
+		t.Errorf("historyCount = %v, want 2", data["historyCount"])
+	}
+	// 新写入的记录都未过期，可清理数应为 0
+	if int64(data["purgeable"].(float64)) != 0 {
+		t.Errorf("purgeable = %v, want 0", data["purgeable"])
+	}
+	if int64(data["retentionDays"].(float64)) != 7 {
+		t.Errorf("retentionDays = %v, want 7", data["retentionDays"])
+	}
+}
+
+func TestCompactDbEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	w := doRequest(t, r, http.MethodPost, "/api/db/compact", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	if resp.Code != 0 {
+		t.Errorf("resp.Code = %d, want 0", resp.Code)
+	}
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	if int64(data["deleted"].(float64)) != 0 {
+		t.Errorf("deleted = %v, want 0 (no stale history)", data["deleted"])
+	}
+	if int64(data["historyCount"].(float64)) != 0 {
+		t.Errorf("historyCount = %v, want 0", data["historyCount"])
 	}
 }
 

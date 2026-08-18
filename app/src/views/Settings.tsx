@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Copy, Download, Minimize2, Monitor, Moon, Play, RefreshCw, RotateCcw, Square, Sun } from 'lucide-react'
+import { Copy, Download, Minimize2, Monitor, Moon, Play, RefreshCw, RotateCcw, Square, Sun, Trash2 } from 'lucide-react'
 import {
   Alert,
   Button,
@@ -19,8 +19,8 @@ import { useStatusStore } from '@/stores/status'
 import { useUpdaterStore } from '@/stores/updater'
 import { useSystemProxyStore } from '@/stores/system-proxy'
 import { formatBytes } from '@/lib/utils'
-import { getApiBaseUrl, getErrorMessage, getPlatform, getSubscriptionConfig, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
-import type { AppSettings, SettingItem, SubscriptionExportConfig } from '@/types'
+import { getApiBaseUrl, getErrorMessage, getPlatform, getSubscriptionConfig, compactDb, getDbStatus, listSettings, updateSettings, updateSubscriptionConfig, type Platform } from '@/api'
+import type { AppSettings, CompactResult, DbStatus, SettingItem, SubscriptionExportConfig } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -44,6 +44,10 @@ export default function Settings() {
   const updater = useUpdaterStore()
   const systemProxy = useSystemProxyStore()
   const [spBusy, setSpBusy] = useState(false)
+  // 数据库状态（数据管理）
+  const [dbStatus, setDbStatus] = useState<DbStatus | null>(null)
+  const [compactBusy, setCompactBusy] = useState(false)
+  const [compactResult, setCompactResult] = useState<CompactResult | null>(null)
 
     // 仅负责取数（重试逻辑），不直接 setState，由调用方在异步回调中写入 state
   const load = useCallback(async () => {
@@ -105,6 +109,38 @@ export default function Settings() {
     void useUpdaterStore.getState().init()
     void useSystemProxyStore.getState().init()
   }, [])
+
+  // 加载数据库状态（大小 / 检测历史 / 可清理条数）
+  useEffect(() => {
+    getDbStatus()
+      .then((res) => {
+        if (res.code === 0 && res.data) setDbStatus(res.data)
+      })
+      .catch(() => {})
+  }, [])
+
+  // 手动瘦身数据库
+  async function onCompact() {
+    setCompactBusy(true)
+    try {
+      const res = await compactDb()
+      if (res.code === 0 && res.data) {
+        setCompactResult(res.data)
+        setDbStatus((d) =>
+          d
+            ? { ...d, dbSize: res.data.sizeAfter, historyCount: res.data.historyCount, purgeable: 0 }
+            : d,
+        )
+        setNotice({ type: 'success', text: '数据库已瘦身' })
+      } else {
+        setNotice({ type: 'error', text: res.msg || '瘦身失败' })
+      }
+    } catch (e) {
+      setNotice({ type: 'error', text: getErrorMessage(e) })
+    } finally {
+      setCompactBusy(false)
+    }
+  }
 
   async function onChangeCloseBehavior(value: string) {
     const next: AppSettings = { ...appSettings, closeBehavior: value as 'minimize' | 'quit' }
@@ -465,6 +501,57 @@ export default function Settings() {
               </Button>
             </Group>
           </Group>
+        </Stack>
+      </Card>
+
+      <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
+        <Stack gap="md">
+          <div>
+            <Text fw={700}>数据管理</Text>
+            <Text size="sm" c="dimmed" mt={4}>手动清理过期的检测历史并收缩数据库文件，节点 / 订阅 / 设置均不受影响</Text>
+          </div>
+
+          <Divider />
+
+          <Group justify="space-between" wrap="wrap">
+            <div>
+              <Text fw={600}>数据库大小</Text>
+              <Text size="sm" c="dimmed">{dbStatus ? formatBytes(dbStatus.dbSize) : '-'}</Text>
+            </div>
+            <div>
+              <Text fw={600}>检测历史</Text>
+              <Text size="sm" c="dimmed">{dbStatus ? `${dbStatus.historyCount} 条` : '-'}</Text>
+            </div>
+            <div>
+              <Text fw={600}>可清理</Text>
+              <Text size="sm" c="dimmed">
+                {dbStatus ? `${dbStatus.purgeable} 条（保留 ${dbStatus.retentionDays} 天）` : '-'}
+              </Text>
+            </div>
+          </Group>
+
+          <Group justify="space-between" wrap="wrap">
+            <Text size="sm" c="dimmed">保留天数可在上方「核心配置」中调整</Text>
+            <Button
+              leftSection={<Trash2 size={16} />}
+              color="red"
+              variant="light"
+              loading={compactBusy}
+              disabled={!dbStatus || compactBusy}
+              onClick={onCompact}
+            >
+              {compactBusy ? '瘦身中...' : '立即瘦身'}
+            </Button>
+          </Group>
+
+          {compactResult && (
+            <Alert color="green">
+              已清理 {compactResult.deleted} 条过期检测历史
+              {compactResult.sizeBefore > 0 && compactResult.sizeAfter > 0
+                ? `，释放 ${formatBytes(compactResult.sizeBefore - compactResult.sizeAfter)}，当前 ${formatBytes(compactResult.sizeAfter)}`
+                : '，已完成文件收缩'}
+            </Alert>
+          )}
         </Stack>
       </Card>
 

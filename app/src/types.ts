@@ -99,6 +99,22 @@ export interface SubscriptionExportConfig {
   url: string
 }
 
+/** 数据库状态（GET /api/db/status） */
+export interface DbStatus {
+  dbSize: number
+  historyCount: number
+  purgeable: number
+  retentionDays: number
+}
+
+/** 手动瘦身数据库的结果（POST /api/db/compact） */
+export interface CompactResult {
+  deleted: number
+  sizeBefore: number
+  sizeAfter: number
+  historyCount: number
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

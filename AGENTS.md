@@ -175,7 +175,8 @@ app/                   # Electron UI
   监听地址修改后需重启 proxy-core 生效（无热更新）。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
   `proxy_port` / `check_target` / `check_anonymity_target` / `check_timeout` / `check_concurrency` /
-  `refresh_interval` / `subscription_enabled` / `subscription_listen`；启动时 `config.LoadOverrides()`
+  `refresh_interval` / `subscription_enabled` / `subscription_listen` / `history_retention_days`
+  （检测历史保留天数）；启动时 `config.LoadOverrides()`
   从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。`subscription_token` 不进
   `/api/settings` 通用表单（避免泄露），由 `/api/subscription` 专门接口管理（GET 返回、
   PUT `{resetToken:true}` 重置），首次启动随机生成并持久化。
