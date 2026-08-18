@@ -35,6 +35,9 @@ const (
 	// 固定出口节点 ID（用户指定使用哪个代理）。单独管理，
 	// 不进 Settings() 列表（避免与通用设置表单混在一起）。
 	KeyPinnedProxy = "pinned_proxy_id"
+	// 出口策略（fixed / best / random / weighted / round-robin）。
+	// 与固定出口同属「出口路由」管理，不进 Settings() 通用表单。
+	KeyEgressStrategy = "egress_strategy"
 	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
 	KeyHistoryRetention = "history_retention_days"
 	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单

@@ -56,11 +56,17 @@ func main() {
 	}
 	gw.SetShunt(ruleMgr.Shunt())
 
-	// 恢复用户上次指定的固定出口节点（存在且合法时）。
+	// 恢复用户上次的出口策略与固定出口节点。
+	// 先恢复策略：若上次保存了合法策略则使用，否则保持默认（智能加权）。
+	if v, err := st.GetSetting(config.KeyEgressStrategy); err == nil && v != "" && scheduler.ValidStrategy(v) {
+		sel.SetStrategy(scheduler.Strategy(v))
+	}
+	// 恢复固定出口节点（存在且合法时）；固定出口优先于其他策略。
 	if v, err := st.GetSetting(config.KeyPinnedProxy); err == nil && v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
 			if poolMgr.Get(id) != nil {
 				sel.Pin(id)
+				sel.SetStrategy(scheduler.StrategyFixed)
 				busc.Info(fmt.Sprintf("restored pinned exit node id=%d", id))
 			} else {
 				// 节点已不存在（被删除/自动淘汰），清除悬空指定，避免下次启动再次恢复。

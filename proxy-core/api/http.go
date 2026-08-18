@@ -88,6 +88,8 @@ func NewRouter(s *Services) *gin.Engine {
 	r.DELETE("/api/proxy/:id", s.deleteProxy)
 	r.PUT("/api/proxy/pin", s.pinProxy)
 	r.DELETE("/api/proxy/pin", s.unpinProxy)
+	r.GET("/api/egress", s.getEgress)
+	r.PUT("/api/egress", s.updateEgress)
 	r.POST("/api/proxy/check", s.checkProxies)
 	r.POST("/api/gateway/start", s.startGateway)
 	r.POST("/api/gateway/stop", s.stopGateway)
@@ -258,10 +260,16 @@ func (s *Services) deleteProxy(c *gin.Context) {
 		return
 	}
 	// 删除的正是固定出口节点时，自动取消指定，避免留下悬空引用。
+	// 仅当当前策略为 fixed 时恢复加权（Unpin 会切换策略）；
+	// 其他策略下只清除指定，不干扰用户当前选择的策略。
 	if s.Selector != nil && s.Selector.PinnedID() == id {
-		s.Selector.Unpin()
+		if s.Selector.Strategy() == scheduler.StrategyFixed {
+			s.Selector.Unpin()
+		} else {
+			s.Selector.Pin(0)
+		}
 		_ = s.Store.SetSetting(config.KeyPinnedProxy, "")
-		s.Bus.Info("deleted node was pinned, unpinned exit node")
+		s.Bus.Info("deleted node was pinned, cleared exit pin")
 	}
 	c.JSON(http.StatusOK, ok(nil))
 }
@@ -292,20 +300,24 @@ func (s *Services) pinProxy(c *gin.Context) {
 		return
 	}
 	s.Selector.Pin(payload.ID)
+	// 指定固定出口后策略同步为 fixed（由 Pin 内部处理），此处持久化便于重启恢复。
 	if err := s.Store.SetSetting(config.KeyPinnedProxy, strconv.FormatInt(payload.ID, 10)); err != nil {
 		s.Bus.Error("persist pinned proxy failed: " + err.Error())
 	}
+	_ = s.Store.SetSetting(config.KeyEgressStrategy, string(scheduler.StrategyFixed))
 	s.Bus.Info(fmt.Sprintf("pinned exit node: %s", node.Key()))
 	c.JSON(http.StatusOK, ok(node))
 }
 
-// unpinProxy 取消固定出口指定，恢复按评分自动选择。
+// unpinProxy 取消固定出口指定，恢复智能加权策略。
 func (s *Services) unpinProxy(c *gin.Context) {
 	if s.Selector != nil {
+		// Unpin 内部会恢复为智能加权策略。
 		s.Selector.Unpin()
 	}
 	_ = s.Store.SetSetting(config.KeyPinnedProxy, "")
-	s.Bus.Info("unpinned exit node, back to auto selection")
+	_ = s.Store.SetSetting(config.KeyEgressStrategy, string(scheduler.StrategyWeighted))
+	s.Bus.Info("unpinned exit node, back to weighted strategy")
 	c.JSON(http.StatusOK, ok(nil))
 }
 

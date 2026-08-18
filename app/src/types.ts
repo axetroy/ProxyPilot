@@ -129,6 +129,24 @@ export interface PacConfig {
   syncing: boolean
 }
 
+/** 网关出口策略 */
+export type EgressStrategy = 'fixed' | 'best' | 'random' | 'weighted' | 'round-robin'
+
+/** 出口策略描述（后端 scheduler.StrategyMeta） */
+export interface EgressStrategyMeta {
+  value: EgressStrategy
+  label: string
+  desc: string
+}
+
+/** 出口路由配置（GET/PUT /api/egress） */
+export interface EgressConfig {
+  strategy: EgressStrategy
+  pinnedNode?: ProxyNode
+  aliveCount: number
+  strategies: EgressStrategyMeta[]
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

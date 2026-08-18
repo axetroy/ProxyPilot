@@ -735,18 +735,28 @@ score / latency
 
 ---
 
-## 固定出口指定
+## 出口路由策略
 
-用户可在界面指定某个节点作为固定出口（Pin/Unpin，持久化在 settings 表 `pinned_proxy_id`，
-独立于通用设置表单管理，见 API `PUT/DELETE /api/proxy/pin`）：
+网关出口采用集中策略管理（「出口路由」页面），持久化在 settings 表 `egress_strategy`，
+由 `GET/PUT /api/egress` 专门接口管理（固定节点沿用 `pinned_proxy_id` 与 `PUT/DELETE /api/proxy/pin`）。
 
-- 指定后，节点存活时所有流量（HTTP/HTTPS/SOCKS5 不区分）都固定走该节点，
-  不再按评分自动选择。指定节点跨协议使用是安全的：`validator.ConnectTCP` 会按
-  节点自身协议选择握手方式（SOCKS5 握手 / HTTP CONNECT），因此任何协议流量都能
-  复用同一个指定节点，满足"指定了就必须用它"的用户预期；
-- 指定节点死亡时临时回退自动选择，复活后自动恢复固定；
-- 指定节点被删除/自动淘汰后自动取消指定（选择器内存清除，重启时清理持久化），避免悬空引用；
-- `/api/status` 返回 `pinnedNode` 供前端展示当前固定出口。
+五种策略（选择器 `scheduler.Selector.NextForHost` 按策略分发，切换即时生效并持久化，重启自动恢复）：
+
+1. **fixed 固定出口**：使用用户指定的节点，节点存活时全部流量（HTTP/HTTPS/SOCKS5 不区分）固定走它，
+   不再按评分自动选择。指定节点死亡时临时回退智能加权，复活后自动恢复固定；
+   节点被删除/自动淘汰后自动取消指定，避免悬空引用。指定节点跨协议使用是安全的：
+   `validator.ConnectTCP` 会按节点自身协议选择握手方式（SOCKS5 握手 / HTTP CONNECT）。
+2. **best 最高评分**：每次从存活节点中选择评分最高者（叠加失败惩罚）。
+3. **random 随机可用**：从存活节点中随机挑选，同一域名在粘性窗口（10min）内保持稳定，避免频繁更换出口 IP。
+4. **weighted 智能加权（默认）**：`weight = score/latency`，叠加失败惩罚窗口 30s（`0.5^failures`），
+   域名粘性绑定 10min，是默认最均衡的策略。
+5. **round-robin 轮询**：存活节点按 ID 顺序轮流使用（协议族内过滤 + 回退），均衡负载，不做粘性。
+
+固定出口（Pin）与策略联动：`Pin` 自动切到 fixed 策略，`Unpin` 恢复智能加权；
+指定节点被删除时选择器自动清除（内存），重启时清理持久化。
+`Pinned()` 仅在策略为 fixed 时返回固定节点（非 fixed 策略下界面不显示"固定出口已指定"），
+但 `PinnedID()` 保留指定，切回 fixed 策略时自动恢复。
+`/api/status` 返回 `pinnedNode` 供前端展示当前固定出口。
 
 ---
 

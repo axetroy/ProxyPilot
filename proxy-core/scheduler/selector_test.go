@@ -575,3 +575,120 @@ func TestPinSocksMatchesSocks(t *testing.T) {
 	}
 	_ = httpNode
 }
+
+func TestStrategyDefaultIsWeighted(t *testing.T) {
+	m := newTestPool(t)
+	s := NewSelector(m)
+	if s.Strategy() != StrategyWeighted {
+		t.Fatalf("default strategy = %s, want weighted", s.Strategy())
+	}
+}
+
+func TestStrategyBestPicksHighestScore(t *testing.T) {
+	m := newTestPool(t)
+	high := addAlive(t, m, "high", 95, 200)
+	low := addAlive(t, m, "low", 60, 10)
+	s := NewSelector(m)
+	s.SetStrategy(StrategyBest)
+	got := s.Next()
+	if got == nil || got.ID != high.ID {
+		t.Fatalf("best strategy should pick highest-score node, got %+v", got)
+	}
+	_ = low
+}
+
+func TestStrategyRandomReturnsAliveAndSticky(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 80, 100)
+	addAlive(t, m, "b", 70, 100)
+	s := NewSelector(m)
+	s.SetStrategy(StrategyRandom)
+
+	// 多次随机（无 host，不走粘性）应返回池中的存活节点，且覆盖多个节点
+	seen := map[int64]bool{}
+	for i := 0; i < 50; i++ {
+		n := s.Next()
+		if n == nil {
+			t.Fatal("random strategy returned nil")
+		}
+		seen[n.ID] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("random strategy should eventually pick multiple nodes, got %d distinct", len(seen))
+	}
+
+	// 同一域名在粘性窗口内保持稳定（复用同一节点）
+	first := s.NextForHost(model.ProtocolHTTP, "sticky.test")
+	if first == nil {
+		t.Fatal("random strategy returned nil for sticky host")
+	}
+	for i := 0; i < 10; i++ {
+		n := s.NextForHost(model.ProtocolHTTP, "sticky.test")
+		if n == nil || n.ID != first.ID {
+			t.Fatalf("random + sticky should reuse same node, got %v want %d", n, first.ID)
+		}
+	}
+}
+
+func TestStrategyRoundRobinCycles(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 80, 100)
+	b := addAlive(t, m, "b", 70, 100)
+	c := addAlive(t, m, "c", 60, 100)
+	s := NewSelector(m)
+	s.SetStrategy(StrategyRoundRobin)
+
+	var order []int64
+	for i := 0; i < 6; i++ {
+		n := s.Next()
+		if n == nil {
+			t.Fatal("round-robin returned nil")
+		}
+		order = append(order, n.ID)
+	}
+	// 按 ID 顺序轮转：a, b, c, a, b, c
+	want := []int64{a.ID, b.ID, c.ID, a.ID, b.ID, c.ID}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("round-robin order = %v, want %v", order, want)
+		}
+	}
+}
+
+func TestStrategyInvalidIgnored(t *testing.T) {
+	m := newTestPool(t)
+	s := NewSelector(m)
+	s.SetStrategy("nonsense")
+	if s.Strategy() != StrategyWeighted {
+		t.Fatalf("invalid strategy changed selector to %s", s.Strategy())
+	}
+}
+
+// TestPinnedOnlyInFixedStrategy 固定节点仅在策略为 fixed 时视为有效
+// （Pinned 返回 nil），避免切换策略后界面仍显示"固定出口已指定"。
+func TestPinnedOnlyInFixedStrategy(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 80, 100)
+
+	s := NewSelector(m)
+	s.Pin(a.ID)
+	// Pin 自动切到 fixed：Pinned 返回指定节点
+	if s.Strategy() != StrategyFixed || s.Pinned() == nil || s.Pinned().ID != a.ID {
+		t.Fatalf("fixed strategy should expose pinned node, got strategy=%s pinned=%+v", s.Strategy(), s.Pinned())
+	}
+
+	// 切到 best：固定节点不再视为有效，但指定仍保留（切回 fixed 可恢复）
+	s.SetStrategy(StrategyBest)
+	if s.Pinned() != nil {
+		t.Fatalf("Pinned() should be nil when strategy is not fixed, got %+v", s.Pinned())
+	}
+	if s.PinnedID() != a.ID {
+		t.Fatalf("PinnedID() = %d, want %d (pin should be retained)", s.PinnedID(), a.ID)
+	}
+
+	// 切回 fixed：恢复显示
+	s.SetStrategy(StrategyFixed)
+	if s.Pinned() == nil || s.Pinned().ID != a.ID {
+		t.Fatalf("fixed strategy should restore pinned node, got %+v", s.Pinned())
+	}
+}

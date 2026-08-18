@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, LogEvent, PacConfig, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -268,6 +268,20 @@ export async function updatePacConfig(patch: Partial<Omit<PacConfig, 'directCoun
 export async function syncPacRules(): Promise<ApiResponse<PacConfig>> {
   await ensureApiReady()
   const { data } = await http.post<ApiResponse<PacConfig>>('/api/pac/sync')
+  return data
+}
+
+/** 获取出口路由配置（当前策略 / 固定节点 / 存活数 / 可选策略） */
+export async function getEgressConfig(): Promise<ApiResponse<EgressConfig>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<EgressConfig>>('/api/egress')
+  return data
+}
+
+/** 切换出口策略；固定策略可同时指定节点（pinId） */
+export async function updateEgressConfig(patch: { strategy: EgressStrategy; pinId?: number }): Promise<ApiResponse<EgressConfig>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<EgressConfig>>('/api/egress', patch)
   return data
 }
 

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"math"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,50 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
 )
+
+// Strategy 是网关出口节点的集中选择策略。
+// 策略定义在「出口路由」设置中，可随时切换，切换即时生效并持久化。
+type Strategy string
+
+const (
+	// StrategyFixed 固定出口：使用用户指定的节点，节点存活时全部流量走它。
+	StrategyFixed Strategy = "fixed"
+	// StrategyBest 最高评分：每次从存活节点中选评分最高者。
+	StrategyBest Strategy = "best"
+	// StrategyRandom 随机可用：从存活节点中随机挑选（同一域名窗口内保持稳定）。
+	StrategyRandom Strategy = "random"
+	// StrategyWeighted 智能加权（默认）：评分/延迟加权 + 失败惩罚 + 域名粘性。
+	StrategyWeighted Strategy = "weighted"
+	// StrategyRoundRobin 轮询：存活节点按顺序轮流使用，均衡负载。
+	StrategyRoundRobin Strategy = "round-robin"
+)
+
+// ValidStrategy 判断字符串是否是合法的出口策略。
+func ValidStrategy(s string) bool {
+	switch Strategy(s) {
+	case StrategyFixed, StrategyBest, StrategyRandom, StrategyWeighted, StrategyRoundRobin:
+		return true
+	}
+	return false
+}
+
+// StrategyMeta 描述一个出口策略（供前端展示与选择）。
+type StrategyMeta struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Desc  string `json:"desc"`
+}
+
+// Strategies 返回全部支持的出口策略列表（顺序即展示顺序）。
+func Strategies() []StrategyMeta {
+	return []StrategyMeta{
+		{Value: string(StrategyFixed), Label: "固定出口", Desc: "使用指定的节点，节点存活时全部流量走它"},
+		{Value: string(StrategyBest), Label: "最高评分", Desc: "从存活节点中选择评分最高者"},
+		{Value: string(StrategyRandom), Label: "随机可用", Desc: "从存活节点中随机挑选，同一网站短时间窗口内保持稳定"},
+		{Value: string(StrategyWeighted), Label: "智能加权", Desc: "评分/延迟加权，叠加失败惩罚与域名粘性（默认，推荐）"},
+		{Value: string(StrategyRoundRobin), Label: "轮询", Desc: "存活节点按顺序轮流使用，均衡负载"},
+	}
+}
 
 // failurePenalty is the weight multiplier applied per consecutive failure.
 const failurePenalty = 0.5
@@ -36,8 +81,13 @@ type Selector struct {
 	failures map[int64]*failure
 	sticky   map[string]stickyEntry // 目标域名 -> 绑定的出口节点
 
+	// strategy 当前出口策略（默认加权）。使用 atomic.Value 存放 Strategy。
+	strategy atomic.Value
+	// rrCounter 轮询策略的游标，每次取节点时自增。
+	rrCounter atomic.Uint64
+
 	// pinID 用户通过界面指定的固定出口节点 ID（0 表示未指定）。
-	// 指定后，节点存活时所有协议流量都固定使用该节点，不再按评分自动选择。
+	// 仅策略为 fixed 时生效；节点存活时所有协议流量都固定使用该节点。
 	pinID atomic.Int64
 }
 
@@ -47,32 +97,58 @@ type failure struct {
 }
 
 func NewSelector(pool *pool.Manager) *Selector {
-	return &Selector{
+	s := &Selector{
 		pool:     pool,
 		failures: make(map[int64]*failure),
 		sticky:   make(map[string]stickyEntry),
 	}
+	s.strategy.Store(StrategyWeighted)
+	return s
 }
 
-// Pin 指定固定出口节点（id > 0）。之后节点存活时所有流量固定走该节点；
-// id <= 0 等价于 Unpin。
+// Strategy 返回当前出口策略。
+func (s *Selector) Strategy() Strategy {
+	if v, ok := s.strategy.Load().(Strategy); ok && ValidStrategy(string(v)) {
+		return v
+	}
+	return StrategyWeighted
+}
+
+// SetStrategy 设置出口策略。非法策略会被忽略（保持当前策略）。
+func (s *Selector) SetStrategy(str Strategy) {
+	if ValidStrategy(string(str)) {
+		s.strategy.Store(str)
+	}
+}
+
+// Pin 指定固定出口节点（id > 0），并自动把策略切换为 fixed。
+// 之后节点存活时所有协议流量固定走该节点；id <= 0 等价于 Unpin。
 func (s *Selector) Pin(id int64) {
 	s.pinID.Store(id)
+	if id > 0 {
+		s.SetStrategy(StrategyFixed)
+	}
 }
 
-// Unpin 取消固定出口指定，恢复按评分自动选择。
+// Unpin 取消固定出口指定，并恢复默认的智能加权策略。
 func (s *Selector) Unpin() {
 	s.pinID.Store(0)
+	s.SetStrategy(StrategyWeighted)
 }
 
 // PinnedID 返回当前指定的节点 ID（0 表示未指定）。
+// 固定节点在非 fixed 策略下不参与选择，但保留指定以便切回 fixed 时恢复使用。
 func (s *Selector) PinnedID() int64 {
 	return s.pinID.Load()
 }
 
-// Pinned 返回当前指定的节点快照（不要求存活，供状态展示）；
-// 未指定时返回 nil。
+// Pinned 返回当前「有效」的固定节点快照（不要求存活，供状态展示）：
+// 仅当策略为 fixed 时返回指定节点；未指定或策略非 fixed 时返回 nil，
+// 避免切换策略后界面仍显示"固定出口已指定"造成误导。
 func (s *Selector) Pinned() *model.ProxyNode {
+	if s.Strategy() != StrategyFixed {
+		return nil
+	}
 	id := s.pinID.Load()
 	if id <= 0 {
 		return nil
@@ -102,46 +178,44 @@ func stickyKey(protocol model.ProxyProtocol, host string) string {
 	return string(protocol) + "|" + host
 }
 
-// NextForHost 返回指定协议下、针对目标域名 host 的推荐节点。
-// 核心逻辑：
-//  0. 若用户指定了固定出口且该节点存活，则直接返回它（不使用评分最高的，也不受流量协议限制）；
-//  1. 否则尝试命中"域名粘性"：同一域名在窗口内复用同一出口 IP，避免同一网站短时间内多个 IP 访问触发防控；
-//  2. 都没有则按权重（score / latency，并叠加失败惩罚）重新选择最优节点，并把结果绑定到该域名。
+// NextForHost 返回指定协议下、针对目标域名 host 的出口节点，按当前策略分发：
+//   - fixed：固定出口节点存活时直接返回；未指定或节点失效时回退到加权策略；
+//   - best：存活节点中选评分最高（叠加失败惩罚）；
+//   - random：存活节点中随机挑选，同一域名在粘性窗口内保持稳定；
+//   - round-robin：存活节点按 ID 顺序轮流使用（不做粘性）；
+//   - weighted（默认）：按权重（score/latency，叠加失败惩罚）选优，
+//     同一域名在窗口内复用同一出口节点，避免同一网站短时间内多个 IP 访问触发防控。
 //
 // 说明：指定节点跨协议使用是安全的——ConnectTCP 会按节点自身协议选择握手方式
 // （SOCKS5 握手 / HTTP CONNECT），因此任何协议流量都能复用同一个指定节点。
 //
 // host 为空时退化为普通的按协议选择（不做粘性）。
 func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model.ProxyNode {
-	// 0. 指定固定出口：节点存活时始终使用它，满足"指定了就必须用它"的需求。
-	if id := s.pinID.Load(); id > 0 {
-		n := s.pool.Get(id)
-		if n == nil {
-			// 指定的节点已被删除或被自动淘汰，固定出口不再有意义，自动取消。
-			// （dead 节点不取消，等其重新检测存活后自动恢复固定。）
-			s.pinID.Store(0)
-		} else if n.Status == model.StatusAlive {
+	switch s.Strategy() {
+	case StrategyFixed:
+		if n := s.pinnedNode(); n != nil {
 			return n
 		}
+		// 未指定固定节点或节点失效：回退到加权策略继续。
+	case StrategyBest:
+		return s.selectBest(protocol)
+	case StrategyRandom:
+		return s.selectRandom(protocol, host)
+	case StrategyRoundRobin:
+		return s.selectRoundRobin(protocol)
 	}
 
-	// 粘性绑定按"协议 + 域名"区分，避免跨协议复用节点。
+	// weighted（默认）：先尝试命中粘性绑定，否则按权重选优并记录绑定。
 	key := stickyKey(protocol, host)
-
-	// 1. 先尝试命中粘性绑定：同一域名在窗口内复用同一出口。
 	if host != "" {
 		if node := s.stickyNode(key); node != nil {
 			return node
 		}
 	}
-
-	// 2. 没有可用粘性，走常规的最优节点选择。
 	node := s.selectBest(protocol)
 	if node == nil {
 		return nil
 	}
-
-	// 3. 记录粘性绑定，让后续同域名的请求继续复用该节点。
 	if host != "" {
 		s.mu.Lock()
 		s.sticky[key] = stickyEntry{
@@ -151,6 +225,25 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 		s.mu.Unlock()
 	}
 	return node
+}
+
+// pinnedNode 返回固定策略下应使用的节点：指定了固定节点且存活时返回该节点。
+// 指定节点已被删除或淘汰时自动取消固定（dead 节点不取消，等其恢复后自动生效）。
+func (s *Selector) pinnedNode() *model.ProxyNode {
+	id := s.pinID.Load()
+	if id <= 0 {
+		return nil
+	}
+	n := s.pool.Get(id)
+	if n == nil {
+		// 指定的节点已被删除或被自动淘汰，固定出口不再有意义，自动取消。
+		s.pinID.Store(0)
+		return nil
+	}
+	if n.Status == model.StatusAlive {
+		return n
+	}
+	return nil
 }
 
 // stickyNode 查找 key（协议 + 域名）的粘性绑定：
@@ -200,6 +293,54 @@ func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
 	}
 	s.sortCandidates(candidates)
 	return candidates[0]
+}
+
+// selectRandom 在指定协议族内随机挑选一个存活节点；协议族内没有候选时回退到全部存活节点。
+// 同一目标域名在粘性窗口内保持稳定，避免同一网站短时间内频繁更换出口 IP。
+func (s *Selector) selectRandom(protocol model.ProxyProtocol, host string) *model.ProxyNode {
+	key := stickyKey(protocol, host)
+	if host != "" {
+		if node := s.stickyNode(key); node != nil {
+			return node
+		}
+	}
+
+	alive := s.pool.Alive()
+	if len(alive) == 0 {
+		return nil
+	}
+	candidates := filterByProtocol(alive, protocol)
+	if len(candidates) == 0 {
+		candidates = alive
+	}
+	node := candidates[rand.Intn(len(candidates))]
+
+	if host != "" {
+		s.mu.Lock()
+		s.sticky[key] = stickyEntry{
+			nodeID:    node.ID,
+			expiresAt: time.Now().Add(stickyWindow),
+		}
+		s.mu.Unlock()
+	}
+	return node
+}
+
+// selectRoundRobin 在指定协议族内按 ID 顺序轮流返回存活节点（协议族内为空时回退到全部存活节点）。
+// 游标为原子计数器，多 goroutine 并发调用时也能保证不重复。
+func (s *Selector) selectRoundRobin(protocol model.ProxyProtocol) *model.ProxyNode {
+	alive := s.pool.Alive()
+	if len(alive) == 0 {
+		return nil
+	}
+	candidates := filterByProtocol(alive, protocol)
+	if len(candidates) == 0 {
+		candidates = alive
+	}
+	// 按 ID 稳定排序，保证轮转顺序确定（不依赖池内顺序）。
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	i := s.rrCounter.Add(1) - 1
+	return candidates[i%uint64(len(candidates))]
 }
 
 // NextStrict 返回指定协议族内的最优存活节点，且不做跨协议回退。
