@@ -15,7 +15,7 @@ import (
 
 // Version 通过 goreleaser 的 ldflags 注入（如 -X ...config.Version={{.Version}}），
 // 本地开发时使用默认值。
-var Version = "0.1.16"
+var Version = "0.1.17"
 
 // 持久化配置项的 key。
 // APIBind / DBPath / SessionToken 属于启动期固定配置，不支持通过界面修改。
