@@ -116,8 +116,9 @@ export default function ProxyPool() {
   const [localNotice, setLocalNotice] = useState<NoticeData | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const ROW_HEIGHT = 56
-  const VIEWPORT_HEIGHT = 520
   const OVERSCAN = 8
+  // 列表视口实际高度（由 flex 布局决定，ResizeObserver 实时测量），用于虚拟滚动计算
+  const [viewportHeight, setViewportHeight] = useState(0)
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
   // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度（确保操作列无需横向滚动即可见）：
   // 60+180+72+70+64+68+62+92 = 668，+7×8 gap +24 padding = 748。
@@ -147,6 +148,20 @@ export default function ProxyPool() {
     const timer = window.setTimeout(clearNotice, 4000)
     return () => window.clearTimeout(timer)
   }, [notice, clearNotice])
+
+  // 监听列表视口尺寸：窗口大小变化 / 顶部元素高度变化时实时更新虚拟滚动高度，
+  // 使列表始终撑满剩余页面高度，页面本身不再出现外部滚动条。
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setViewportHeight(entry.contentRect.height)
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // filter / subFilter 变化时重置滚动位置：
   // scrollTop 用「渲染期间调整 state」模式（React 官方推荐，避免 effect 内同步 setState），
@@ -179,7 +194,7 @@ export default function ProxyPool() {
 
   const totalHeight = list.length * ROW_HEIGHT
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const endIndex = Math.min(list.length, Math.ceil((scrollTop + VIEWPORT_HEIGHT) / ROW_HEIGHT) + OVERSCAN)
+  const endIndex = Math.min(list.length, Math.ceil((scrollTop + (viewportHeight || 520)) / ROW_HEIGHT) + OVERSCAN)
   const visibleRows = useMemo(() => list.slice(startIndex, endIndex), [list, startIndex, endIndex])
 
   async function onCheck(n: ProxyNode) {
@@ -214,8 +229,8 @@ export default function ProxyPool() {
   const defaultTab = platform === 'win32' ? 'win32-powershell' : 'darwin'
 
   return (
-    <Stack gap="md">
-      <Card padding="lg" radius="md" withBorder>
+    <Stack gap="md" style={{ height: '100%', overflow: 'hidden' }}>
+      <Card padding="lg" radius="md" withBorder style={{ flexShrink: 0 }}>
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <div>
             <Text fw={700}>代理池管理</Text>
@@ -254,13 +269,13 @@ export default function ProxyPool() {
       </Card>
 
       {(notice || localNotice) && (
-        <Alert color={notice?.type === 'success' || localNotice?.type === 'success' ? 'green' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }}>
+        <Alert color={notice?.type === 'success' || localNotice?.type === 'success' ? 'green' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }} style={{ flexShrink: 0 }}>
           {(notice || localNotice)?.text}
         </Alert>
       )}
 
       {pinnedNode ? (
-        <Alert color="blue" variant="light" withCloseButton onClose={onUnpin}>
+        <Alert color="blue" variant="light" withCloseButton onClose={onUnpin} style={{ flexShrink: 0 }}>
           <Group gap="xs" wrap="nowrap">
             <Pin size={16} />
             <Box>
@@ -279,7 +294,7 @@ export default function ProxyPool() {
           </Group>
         </Alert>
       ) : (
-        <Alert color="gray" variant="light">
+        <Alert color="gray" variant="light" style={{ flexShrink: 0 }}>
           <Group gap="xs" wrap="nowrap">
             <PinOff size={16} />
             <Text size="sm">未指定固定出口，自动按评分选择最优节点；可在任意节点行点击「指定」固定使用</Text>
@@ -287,16 +302,16 @@ export default function ProxyPool() {
         </Alert>
       )}
 
-      <Card padding="md" radius="md" withBorder>
+      <Card padding="md" radius="md" withBorder style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Group justify="space-between" mb="sm">
           <Text size="sm" c="dimmed">共 {list.length} 个节点 · 当前仅渲染可见区域</Text>
         </Group>
         <Box
           ref={viewportRef}
           onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          style={{ maxHeight: VIEWPORT_HEIGHT, overflowY: 'auto', overflowX: 'auto', borderRadius: 12, border: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'auto', borderRadius: 12, border: '1px solid var(--mantine-color-default-border)', background: 'var(--mantine-color-body)' }}
         >
-          <Box style={{ height: totalHeight, minHeight: VIEWPORT_HEIGHT, position: 'relative' }}>
+          <Box style={{ height: Math.max(totalHeight, 1), minHeight: '100%', position: 'relative' }}>
             <Box
               style={{
                 position: 'sticky',
@@ -328,13 +343,13 @@ export default function ProxyPool() {
               <Text size="xs" style={{ textAlign: 'right' }}>操作</Text>
             </Box>
 
-            <Box style={{ transform: `translateY(${startIndex * ROW_HEIGHT}px)` }}>
-              {list.length === 0 ? (
-                <Box style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mantine-color-dimmed)' }}>
-                  {loading ? '加载中...' : '暂无代理'}
-                </Box>
-              ) : (
-                visibleRows.map((n) => (
+            {list.length === 0 ? (
+              <Box style={{ height: '100%', minHeight: ROW_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mantine-color-dimmed)' }}>
+                {loading ? '加载中...' : '暂无代理'}
+              </Box>
+            ) : (
+              <Box style={{ transform: `translateY(${startIndex * ROW_HEIGHT}px)` }}>
+                {visibleRows.map((n) => (
                   <Box
                     key={n.id}
                     style={{
@@ -405,11 +420,11 @@ export default function ProxyPool() {
                       </Menu>
                     </Group>
                   </Box>
-                ))
+                ))}
+                </Box>
               )}
             </Box>
           </Box>
-        </Box>
       </Card>
 
       <Modal opened={pending !== null} onClose={() => setPending(null)} title="删除代理">
