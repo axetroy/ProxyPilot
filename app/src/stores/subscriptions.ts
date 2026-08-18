@@ -46,9 +46,12 @@ export const useSubsStore = create<SubsState>((set, get) => ({
   add: async (name: string, url: string, interval: number) => {
     set({ submitting: true, notice: null })
     try {
-      await addSubscription(name, url, interval)
+      const res = await addSubscription(name, url, interval)
       await get().refresh()
-      set({ notice: { type: 'success', text: `订阅“${name}”已添加` } })
+      const sub = res.data as Subscription
+      if (sub?.id) {
+        await get().refreshOne(sub.id)
+      }
       return true
     } catch (e) {
       set({ notice: { type: 'error', text: `添加失败：${getErrorMessage(e)}` } })
