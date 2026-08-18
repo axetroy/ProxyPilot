@@ -165,8 +165,13 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
 
   async function remove(c: ProxyChain) {
     if (!window.confirm(`确定删除链路「${c.name}」？`)) return
-    const res = await deleteChain(c.id)
-    if (res.code === 0) refresh()
+    try {
+      const res = await deleteChain(c.id)
+      if (res.code === 0) refresh()
+    } catch {
+      // 删除失败时也刷新列表，确保 UI 与后端一致
+      refresh()
+    }
   }
 
   return (
