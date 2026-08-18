@@ -331,3 +331,83 @@ func TestScheduleInContext(t *testing.T) {
 		t.Errorf("refresh continued after cancel: added %d -> %d", afterCancel, sink.added)
 	}
 }
+
+// TestDisableSubscriptionRemovesNodes 禁用订阅时，该订阅下已入池的节点被移出代理池。
+func TestDisableSubscriptionRemovesNodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.1.1.1:80\n2.2.2.2:443"))
+	}))
+	defer srv.Close()
+
+	m, st, sink := newTestManager(t)
+	sub, _ := m.AddSubscription("sub", srv.URL, 3600)
+	if err := m.FetchNow(context.Background(), sub); err != nil {
+		t.Fatalf("fetchNow: %v", err)
+	}
+	nodes, _ := st.ListNodesBySubscription(sub.ID)
+	if len(nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(nodes))
+	}
+
+	// 禁用订阅 → 节点从代理池移除
+	if err := m.UpdateSubscription(sub.ID, "sub", srv.URL, 3600, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	nodes, _ = st.ListNodesBySubscription(sub.ID)
+	if len(nodes) != 0 {
+		t.Fatalf("nodes after disable = %d, want 0", len(nodes))
+	}
+	if len(sink.removed) != 2 {
+		t.Fatalf("removed = %v, want 2 node ids", sink.removed)
+	}
+
+	// 重新启用后，订阅仍在（未被删除），可再次抓取
+	subs, _ := st.ListSubscriptions()
+	if len(subs) != 1 || subs[0].Enabled {
+		t.Fatalf("subscription state after disable = %+v", subs)
+	}
+	if err := m.UpdateSubscription(sub.ID, "sub", srv.URL, 3600, true); err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	if err := m.FetchNow(context.Background(), sub); err != nil {
+		t.Fatalf("refetch: %v", err)
+	}
+	nodes, _ = st.ListNodesBySubscription(sub.ID)
+	if len(nodes) != 2 {
+		t.Fatalf("nodes after re-enable fetch = %d, want 2", len(nodes))
+	}
+}
+
+// TestDisableKeepsSharedNodes 节点被多个订阅共享时，禁用其中一个订阅不删除节点（仍被其他订阅引用）。
+func TestDisableKeepsSharedNodes(t *testing.T) {
+	srvA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.1.1.1:80"))
+	}))
+	defer srvA.Close()
+	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.1.1.1:80"))
+	}))
+	defer srvB.Close()
+
+	m, st, sink := newTestManager(t)
+	subA, _ := m.AddSubscription("a", srvA.URL, 3600)
+	subB, _ := m.AddSubscription("b", srvB.URL, 3600)
+	if err := m.FetchNow(context.Background(), subA); err != nil {
+		t.Fatalf("fetchA: %v", err)
+	}
+	if err := m.FetchNow(context.Background(), subB); err != nil {
+		t.Fatalf("fetchB: %v", err)
+	}
+
+	if err := m.UpdateSubscription(subA.ID, "a", srvA.URL, 3600, false); err != nil {
+		t.Fatalf("disable A: %v", err)
+	}
+	// 共享节点因仍被 B 引用而保留在池中
+	refs, _ := st.CountSubscriptionRefs(1)
+	if refs != 1 {
+		t.Fatalf("refs = %d, want 1 (still referenced by B)", refs)
+	}
+	if len(sink.removed) != 0 {
+		t.Fatalf("removed = %v, want none", sink.removed)
+	}
+}

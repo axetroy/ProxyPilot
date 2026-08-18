@@ -65,7 +65,8 @@ export const useSubsStore = create<SubsState>((set, get) => ({
     try {
       await updateSubscription(id, name, url, interval, enabled)
       await get().refresh()
-      set({ notice: { type: 'success', text: `订阅#${id} 已更新` } })
+      usePoolStore.getState().refresh()
+      set({ notice: { type: 'success', text: `订阅#${id} 已${enabled ? '启用' : '禁用'}` } })
       return true
     } catch (e) {
       set({ notice: { type: 'error', text: `更新失败：${getErrorMessage(e)}` } })

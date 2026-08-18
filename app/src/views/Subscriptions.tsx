@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
-import { Alert, Badge, Button, Card, Group, Modal, NumberInput, Stack, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Button, Card, Group, Modal, NumberInput, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useSubsStore } from '@/stores/subscriptions'
 import type { Subscription } from '@/types'
 
@@ -104,7 +104,11 @@ export default function Subscriptions() {
                   </Table.Td>
                   <Table.Td>{sub.interval}s</Table.Td>
                   <Table.Td>
-                    <Badge color={sub.enabled ? 'green' : 'gray'}>{sub.enabled ? '是' : '否'}</Badge>
+                    <Switch
+                      checked={sub.enabled}
+                      disabled={submitting}
+                      onChange={(e) => void update(sub.id, sub.name, sub.url, sub.interval, e.currentTarget.checked)}
+                    />
                   </Table.Td>
                   <Table.Td>{sub.proxyCount ?? '-'}</Table.Td>
                   <Table.Td>{sub.lastFetch ? new Date(sub.lastFetch).toLocaleString() : '-'}</Table.Td>

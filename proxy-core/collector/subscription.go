@@ -84,6 +84,19 @@ func (m *Manager) Delete(id int64) error {
 
 // UpdateSubscription updates subscription details and reschedules if needed.
 func (m *Manager) UpdateSubscription(id int64, name, url string, interval int64, enabled bool) error {
+	// 查询旧状态，判断是否发生 启用→禁用 切换（禁用时需把该订阅节点移出代理池）
+	prevEnabled := false
+	subs, err := m.store.ListSubscriptions()
+	if err != nil {
+		return err
+	}
+	for _, s := range subs {
+		if s.ID == id {
+			prevEnabled = s.Enabled
+			break
+		}
+	}
+
 	sub := &model.Subscription{ID: id, Name: name, URL: url, Interval: interval, Enabled: enabled}
 	if err := m.store.UpsertSubscription(sub); err != nil {
 		return err
@@ -95,6 +108,12 @@ func (m *Manager) UpdateSubscription(id int64, name, url string, interval int64,
 		delete(m.timers, id)
 	}
 	m.mu.Unlock()
+	// 禁用订阅：把该订阅下的节点移出代理池（解除关联，无其他订阅引用的删除）
+	if prevEnabled && !enabled {
+		if err := m.syncStaleNodes(id, nil); err != nil {
+			return err
+		}
+	}
 	if enabled && interval > 0 {
 		m.schedule(sub)
 	}
