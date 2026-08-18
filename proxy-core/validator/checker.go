@@ -279,7 +279,14 @@ func ConnectChain(nodes []*model.ProxyNode, target string, timeout time.Duration
 		return ConnectTCP(nodes[0], target, timeout)
 	}
 
-	conn, err := dialNode(nodes[0], timeout)
+	// 每跳均分总超时：N 跳链路的单跳预算 = 总超时 / N，
+	// 避免多跳时每跳都按总超时等待，最坏总耗时膨胀到 N×timeout。
+	perHop := timeout / time.Duration(len(nodes))
+	if perHop <= 0 {
+		perHop = timeout
+	}
+
+	conn, err := dialNode(nodes[0], perHop)
 	if err != nil {
 		return nil, err
 	}
@@ -288,12 +295,85 @@ func ConnectChain(nodes []*model.ProxyNode, target string, timeout time.Duration
 		if i+1 < len(nodes) {
 			next = net.JoinHostPort(nodes[i+1].Host, strconv.Itoa(nodes[i+1].Port))
 		}
-		if err := handshake(conn, node, next, timeout); err != nil {
+		if err := handshake(conn, node, next, perHop); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("chain hop %d (%s) handshake to %s failed: %w", i+1, node.Key(), next, err)
 		}
 	}
 	return conn, nil
+}
+
+// chainHopKey 返回链路节点在测试结果中的展示地址：protocol://host:port。
+func chainHopKey(n *model.ProxyNode) string {
+	return string(n.Protocol) + "://" + net.JoinHostPort(n.Host, strconv.Itoa(n.Port))
+}
+
+// TestChain 逐跳测试链路连通性并测量每跳耗时：
+// 依次建立 客户端 → nodes[0] → … → target 的隧道，记录每一跳的建链耗时；
+// 某一跳失败时停止测试，该跳及后续跳的 Error 字段给出失败原因。
+// 不依赖外部网络的目标：target 传需要到达的地址（如检测目标 host:port）。
+func TestChain(nodes []*model.ProxyNode, target string, timeout time.Duration) model.ChainTestResult {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	res := model.ChainTestResult{Hops: make([]model.ChainHopResult, 0, len(nodes))}
+	if len(nodes) == 0 {
+		return res
+	}
+
+	perHop := timeout / time.Duration(len(nodes))
+	if perHop <= 0 {
+		perHop = timeout
+	}
+
+	start := time.Now()
+	conn, err := dialNode(nodes[0], perHop)
+	if err != nil {
+		res.Hops = append(res.Hops, model.ChainHopResult{
+			Hop: 1, NodeID: nodes[0].ID,
+			Key:      chainHopKey(nodes[0]),
+			Protocol: string(nodes[0].Protocol),
+			Latency:  time.Since(start).Milliseconds(), Error: err.Error(),
+		})
+		return res
+	}
+	for i, node := range nodes {
+		next := target
+		if i+1 < len(nodes) {
+			next = net.JoinHostPort(nodes[i+1].Host, strconv.Itoa(nodes[i+1].Port))
+		}
+		hopStart := time.Now()
+		err := handshake(conn, node, next, perHop)
+		latency := time.Since(hopStart).Milliseconds()
+		hop := model.ChainHopResult{
+			Hop: i + 1, NodeID: node.ID,
+			Key:      chainHopKey(node),
+			Protocol: string(node.Protocol), Latency: latency,
+		}
+		if err != nil {
+			hop.Error = fmt.Sprintf("handshake to %s failed: %v", next, err)
+			res.Hops = append(res.Hops, hop)
+			res.TotalLatency = time.Since(start).Milliseconds()
+			break
+		}
+		hop.OK = true
+		res.Hops = append(res.Hops, hop)
+		if i == len(nodes)-1 {
+			res.TotalLatency = time.Since(start).Milliseconds()
+		}
+	}
+	_ = conn.Close()
+	if len(res.Hops) == len(nodes) {
+		allOK := true
+		for _, h := range res.Hops {
+			if !h.OK {
+				allOK = false
+				break
+			}
+		}
+		res.OK = allOK
+	}
+	return res
 }
 
 // dialNode 建立到代理节点本身的 TCP 连接（HTTPS 代理附带 TLS 握手）。

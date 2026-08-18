@@ -87,6 +87,29 @@ type ProxyChain struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// ChainHopResult 链路测试中某一跳（节点）的测试结果。
+type ChainHopResult struct {
+	// Hop 第几跳（从 1 开始）。
+	Hop      int    `json:"hop"`
+	NodeID   int64  `json:"nodeId"`
+	Key      string `json:"key"` // host:port
+	Protocol string `json:"protocol"`
+	OK       bool   `json:"ok"`
+	// Latency 该跳建立隧道（连接 + 握手）耗时（毫秒）。
+	Latency int64 `json:"latency"`
+	// Error 该跳失败原因（OK 为 true 时为空）。
+	Error string `json:"error,omitempty"`
+}
+
+// ChainTestResult 一次链路测试的整体结果。
+type ChainTestResult struct {
+	// OK 全部跳均成功。
+	OK bool `json:"ok"`
+	// TotalLatency 整条链路建链总耗时（毫秒），失败时为空。
+	TotalLatency int64            `json:"totalLatency"`
+	Hops         []ChainHopResult `json:"hops"`
+}
+
 type CheckHistory struct {
 	ID        int64     `json:"id"`
 	ProxyID   int64     `json:"proxyId"`

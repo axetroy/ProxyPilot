@@ -88,6 +88,7 @@ func NewRouter(s *Services) *gin.Engine {
 	r.POST("/api/chain", s.createChain)
 	r.PUT("/api/chain/:id", s.updateChain)
 	r.DELETE("/api/chain/:id", s.deleteChain)
+	r.POST("/api/chain/:id/test", s.testChain)
 	r.POST("/api/proxy/check", s.checkProxies)
 	r.POST("/api/gateway/start", s.startGateway)
 	r.POST("/api/gateway/stop", s.stopGateway)

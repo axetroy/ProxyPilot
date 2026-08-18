@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -313,6 +313,13 @@ export async function updateChain(
 export async function deleteChain(id: number): Promise<ApiResponse<unknown>> {
   await ensureApiReady()
   const { data } = await http.delete<ApiResponse<unknown>>(`/api/chain/${id}`)
+  return data
+}
+
+/** 测试代理链路：逐跳连接并测量每跳延迟，返回每跳结果 */
+export async function testChain(id: number): Promise<ApiResponse<ChainTestResult>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<ChainTestResult>>(`/api/chain/${id}/test`)
   return data
 }
 

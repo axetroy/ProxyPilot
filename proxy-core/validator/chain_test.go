@@ -153,3 +153,86 @@ func TestConnectChainBrokenHop(t *testing.T) {
 		t.Fatal("expected error when first hop is unreachable")
 	}
 }
+
+// TestTestChainAllHopsOK 验证全链路健康时每跳都 OK 且延迟为正。
+func TestTestChainAllHopsOK(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	hopB := httptest.NewServer(connectProxy(target.Listener.Addr().String()))
+	defer hopB.Close()
+	hopA := httptest.NewServer(connectProxy(hopB.Listener.Addr().String()))
+	defer hopA.Close()
+
+	nodes := []*model.ProxyNode{
+		nodeFromServer(t, hopA),
+		nodeFromServer(t, hopB),
+	}
+	res := TestChain(nodes, target.Listener.Addr().String(), 5*time.Second)
+	if !res.OK {
+		t.Fatalf("TestChain = %+v, want OK", res)
+	}
+	if len(res.Hops) != 2 {
+		t.Fatalf("hops = %d, want 2", len(res.Hops))
+	}
+	for i, h := range res.Hops {
+		if !h.OK || h.Error != "" {
+			t.Errorf("hop %d = %+v, want OK", i, h)
+		}
+		if h.Latency < 0 {
+			t.Errorf("hop %d latency = %d, want >= 0", i, h.Latency)
+		}
+	}
+	if res.TotalLatency <= 0 {
+		t.Errorf("TotalLatency = %d, want > 0", res.TotalLatency)
+	}
+}
+
+// TestTestChainBrokenHop 中间跳不可用时，测试结果在失败跳处截断且错误可读。
+func TestTestChainBrokenHop(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+
+	hopB := httptest.NewServer(connectProxy(target.Listener.Addr().String()))
+	defer hopB.Close()
+
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	deadAddr := dead.Addr().String()
+	_ = dead.Close()
+
+	host, portStr, _ := net.SplitHostPort(deadAddr)
+	port, _ := strconv.Atoi(portStr)
+	nodes := []*model.ProxyNode{
+		{Host: host, Port: port, Protocol: model.ProtocolHTTP},
+		nodeFromServer(t, hopB),
+	}
+	res := TestChain(nodes, target.Listener.Addr().String(), time.Second)
+	if res.OK {
+		t.Fatalf("TestChain = %+v, want !OK", res)
+	}
+	if len(res.Hops) == 0 {
+		t.Fatal("expected at least the failed hop recorded")
+	}
+	last := res.Hops[len(res.Hops)-1]
+	if last.OK {
+		t.Errorf("last hop = %+v, want failed", last)
+	}
+	if last.Error == "" {
+		t.Errorf("hop %d error empty, want readable failure", last.Hop)
+	}
+}
+
+// TestTestChainEmpty 空链返回空结果，不崩溃。
+func TestTestChainEmpty(t *testing.T) {
+	res := TestChain(nil, "127.0.0.1:1", time.Second)
+	if len(res.Hops) != 0 {
+		t.Fatalf("hops = %d, want 0", len(res.Hops))
+	}
+}

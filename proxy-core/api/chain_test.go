@@ -114,6 +114,98 @@ func TestEgressChainStrategy(t *testing.T) {
 	}
 }
 
+// TestTestChainEndpoint 测试链路端点：返回每跳结果，链路为空时报错，链路不存在时 404。
+func TestTestChainEndpoint(t *testing.T) {
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 空链路：400
+	chain, err := s.Store.CreateChain("空链", []int64{})
+	if err != nil {
+		t.Fatalf("create chain: %v", err)
+	}
+	w := doRequest(t, r, http.MethodPost, "/api/chain/"+jsonInt(chain.ID)+"/test", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty chain status = %d, body %s", w.Code, w.Body.String())
+	}
+
+	// 不存在的链路：404
+	w = doRequest(t, r, http.MethodPost, "/api/chain/999999/test", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing chain status = %d, want 404", w.Code)
+	}
+
+	// 有节点但不可达：返回每跳结果，失败跳 OK=false
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "127.0.0.1", Port: 1, Protocol: model.ProtocolHTTP, Score: 90, Status: model.StatusAlive},
+	})
+	var nodeIDs []int64
+	for _, n := range s.Pool.List() {
+		nodeIDs = append(nodeIDs, n.ID)
+	}
+	chain2, err := s.Store.CreateChain("不可达链", nodeIDs)
+	if err != nil {
+		t.Fatalf("create chain 2: %v", err)
+	}
+	w = doRequest(t, r, http.MethodPost, "/api/chain/"+jsonInt(chain2.ID)+"/test", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("test status = %d, body %s", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	if resp.Code != 0 {
+		t.Fatalf("resp.Code = %d, body %s", resp.Code, w.Body.String())
+	}
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	hops, ok := data["hops"].([]any)
+	if !ok || len(hops) == 0 {
+		t.Fatalf("hops = %+v, want non-empty", data["hops"])
+	}
+	first := hops[0].(map[string]any)
+	if first["ok"] == true {
+		t.Errorf("first hop = %+v, want failed (unreachable node)", first)
+	}
+	if first["error"] == "" {
+		t.Errorf("first hop error empty, want readable failure")
+	}
+}
+
+// TestHostPortFromTarget 验证检测目标解析：URL 提取 host:port，裸 host:port 原样返回，
+// 非法格式报错。
+func TestHostPortFromTarget(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+		err  bool
+	}{
+		{"https://www.apple.com/library/test/success.html", "www.apple.com:443", false},
+		{"http://example.com/204", "example.com:80", false},
+		{"http://example.com:8080/x", "example.com:8080", false},
+		{"1.2.3.4:1080", "1.2.3.4:1080", false},
+		{"", "", true},
+		{"not-a-host", "", true},
+		{"example.com", "", true},
+	}
+	for _, tc := range cases {
+		got, err := hostPortFromTarget(tc.raw)
+		if tc.err {
+			if err == nil {
+				t.Errorf("hostPortFromTarget(%q) = %q, want error", tc.raw, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("hostPortFromTarget(%q) error: %v", tc.raw, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("hostPortFromTarget(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // jsonInt 把整数转成字符串（拼接 URL 用）。
 func jsonInt(v int64) string {
 	return strconv.FormatInt(v, 10)

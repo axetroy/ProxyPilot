@@ -155,6 +155,24 @@ export interface ProxyChain {
   updatedAt: string
 }
 
+/** 链路测试中某一跳（节点）的测试结果 */
+export interface ChainHopResult {
+  hop: number
+  nodeId: number
+  key: string
+  protocol: string
+  ok: boolean
+  latency: number
+  error?: string
+}
+
+/** 一次链路测试的整体结果 */
+export interface ChainTestResult {
+  ok: boolean
+  totalLatency: number
+  hops: ChainHopResult[]
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

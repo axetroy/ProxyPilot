@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { GitBranch, MapPin, Pencil, Pin, PinOff, Plus, RadioTower, Trash2 } from 'lucide-react'
+import { Activity, GitBranch, MapPin, Pencil, Pin, PinOff, Plus, RadioTower, Trash2 } from 'lucide-react'
 import { ActionIcon, Alert, Badge, Button, Card, Divider, Group, Modal, MultiSelect, Radio, Select, Stack, Switch, Text, TextInput, type ComboboxItem, type ComboboxParsedItem } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
-import { createChain, deleteChain, getEgressConfig, getErrorMessage, listChains, updateChain, updateEgressConfig } from '@/api'
-import type { EgressConfig, ProxyChain, ProxyNode } from '@/types'
+import { createChain, deleteChain, getEgressConfig, getErrorMessage, listChains, testChain, updateChain, updateEgressConfig } from '@/api'
+import type { ChainTestResult, EgressConfig, ProxyChain, ProxyNode } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -84,6 +84,9 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
   const [selected, setSelected] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 链路测试：当前测试的链、结果与进行中状态
+  const [testing, setTesting] = useState<number | null>(null)
+  const [testResult, setTestResult] = useState<{ chain: ProxyChain; result: ChainTestResult } | null>(null)
 
   async function refresh() {
     const res = await listChains()
@@ -174,6 +177,23 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
     }
   }
 
+  async function runTest(c: ProxyChain) {
+    setTesting(c.id)
+    try {
+      const res = await testChain(c.id)
+      if (res.code === 0 && res.data) {
+        setTestResult({ chain: c, result: res.data })
+      } else {
+        setTestResult({ chain: c, result: { ok: false, totalLatency: 0, hops: [] } })
+      }
+    } catch (e) {
+      setTestResult({ chain: c, result: { ok: false, totalLatency: 0, hops: [] } })
+      console.error(getErrorMessage(e))
+    } finally {
+      setTesting(null)
+    }
+  }
+
   return (
     <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
       <Stack gap="md">
@@ -201,7 +221,7 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
               const labels = c.nodeIds
                 .map((id) => {
                   const n = nodes.find((x) => x.id === id)
-                  return n ? `${n.host}:${n.port}` : `节点#${id}`
+                  return n ? `${n.protocol}://${n.host}:${n.port}` : `节点#${id}`
                 })
                 .join(' → ')
               return (
@@ -218,11 +238,14 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
                     </Text>
                   </div>
                   <Group gap="xs">
-                    <Switch size="sm" checked={c.enabled} onChange={() => toggle(c)} aria-label={`启用链路 ${c.name}`} />
-                    <ActionIcon variant="subtle" onClick={() => openEdit(c)} aria-label={`编辑链路 ${c.name}`}>
+                    <ActionIcon variant="subtle" loading={testing === c.id} onClick={() => runTest(c)} title="测试链路" aria-label={`测试链路 ${c.name}`}>
+                      <Activity size={14} />
+                    </ActionIcon>
+                    <Switch size="sm" checked={c.enabled} onChange={() => toggle(c)} title="启用链路" aria-label={`启用链路 ${c.name}`} />
+                    <ActionIcon variant="subtle" onClick={() => openEdit(c)} title="编辑链路" aria-label={`编辑链路 ${c.name}`}>
                       <Pencil size={14} />
                     </ActionIcon>
-                    <ActionIcon variant="subtle" color="red" onClick={() => remove(c)} aria-label={`删除链路 ${c.name}`}>
+                    <ActionIcon variant="subtle" color="red" onClick={() => remove(c)} title="删除链路" aria-label={`删除链路 ${c.name}`}>
                       <Trash2 size={14} />
                     </ActionIcon>
                   </Group>
@@ -282,6 +305,47 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
             <Button loading={submitting} onClick={save}>保存</Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal opened={!!testResult} onClose={() => setTestResult(null)} title={`测试链路：${testResult?.chain.name ?? ''}`} size="lg" centered>
+        {testResult && (
+          <Stack gap="md">
+            <Alert color={testResult.result.ok ? 'green' : 'red'} variant="light">
+              {testResult.result.ok
+                ? `整条链路连通正常，总耗时 ${testResult.result.totalLatency} ms`
+                : `链路不可用：第 ${testResult.result.hops.length} 跳失败（${testResult.result.hops[testResult.result.hops.length - 1]?.error ?? '未知错误'}）`}
+            </Alert>
+            {testResult.result.hops.length === 0 ? (
+              <Text size="sm" c="dimmed">未返回任何跳的测试结果</Text>
+            ) : (
+              <Stack gap="sm">
+                {testResult.result.hops.map((h) => (
+                  <Group key={h.hop} justify="space-between" wrap="wrap">
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <Group gap="xs">
+                        <Badge size="xs" variant="light">第 {h.hop} 跳</Badge>
+                        <Text fw={600} size="sm">{h.key}</Text>
+                      </Group>
+                      {!h.ok && h.error && (
+                        <Text size="xs" c="red" mt={2} style={{ wordBreak: 'break-all' }}>{h.error}</Text>
+                      )}
+                    </div>
+                    <Group gap="xs">
+                      {h.ok ? (
+                        <>
+                          <Badge size="sm" color="green" variant="light">正常</Badge>
+                          <Text size="sm">{h.latency} ms</Text>
+                        </>
+                      ) : (
+                        <Badge size="sm" color="red" variant="light">失败</Badge>
+                      )}
+                    </Group>
+                  </Group>
+                ))}
+              </Stack>
+            )}
+          </Stack>
+        )}
       </Modal>
     </Card>
   )
