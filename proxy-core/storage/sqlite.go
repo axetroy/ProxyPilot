@@ -100,6 +100,14 @@ func (s *Store) migrate() error {
 			value TEXT NOT NULL DEFAULT '',
 			updated_at DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS proxy_chains (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			node_ids TEXT NOT NULL DEFAULT '[]',
+			enabled INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_check_history_proxy ON check_history(proxy_id, id DESC)`,
 	}
 	for _, stmt := range stmts {

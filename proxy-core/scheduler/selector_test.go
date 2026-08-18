@@ -664,6 +664,22 @@ func TestStrategyInvalidIgnored(t *testing.T) {
 	}
 }
 
+// TestStrategyChainRegistered chain 是合法策略，且不参与单跳节点选择。
+func TestStrategyChainRegistered(t *testing.T) {
+	if !ValidStrategy(string(StrategyChain)) {
+		t.Fatal("chain should be a valid strategy")
+	}
+	s := NewSelector(newTestPool(t))
+	s.SetStrategy(StrategyChain)
+	if s.Strategy() != StrategyChain {
+		t.Fatalf("strategy = %s, want chain", s.Strategy())
+	}
+	// chain 策略下不返回单跳节点（由网关按链路逐跳连接）
+	if n := s.Next(); n != nil {
+		t.Fatalf("Next() = %+v, want nil under chain strategy", n)
+	}
+}
+
 // TestPinnedOnlyInFixedStrategy 固定节点仅在策略为 fixed 时视为有效
 // （Pinned 返回 nil），避免切换策略后界面仍显示"固定出口已指定"。
 func TestPinnedOnlyInFixedStrategy(t *testing.T) {

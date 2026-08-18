@@ -50,15 +50,15 @@ type ProxyNode struct {
 
 // ScoreBreakdown 表示一次评分的各维度明细，与 CalculateScore 的权重口径一致。
 type ScoreBreakdown struct {
-	SuccessRate    int     `json:"successRate"`    // 成功率（0-100）
-	LatencyScore   int     `json:"latencyScore"`   // 延迟分（0-100）
-	Stability      int     `json:"stability"`      // 稳定性（0-100）
-	Anonymity      int     `json:"anonymity"`      // 匿名性（0-100）
-	WeightSuccess  float64 `json:"weightSuccess"`  // 成功率权重
-	WeightLatency  float64 `json:"weightLatency"`  // 延迟权重
+	SuccessRate     int     `json:"successRate"`     // 成功率（0-100）
+	LatencyScore    int     `json:"latencyScore"`    // 延迟分（0-100）
+	Stability       int     `json:"stability"`       // 稳定性（0-100）
+	Anonymity       int     `json:"anonymity"`       // 匿名性（0-100）
+	WeightSuccess   float64 `json:"weightSuccess"`   // 成功率权重
+	WeightLatency   float64 `json:"weightLatency"`   // 延迟权重
 	WeightStability float64 `json:"weightStability"` // 稳定性权重
 	WeightAnonymity float64 `json:"weightAnonymity"` // 匿名性权重
-	Score          int     `json:"score"`          // 加权总分（0-100）
+	Score           int     `json:"score"`           // 加权总分（0-100）
 }
 
 func (n *ProxyNode) Key() string {
@@ -66,14 +66,25 @@ func (n *ProxyNode) Key() string {
 }
 
 type Subscription struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	URL         string    `json:"url"`
-	Interval    int64     `json:"interval"` // seconds
-	Enabled     bool      `json:"enabled"`
-	LastFetch   time.Time `json:"lastFetch"`
-	CreatedAt   time.Time `json:"createdAt"`
-	ProxyCount  int       `json:"proxyCount,omitempty"`
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	URL        string    `json:"url"`
+	Interval   int64     `json:"interval"` // seconds
+	Enabled    bool      `json:"enabled"`
+	LastFetch  time.Time `json:"lastFetch"`
+	CreatedAt  time.Time `json:"createdAt"`
+	ProxyCount int       `json:"proxyCount,omitempty"`
+}
+
+// ProxyChain 代理链路：客户端 → n0 → n1 → … → 目标服务器。
+// NodeIDs 是有序节点 ID 列表（按链路顺序，前端按选择顺序写入）。
+type ProxyChain struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	NodeIDs   []int64   `json:"nodeIds"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type CheckHistory struct {
@@ -95,10 +106,10 @@ type SystemStatus struct {
 	CurrentSOCKS5Node *ProxyNode `json:"currentSocks5Node,omitempty"`
 	// PinnedNode 用户指定的固定出口节点（未指定或节点已删除时为 nil），
 	// 与 CurrentNode 不同：这是用户主动指定的，不随请求命中而变化。
-	PinnedNode        *ProxyNode `json:"pinnedNode,omitempty"`
-	HTTPProxyBind     string     `json:"httpProxyBind"`
-	SOCKSProxyBind    string     `json:"socks5ProxyBind"`
-	Version           string     `json:"version"`
+	PinnedNode     *ProxyNode `json:"pinnedNode,omitempty"`
+	HTTPProxyBind  string     `json:"httpProxyBind"`
+	SOCKSProxyBind string     `json:"socks5ProxyBind"`
+	Version        string     `json:"version"`
 }
 
 type CheckResult struct {

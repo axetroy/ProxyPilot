@@ -130,7 +130,7 @@ export interface PacConfig {
 }
 
 /** 网关出口策略 */
-export type EgressStrategy = 'fixed' | 'best' | 'random' | 'weighted' | 'round-robin'
+export type EgressStrategy = 'fixed' | 'best' | 'random' | 'weighted' | 'round-robin' | 'chain'
 
 /** 出口策略描述（后端 scheduler.StrategyMeta） */
 export interface EgressStrategyMeta {
@@ -145,6 +145,16 @@ export interface EgressConfig {
   pinnedNode?: ProxyNode
   aliveCount: number
   strategies: EgressStrategyMeta[]
+}
+
+/** 代理链路（客户端按序经过多个节点到达目标） */
+export interface ProxyChain {
+  id: number
+  name: string
+  nodeIds: number[]
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export interface CheckResult {

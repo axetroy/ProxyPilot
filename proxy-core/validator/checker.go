@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
-	"golang.org/x/net/proxy"
 )
 
 // DefaultAnonymityTarget 匿名性检测的回显端点默认值：
@@ -254,17 +253,57 @@ func ConnectTCP(node *model.ProxyNode, addr string, timeout time.Duration) (net.
 	if node == nil {
 		return nil, fmt.Errorf("nil proxy node")
 	}
-	if node.Protocol == model.ProtocolSOCKS5 {
-		return socks5Connect(node, addr, timeout)
+	conn, err := dialNode(node, timeout)
+	if err != nil {
+		return nil, err
 	}
+	if err := handshake(conn, node, addr, timeout); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// ConnectChain 通过链路建立到目标 addr 的隧道：客户端 → nodes[0] → nodes[1] → … → target。
+// 每一跳都在上一层隧道之上按该跳节点的协议握手（HTTP CONNECT / HTTPS TLS+CONNECT / SOCKS5），
+// 握手目标是下一跳节点的地址，最后一跳握手到目标地址，最终返回直达 target 的隧道。
+// 链路中各跳节点协议可以混合。单跳链路等价于 ConnectTCP。
+func ConnectChain(nodes []*model.ProxyNode, target string, timeout time.Duration) (net.Conn, error) {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("empty proxy chain")
+	}
+	if len(nodes) == 1 {
+		return ConnectTCP(nodes[0], target, timeout)
+	}
+
+	conn, err := dialNode(nodes[0], timeout)
+	if err != nil {
+		return nil, err
+	}
+	for i, node := range nodes {
+		next := target
+		if i+1 < len(nodes) {
+			next = net.JoinHostPort(nodes[i+1].Host, strconv.Itoa(nodes[i+1].Port))
+		}
+		if err := handshake(conn, node, next, timeout); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("chain hop %d (%s) handshake to %s failed: %w", i+1, node.Key(), next, err)
+		}
+	}
+	return conn, nil
+}
+
+// dialNode 建立到代理节点本身的 TCP 连接（HTTPS 代理附带 TLS 握手）。
+func dialNode(node *model.ProxyNode, timeout time.Duration) (net.Conn, error) {
 	proxyAddr := net.JoinHostPort(node.Host, strconv.Itoa(node.Port))
 	conn, err := net.DialTimeout("tcp", proxyAddr, timeout)
 	if err != nil {
 		return nil, err
 	}
-	var handshakeErr error
-	switch node.Protocol {
-	case model.ProtocolHTTPS:
+	if node.Protocol == model.ProtocolHTTPS {
 		// https:// 代理：与代理服务器之间先建立 TLS 隧道，再发 CONNECT。
 		// InsecureSkipVerify 关闭证书校验：代理地址常为 IP/自签证书，
 		// 校验没有意义且会直接导致可用代理被判死。
@@ -276,22 +315,25 @@ func ConnectTCP(node *model.ProxyNode, addr string, timeout time.Duration) (net.
 			_ = conn.Close()
 			return nil, err
 		}
-		handshakeErr = httpConnect(tlsConn, node, addr)
-		if handshakeErr != nil {
-			_ = tlsConn.Close()
-			return nil, handshakeErr
-		}
 		return tlsConn, nil
-	case model.ProtocolHTTP:
-		handshakeErr = httpConnect(conn, node, addr)
-	default:
-		handshakeErr = fmt.Errorf("unsupported protocol %q", node.Protocol)
-	}
-	if handshakeErr != nil {
-		_ = conn.Close()
-		return nil, handshakeErr
 	}
 	return conn, nil
+}
+
+// handshake 在已建立的连接之上完成到 addr 的代理握手（不负责建连）。
+// 用于单跳（ConnectTCP）与链路（ConnectChain）复用同一握手逻辑。
+// 握手期间对连接设置超时，避免上游代理不响应时连接永久挂起。
+func handshake(conn net.Conn, node *model.ProxyNode, addr string, timeout time.Duration) error {
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+	switch node.Protocol {
+	case model.ProtocolSOCKS5:
+		return socks5Connect(conn, node, addr)
+	case model.ProtocolHTTP, model.ProtocolHTTPS:
+		return httpConnect(conn, node, addr)
+	default:
+		return fmt.Errorf("unsupported protocol %q", node.Protocol)
+	}
 }
 
 func httpConnect(conn net.Conn, node *model.ProxyNode, addr string) error {
@@ -320,22 +362,119 @@ func httpConnect(conn net.Conn, node *model.ProxyNode, addr string) error {
 	return nil
 }
 
-// socks5Connect establishes a TCP connection through a SOCKS5 proxy node.
-func socks5Connect(node *model.ProxyNode, addr string, timeout time.Duration) (net.Conn, error) {
-	auth := (*proxy.Auth)(nil)
+// socks5Connect 在已建立的连接之上完成 SOCKS5 握手并 CONNECT 到 addr。
+// 手写 RFC1928/1929（打招呼 + 认证协商 + CONNECT），
+// 便于在链路中复用上一层隧道作为底层连接（x/net/proxy 的 Dialer 无法在已有连接上握手）。
+// 连接超时由调用方（handshake）统一设置。
+func socks5Connect(conn net.Conn, node *model.ProxyNode, addr string) error {
+	// 打招呼：协商支持的认证方法（无认证 + 用户名/密码，节点带凭据时提供后者）。
+	methods := []byte{0x00}
 	if node.Username != "" {
-		auth = &proxy.Auth{User: node.Username, Password: node.Password}
+		methods = append(methods, 0x02)
+	}
+	greet := append([]byte{0x05, byte(len(methods))}, methods...)
+	if _, err := conn.Write(greet); err != nil {
+		return err
+	}
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		return err
+	}
+	if reply[0] != 0x05 {
+		return fmt.Errorf("socks5: unsupported version %d", reply[0])
+	}
+	switch reply[1] {
+	case 0x00: // 无认证
+	case 0x02: // 用户名/密码（RFC1929）
+		if err := socks5UserPassAuth(conn, node.Username, node.Password); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("socks5: no acceptable auth method (0x%02x)", reply[1])
 	}
 
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort(node.Host, strconv.Itoa(node.Port)), auth, proxy.Direct)
+	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("socks5: invalid target %q", addr)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("socks5: invalid target port %q", portStr)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	if ctxDialer, ok := dialer.(proxy.ContextDialer); ok {
-		return ctxDialer.DialContext(ctx, "tcp", addr)
+	// CONNECT 请求：VER=5, CMD=1, RSV=0, ATYP, ADDR, PORT
+	req := []byte{0x05, 0x01, 0x00}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			req = append(req, 0x01)
+			req = append(req, ip4...)
+		} else {
+			req = append(req, 0x04)
+			req = append(req, ip.To16()...)
+		}
+	} else {
+		if len(host) > 255 {
+			return fmt.Errorf("socks5: host too long (%d bytes)", len(host))
+		}
+		req = append(req, 0x03, byte(len(host)))
+		req = append(req, host...)
 	}
-	return dialer.Dial("tcp", addr)
+	req = append(req, byte(port>>8), byte(port))
+	if _, err := conn.Write(req); err != nil {
+		return err
+	}
+
+	// 响应：VER, REP, RSV, ATYP, BND.ADDR, BND.PORT
+	head := make([]byte, 4)
+	if _, err := io.ReadFull(conn, head); err != nil {
+		return err
+	}
+	if head[0] != 0x05 {
+		return fmt.Errorf("socks5: bad response version %d", head[0])
+	}
+	if head[1] != 0x00 {
+		return fmt.Errorf("socks5 connect failed: code %d", head[1])
+	}
+	var addrLen int
+	switch head[3] {
+	case 0x01: // IPv4
+		addrLen = 4
+	case 0x04: // IPv6
+		addrLen = 16
+	case 0x03: // 域名
+		lb := make([]byte, 1)
+		if _, err := io.ReadFull(conn, lb); err != nil {
+			return err
+		}
+		addrLen = int(lb[0])
+	default:
+		return fmt.Errorf("socks5: unexpected atyp %d", head[3])
+	}
+	bnd := make([]byte, addrLen+2)
+	if _, err := io.ReadFull(conn, bnd); err != nil {
+		return err
+	}
+	return nil
+}
+
+// socks5UserPassAuth 完成 RFC1929 用户名/密码认证。
+func socks5UserPassAuth(conn net.Conn, user, pass string) error {
+	if user == "" {
+		return fmt.Errorf("socks5: user/pass auth requires credentials")
+	}
+	buf := []byte{0x01, byte(len(user))}
+	buf = append(buf, user...)
+	buf = append(buf, byte(len(pass)))
+	buf = append(buf, pass...)
+	if _, err := conn.Write(buf); err != nil {
+		return err
+	}
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return err
+	}
+	if resp[0] != 0x01 || resp[1] != 0x00 {
+		return fmt.Errorf("socks5 auth failed (status %d)", resp[1])
+	}
+	return nil
 }

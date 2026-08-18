@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { GitBranch, MapPin, Pin, PinOff, RadioTower } from 'lucide-react'
-import { Alert, Badge, Button, Card, Divider, Group, Radio, Select, Stack, Text, type ComboboxItem, type ComboboxParsedItem } from '@mantine/core'
+import { GitBranch, MapPin, Pencil, Pin, PinOff, Plus, RadioTower, Trash2 } from 'lucide-react'
+import { ActionIcon, Alert, Badge, Button, Card, Divider, Group, Modal, MultiSelect, Radio, Select, Stack, Switch, Text, TextInput, type ComboboxItem, type ComboboxParsedItem } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
-import { getEgressConfig, updateEgressConfig, getErrorMessage } from '@/api'
-import type { EgressConfig } from '@/types'
+import { createChain, deleteChain, getEgressConfig, getErrorMessage, listChains, updateChain, updateEgressConfig } from '@/api'
+import type { EgressConfig, ProxyChain, ProxyNode } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -40,6 +40,246 @@ function egressOptionFilter({ options, search, limit }: { options: ComboboxParse
       })
     : options
   return filtered.slice(0, limit)
+}
+
+// chainOptions 构建链路编辑器用的节点下拉选项：
+// 存活节点可选，链中出现但已失效的节点并入并禁用（保证编辑回显正确）。
+function buildChainOptions(nodes: ProxyNode[], chains: ProxyChain[]): NodeSelectItem[] {
+  const options: NodeSelectItem[] = nodes
+    .filter((n) => n.status === 'alive')
+    .map((n) => ({
+      value: String(n.id),
+      label: `${n.host}:${n.port}`,
+      protocol: n.protocol,
+      score: n.score,
+      country: n.country,
+      city: n.city,
+    }))
+  const inChains = new Set<number>()
+  chains.forEach((c) => c.nodeIds.forEach((id) => inChains.add(id)))
+  nodes
+    .filter((n) => n.status !== 'alive' && inChains.has(n.id))
+    .forEach((n) => {
+      if (options.some((o) => o.value === String(n.id))) return
+      options.push({
+        value: String(n.id),
+        label: `${n.host}:${n.port}`,
+        protocol: n.protocol,
+        score: n.score,
+        country: n.country,
+        city: n.city,
+        disabled: true,
+      })
+    })
+  return options
+}
+
+// ChainManager 代理链路管理：列表（名称/节点/启停/编辑/删除）+ 新建/编辑弹窗。
+function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
+  const [chains, setChains] = useState<ProxyChain[]>([])
+  const [loading, setLoading] = useState(true)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<ProxyChain | null>(null)
+  const [name, setName] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function refresh() {
+    const res = await listChains()
+    if (res.code === 0 && res.data) setChains(res.data)
+  }
+
+  useEffect(() => {
+    let active = true
+    listChains()
+      .then((res) => {
+        if (active && res.code === 0 && res.data) setChains(res.data)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const options = buildChainOptions(nodes, chains)
+  // 当前选中但不在节点列表里的值（如节点已从池中删除）也并入选项并禁用，
+  // 避免编辑弹窗里回显裸 ID。
+  selected.forEach((v) => {
+    if (!options.some((o) => o.value === v)) {
+      options.push({ value: v, label: `节点#${v}`, protocol: '', score: 0, disabled: true })
+    }
+  })
+
+  function openCreate() {
+    setEditing(null)
+    setName('')
+    setSelected([])
+    setError(null)
+    setModalOpen(true)
+  }
+
+  function openEdit(c: ProxyChain) {
+    setEditing(c)
+    setName(c.name)
+    setSelected(c.nodeIds.map(String))
+    setError(null)
+    setModalOpen(true)
+  }
+
+  async function save() {
+    const ids = selected.map(Number)
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('请输入链路名称')
+      return
+    }
+    if (ids.length === 0) {
+      setError('请至少选择一个节点')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res = editing
+        ? await updateChain(editing.id, { name: trimmed, nodeIds: ids })
+        : await createChain({ name: trimmed, nodeIds: ids })
+      if (res.code === 0) {
+        setModalOpen(false)
+        refresh()
+      } else {
+        setError(res.msg || '保存失败')
+      }
+    } catch (e) {
+      setError(getErrorMessage(e))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function toggle(c: ProxyChain) {
+    const res = await updateChain(c.id, { name: c.name, nodeIds: c.nodeIds, enabled: !c.enabled })
+    if (res.code === 0) refresh()
+  }
+
+  async function remove(c: ProxyChain) {
+    if (!window.confirm(`确定删除链路「${c.name}」？`)) return
+    const res = await deleteChain(c.id)
+    if (res.code === 0) refresh()
+  }
+
+  return (
+    <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
+      <Stack gap="md">
+        <Group justify="space-between" wrap="wrap">
+          <div>
+            <Text fw={700}>代理链路</Text>
+            <Text size="sm" c="dimmed" mt={4}>
+              配置客户端依次经过多个节点到达目标的链路。链上所有节点存活时该链才可用，多条启用的链会随机分担流量
+            </Text>
+          </div>
+          <Button size="xs" leftSection={<Plus size={14} />} onClick={openCreate}>
+            新建链路
+          </Button>
+        </Group>
+
+        <Divider />
+
+        {loading ? (
+          <Text size="sm" c="dimmed">加载中…</Text>
+        ) : chains.length === 0 ? (
+          <Text size="sm" c="dimmed">还没有配置链路，点击「新建链路」创建第一条</Text>
+        ) : (
+          <Stack gap="sm">
+            {chains.map((c) => {
+              const labels = c.nodeIds
+                .map((id) => {
+                  const n = nodes.find((x) => x.id === id)
+                  return n ? `${n.host}:${n.port}` : `节点#${id}`
+                })
+                .join(' → ')
+              return (
+                <Group key={c.id} justify="space-between" wrap="wrap">
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    <Group gap="xs">
+                      <Text fw={600} size="sm">{c.name}</Text>
+                      <Badge size="xs" variant="light" color={c.enabled ? 'green' : 'gray'}>
+                        {c.enabled ? '启用' : '停用'}
+                      </Badge>
+                    </Group>
+                    <Text size="xs" c="dimmed" mt={2} truncate style={{ maxWidth: 380 }}>
+                      {labels}
+                    </Text>
+                  </div>
+                  <Group gap="xs">
+                    <Switch size="sm" checked={c.enabled} onChange={() => toggle(c)} aria-label={`启用链路 ${c.name}`} />
+                    <ActionIcon variant="subtle" onClick={() => openEdit(c)} aria-label={`编辑链路 ${c.name}`}>
+                      <Pencil size={14} />
+                    </ActionIcon>
+                    <ActionIcon variant="subtle" color="red" onClick={() => remove(c)} aria-label={`删除链路 ${c.name}`}>
+                      <Trash2 size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              )
+            })}
+          </Stack>
+        )}
+      </Stack>
+
+      <Modal opened={modalOpen} onClose={() => setModalOpen(false)} title={editing ? '编辑链路' : '新建链路'} size="lg" centered>
+        <Stack gap="md">
+          <TextInput
+            label="链路名称"
+            placeholder="如：双层出口"
+            value={name}
+            onChange={(e) => setName(e.currentTarget.value)}
+          />
+          <MultiSelect
+            label="链路节点（按选择顺序依次经过）"
+            placeholder={options.length ? '搜索并选择节点' : '没有存活节点可选'}
+            data={options}
+            value={selected}
+            onChange={setSelected}
+            searchable
+            disabled={!options.length}
+            filter={egressOptionFilter}
+            renderOption={({ option }) => {
+              const n = option as unknown as NodeSelectItem
+              const geo = geoLabel(n)
+              return (
+                <Group gap="xs" align="center" wrap="nowrap" style={{ width: '100%' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Group gap="xs">
+                      <Text size="sm" fw={600} truncate>{option.label}</Text>
+                      <Badge size="xs" variant="light">{n.protocol}</Badge>
+                    </Group>
+                    <Group gap={4} align="center" mt={2}>
+                      {geo && (
+                        <>
+                          <MapPin size={11} />
+                          <Text size="xs" c="dimmed" truncate>{geo}</Text>
+                        </>
+                      )}
+                      <Text size="xs" c="dimmed">评分 {n.score}</Text>
+                    </Group>
+                  </div>
+                </Group>
+              )
+            }}
+          />
+          {error && (
+            <Text size="sm" c="red">{error}</Text>
+          )}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setModalOpen(false)}>取消</Button>
+            <Button loading={submitting} onClick={save}>保存</Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Card>
+  )
 }
 
 export default function Egress() {
@@ -310,7 +550,9 @@ export default function Egress() {
         </Card>
       )}
 
-      {config?.strategy !== 'fixed' && (
+      {config?.strategy === 'chain' && <ChainManager nodes={nodes} />}
+
+      {config?.strategy !== 'fixed' && config?.strategy !== 'chain' && (
         <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
           <Group gap="sm">
             <RadioTower size={18} />

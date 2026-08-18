@@ -740,7 +740,7 @@ score / latency
 网关出口采用集中策略管理（「出口路由」页面），持久化在 settings 表 `egress_strategy`，
 由 `GET/PUT /api/egress` 专门接口管理（固定节点沿用 `pinned_proxy_id` 与 `PUT/DELETE /api/proxy/pin`）。
 
-五种策略（选择器 `scheduler.Selector.NextForHost` 按策略分发，切换即时生效并持久化，重启自动恢复）：
+六种策略（选择器 `scheduler.Selector.NextForHost` 按策略分发，切换即时生效并持久化，重启自动恢复）：
 
 1. **fixed 固定出口**：使用用户指定的节点，节点存活时全部流量（HTTP/HTTPS/SOCKS5 不区分）固定走它，
    不再按评分自动选择。指定节点死亡时临时回退智能加权，复活后自动恢复固定；
@@ -751,6 +751,21 @@ score / latency
 4. **weighted 智能加权（默认）**：`weight = score/latency`，叠加失败惩罚窗口 30s（`0.5^failures`），
    域名粘性绑定 10min，是默认最均衡的策略。
 5. **round-robin 轮询**：存活节点按 ID 顺序轮流使用（协议族内过滤 + 回退），均衡负载，不做粘性。
+6. **chain 代理链路**：客户端依次经过多个代理节点到达目标（客户端 → n0 → n1 → … → target），
+   提升匿名性与绕过能力。链路由用户配置（`proxy_chains` 表，有序节点 ID 列表，可按需启用多条）。
+
+### 代理链路（chain）
+
+- 链路连接由 `validator.ConnectChain` 实现：逐跳在上层隧道之上按该跳节点协议握手
+  （HTTP CONNECT / HTTPS TLS+CONNECT / SOCKS5 手写 RFC1928/1929），握手目标是下一跳节点地址，
+  最后一跳握手到目标地址，返回直达 target 的隧道。链路中各跳节点协议可混合；
+  SOCKS5 握手在已有连接上完成（x/net/proxy 的 Dialer 无法复用已有 conn，故手写）。
+- chain 策略下网关 `upstreamViaChain` 从**已启用**的链路中随机挑一条「全部节点存活」的链建立隧道，
+  失败（任一跳不可达）则尝试下一条；链上任一节点缺失或非存活则该链不可用。
+  链列表带 30s TTL 缓存（避免每次请求查询 SQLite），增删/启停最多延迟 30s 生效。
+- 链 CRUD 由 `/api/chain`（`GET /api/chains`、`POST /api/chain`、`PUT /api/chain/:id`、`DELETE /api/chain/:id`）管理，
+  节点校验：全部存在于节点池、去重保序；链默认停用，需在界面显式启用。
+- 限制：SOCKS5 UDP 中继不支持链路承载，chain 策略下 UDP 流量回退到单跳 SOCKS5 节点。
 
 固定出口（Pin）与策略联动：`Pin` 自动切到 fixed 策略，`Unpin` 恢复智能加权；
 指定节点被删除时选择器自动清除（内存），重启时清理持久化。

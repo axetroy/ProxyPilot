@@ -27,12 +27,15 @@ const (
 	StrategyWeighted Strategy = "weighted"
 	// StrategyRoundRobin 轮询：存活节点按顺序轮流使用，均衡负载。
 	StrategyRoundRobin Strategy = "round-robin"
+	// StrategyChain 代理链路：客户端按序经过多个代理节点到达目标。
+	// 链的选择与连接由网关负责（链上任意节点失效则该链不可用）。
+	StrategyChain Strategy = "chain"
 )
 
 // ValidStrategy 判断字符串是否是合法的出口策略。
 func ValidStrategy(s string) bool {
 	switch Strategy(s) {
-	case StrategyFixed, StrategyBest, StrategyRandom, StrategyWeighted, StrategyRoundRobin:
+	case StrategyFixed, StrategyBest, StrategyRandom, StrategyWeighted, StrategyRoundRobin, StrategyChain:
 		return true
 	}
 	return false
@@ -53,6 +56,7 @@ func Strategies() []StrategyMeta {
 		{Value: string(StrategyRandom), Label: "随机可用", Desc: "从存活节点中随机挑选，同一网站短时间窗口内保持稳定"},
 		{Value: string(StrategyWeighted), Label: "智能加权", Desc: "评分/延迟加权，叠加失败惩罚与域名粘性（默认，推荐）"},
 		{Value: string(StrategyRoundRobin), Label: "轮询", Desc: "存活节点按顺序轮流使用，均衡负载"},
+		{Value: string(StrategyChain), Label: "代理链路", Desc: "客户端依次经过多个代理节点到达目标（链上节点全部存活才可用）"},
 	}
 }
 
@@ -183,6 +187,7 @@ func stickyKey(protocol model.ProxyProtocol, host string) string {
 //   - best：存活节点中选评分最高（叠加失败惩罚）；
 //   - random：存活节点中随机挑选，同一域名在粘性窗口内保持稳定；
 //   - round-robin：存活节点按 ID 顺序轮流使用（不做粘性）；
+//   - chain：不在此选择单跳节点（由网关按已配置链路逐跳连接），直接返回 nil；
 //   - weighted（默认）：按权重（score/latency，叠加失败惩罚）选优，
 //     同一域名在窗口内复用同一出口节点，避免同一网站短时间内多个 IP 访问触发防控。
 //
@@ -203,6 +208,9 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 		return s.selectRandom(protocol, host)
 	case StrategyRoundRobin:
 		return s.selectRoundRobin(protocol)
+	case StrategyChain:
+		// 链路策略不在此选择单跳节点，由网关按已配置的链路逐跳连接。
+		return nil
 	}
 
 	// weighted（默认）：先尝试命中粘性绑定，否则按权重选优并记录绑定。

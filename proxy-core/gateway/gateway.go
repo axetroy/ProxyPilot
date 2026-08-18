@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
@@ -19,6 +20,10 @@ import (
 
 // maxPortProbe 端口被占用时向后顺延的最大尝试次数。
 const maxPortProbe = 100
+
+// chainCacheTTL 是链列表缓存的有效期：链增删/启停后最多延迟该时长生效，
+// 避免每次请求都查询数据库。
+const chainCacheTTL = 30 * time.Second
 
 // Gateway exposes the local proxy port and routes traffic through the node pool.
 // HTTP 与 SOCKS5 始终共用同一端口（按连接首字节自动识别协议）。
@@ -38,6 +43,16 @@ type Gateway struct {
 	// shunt 是智能分流直连判断函数：返回 true 表示目标应直连（不经节点池）。
 	// 由外部注入（rule.Manager.Shunt()），nil 表示未启用分流（全部走代理）。
 	shunt func(host string) bool
+
+	// chainsProvider 返回全部代理链路（供 chain 策略选择）。由外部注入。
+	// nil 表示未注入（chain 策略无链可用）。
+	chainsProvider func() ([]model.ProxyChain, error)
+
+	// chainCache 是链列表的 TTL 缓存：链列表来自 SQLite，每次请求都查询会浪费 DB 访问。
+	// 链的增删/启停通过 API 变更，最多延迟 chainCacheTTL 生效。
+	chainMu       sync.Mutex
+	chainCache    []model.ProxyChain
+	chainCachedAt time.Time
 
 	mu                sync.Mutex
 	mixed             *mixedServer
@@ -188,6 +203,13 @@ func (g *Gateway) SetShunt(shunt func(host string) bool) {
 	g.shunt = shunt
 }
 
+// SetChainsProvider 注入代理链路列表获取函数（chain 策略选择链路时使用）。
+func (g *Gateway) SetChainsProvider(p func() ([]model.ProxyChain, error)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.chainsProvider = p
+}
+
 // splitHostPort 将 host:port 拆分为 host 与端口号。
 func splitHostPort(addr string) (host string, port int, err error) {
 	h, p, err := net.SplitHostPort(addr)
@@ -274,6 +296,16 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 
 	var lastErr error
 	for attempt := 0; attempt < g.limitCtx; attempt++ {
+		// chain 策略：不选单跳节点，而是从已启用的链路中随机挑一条可用链逐跳连接。
+		if g.selector.Strategy() == scheduler.StrategyChain {
+			conn, err := g.upstreamViaChain(ctx, target)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			return conn, nil
+		}
+
 		node := g.selector.NextForHost(protocol, host)
 		if node == nil {
 			lastErr = fmt.Errorf("no usable proxy in pool")
@@ -315,6 +347,10 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 // 只有池中存在存活的 SOCKS5 节点才能成功：HTTP/HTTPS 节点只支持 CONNECT 隧道，
 // 无法承载 UDP 流量，因此不做跨协议回退。
 func (g *Gateway) NewUDPRelay() (udpBackend, error) {
+	// 链路不支持承载 UDP：chain 策略下 UDP 流量回退到单跳 SOCKS5 节点。
+	if g.selector.Strategy() == scheduler.StrategyChain && g.bus != nil {
+		g.bus.Debug("chain strategy active: UDP traffic falls back to single-hop SOCKS5")
+	}
 	node := g.selector.NextStrict(model.ProtocolSOCKS5)
 	if node == nil {
 		return nil, errNoSOCKS5UDP
@@ -345,6 +381,82 @@ func targetHost(target string) string {
 	return target
 }
 
+// upstreamViaChain 从已启用的链路中随机挑一条「全部节点存活」的链，
+// 逐跳连接建立直达 target 的隧道。某条链不可用或连接失败时尝试下一条。
+func (g *Gateway) upstreamViaChain(ctx context.Context, target string) (net.Conn, error) {
+	g.mu.Lock()
+	provider := g.chainsProvider
+	g.mu.Unlock()
+	if provider == nil {
+		return nil, fmt.Errorf("chain strategy enabled but no chain provider configured")
+	}
+	chains, err := g.cachedChains(provider)
+	if err != nil {
+		return nil, fmt.Errorf("load proxy chains: %w", err)
+	}
+	enabled := make([]model.ProxyChain, 0, len(chains))
+	for _, c := range chains {
+		if c.Enabled {
+			enabled = append(enabled, c)
+		}
+	}
+	if len(enabled) == 0 {
+		return nil, fmt.Errorf("chain strategy enabled but no enabled chain")
+	}
+
+	// 随机打乱启用链的顺序，让多条链均衡承担流量。
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(enabled), func(i, j int) { enabled[i], enabled[j] = enabled[j], enabled[i] })
+
+	var lastErr error
+	for _, chain := range enabled {
+		// 客户端已断开或请求上下文取消时快速失败，不再尝试下一条链。
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// 链上任一节点缺失或非存活则该链不可用，换下一条。
+		nodes := make([]*model.ProxyNode, 0, len(chain.NodeIDs))
+		usable := true
+		for _, id := range chain.NodeIDs {
+			n := g.pool.Get(id)
+			if n == nil || n.Status != model.StatusAlive {
+				usable = false
+				break
+			}
+			nodes = append(nodes, n)
+		}
+		if !usable || len(nodes) == 0 {
+			continue
+		}
+
+		conn, err := validator.ConnectChain(nodes, target, 10*time.Second)
+		if err != nil {
+			if g.bus != nil {
+				g.bus.Debug(fmt.Sprintf("chain %q unavailable: %v", chain.Name, err))
+			}
+			lastErr = err
+			continue
+		}
+		g.mu.Lock()
+		g.currentNode = nodes[len(nodes)-1]
+		g.currentHTTPNode = nodes[len(nodes)-1]
+		g.currentSOCKS5Node = nodes[len(nodes)-1]
+		g.mu.Unlock()
+		if g.bus != nil {
+			names := make([]string, 0, len(nodes))
+			for _, n := range nodes {
+				names = append(names, n.Key())
+			}
+			g.bus.Debug(fmt.Sprintf("chain %q established via [%s] -> %s", chain.Name, strings.Join(names, " -> "), target))
+		}
+		return conn, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable chain (all chains have dead nodes)")
+	}
+	return nil, fmt.Errorf("all chains failed for %s: %w", target, lastErr)
+}
+
 // ipv6Domain 对 IPv6 字面量地址做 PTR 反查，返回对应的域名（去掉末尾点）。
 // 结果缓存 ipv6CacheTTL 时长，反查失败缓存空串，避免重复阻塞在 DNS 上。
 func (g *Gateway) ipv6Domain(ip string) string {
@@ -368,4 +480,20 @@ func (g *Gateway) ipv6Domain(ip string) string {
 	g.ipv6Cache[ip] = ipv6CacheEntry{domain: domain, at: time.Now()}
 	g.ipv6Mu.Unlock()
 	return domain
+}
+
+// cachedChains 返回链列表：未过期时命中缓存，过期后重新从 provider 加载。
+func (g *Gateway) cachedChains(provider func() ([]model.ProxyChain, error)) ([]model.ProxyChain, error) {
+	g.chainMu.Lock()
+	defer g.chainMu.Unlock()
+	if g.chainCache != nil && time.Since(g.chainCachedAt) < chainCacheTTL {
+		return g.chainCache, nil
+	}
+	chains, err := provider()
+	if err != nil {
+		return nil, err
+	}
+	g.chainCache = chains
+	g.chainCachedAt = time.Now()
+	return chains, nil
 }

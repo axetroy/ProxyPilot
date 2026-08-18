@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -282,6 +282,37 @@ export async function getEgressConfig(): Promise<ApiResponse<EgressConfig>> {
 export async function updateEgressConfig(patch: { strategy: EgressStrategy; pinId?: number }): Promise<ApiResponse<EgressConfig>> {
   await ensureApiReady()
   const { data } = await http.put<ApiResponse<EgressConfig>>('/api/egress', patch)
+  return data
+}
+
+/** 获取全部代理链路 */
+export async function listChains(): Promise<ApiResponse<ProxyChain[]>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<ProxyChain[]>>('/api/chains')
+  return data
+}
+
+/** 新建代理链路（默认停用） */
+export async function createChain(payload: { name: string; nodeIds: number[] }): Promise<ApiResponse<ProxyChain>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<ProxyChain>>('/api/chain', payload)
+  return data
+}
+
+/** 更新代理链路（名称 / 节点列表 / 启用状态） */
+export async function updateChain(
+  id: number,
+  payload: { name: string; nodeIds: number[]; enabled?: boolean },
+): Promise<ApiResponse<ProxyChain>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<ProxyChain>>(`/api/chain/${id}`, payload)
+  return data
+}
+
+/** 删除代理链路 */
+export async function deleteChain(id: number): Promise<ApiResponse<unknown>> {
+  await ensureApiReady()
+  const { data } = await http.delete<ApiResponse<unknown>>(`/api/chain/${id}`)
   return data
 }
 
