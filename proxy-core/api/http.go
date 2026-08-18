@@ -14,6 +14,7 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
+	"github.com/axetroy/ProxyPilot/proxy-core/rule"
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 )
@@ -27,6 +28,7 @@ type Services struct {
 	Gateway   *gateway.Gateway
 	Selector  *scheduler.Selector
 	Bus       *bus.Bus
+	Rule      *rule.Manager
 }
 
 type response struct {
@@ -89,6 +91,9 @@ func NewRouter(s *Services) *gin.Engine {
 	r.POST("/api/proxy/check", s.checkProxies)
 	r.POST("/api/gateway/start", s.startGateway)
 	r.POST("/api/gateway/stop", s.stopGateway)
+	r.GET("/api/pac-config", s.getPACConfig)
+	r.PUT("/api/pac-config", s.updatePACConfig)
+	r.POST("/api/pac/sync", s.syncPAC)
 	r.GET("/ws", s.websocket)
 	return r
 }

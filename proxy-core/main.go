@@ -17,6 +17,7 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/config"
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
+	"github.com/axetroy/ProxyPilot/proxy-core/rule"
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 	"github.com/axetroy/ProxyPilot/proxy-core/validator"
@@ -47,6 +48,14 @@ func main() {
 	sel := scheduler.NewSelector(poolMgr)
 	gw := gateway.NewGateway(poolMgr, sel, busc, cfg.ProxyAddr())
 
+	// 智能分流规则管理器：加载上次缓存（无缓存用内置兜底列表），
+	// 并注入网关作为直连判断函数（开关关闭时恒走代理）。
+	ruleMgr := rule.NewManager(cfg, busc, cfg.DBPath)
+	if err := ruleMgr.LoadCache(); err != nil {
+		busc.Debug(fmt.Sprintf("load pac rules cache: %v", err))
+	}
+	gw.SetShunt(ruleMgr.Shunt())
+
 	// 恢复用户上次指定的固定出口节点（存在且合法时）。
 	if v, err := st.GetSetting(config.KeyPinnedProxy); err == nil && v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
@@ -69,6 +78,7 @@ func main() {
 		Gateway:   gw,
 		Selector:  sel,
 		Bus:       busc,
+		Rule:      ruleMgr,
 	}
 	router := api.NewRouter(services)
 
@@ -85,6 +95,7 @@ func main() {
 	defer cancel()
 	go func() { _ = col.Run(ctx) }()
 	go poolMgr.RefreshLoop(ctx)
+	go ruleMgr.Start(ctx)
 
 	// API 监听端口：被占用时向后顺延（与网关端口顺延一致），实际端口通过
 	// stdout 的 PROXYPILOT_API 告诉 Electron，由前端按实际地址访问。

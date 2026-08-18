@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, LogEvent, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, CheckResult, CompactResult, DbStatus, LogEvent, PacConfig, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -247,6 +247,27 @@ export async function updateSubscriptionConfig(patch: {
 }): Promise<ApiResponse<SubscriptionExportConfig>> {
   await ensureApiReady()
   const { data } = await http.put<ApiResponse<SubscriptionExportConfig>>('/api/subscription', patch)
+  return data
+}
+
+/** 获取智能分流配置与规则同步状态 */
+export async function getPacConfig(): Promise<ApiResponse<PacConfig>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<PacConfig>>('/api/pac-config')
+  return data
+}
+
+/** 更新智能分流配置（仅传需要修改的字段） */
+export async function updatePacConfig(patch: Partial<Omit<PacConfig, 'directCount' | 'proxyCount' | 'syncAt' | 'syncError' | 'syncing'>>): Promise<ApiResponse<PacConfig>> {
+  await ensureApiReady()
+  const { data } = await http.put<ApiResponse<PacConfig>>('/api/pac-config', patch)
+  return data
+}
+
+/** 手动触发分流规则同步 */
+export async function syncPacRules(): Promise<ApiResponse<PacConfig>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<PacConfig>>('/api/pac/sync')
   return data
 }
 

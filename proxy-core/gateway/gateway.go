@@ -35,6 +35,10 @@ type Gateway struct {
 	// DisableKeepAlives 保持开启：上游经由节点池按请求选路，复用连接会钉住单一出口节点。
 	forwardTransport *http.Transport
 
+	// shunt 是智能分流直连判断函数：返回 true 表示目标应直连（不经节点池）。
+	// 由外部注入（rule.Manager.Shunt()），nil 表示未启用分流（全部走代理）。
+	shunt func(host string) bool
+
 	mu                sync.Mutex
 	mixed             *mixedServer
 	startedAt         time.Time
@@ -176,6 +180,14 @@ func (g *Gateway) SetAddr(addr string) {
 	g.addr = addr
 }
 
+// SetShunt 注入智能分流直连判断函数（rule.Manager.Shunt()）。
+// nil 表示关闭分流（全部走代理）；分流内部已包含开关判断。
+func (g *Gateway) SetShunt(shunt func(host string) bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.shunt = shunt
+}
+
 // splitHostPort 将 host:port 拆分为 host 与端口号。
 func splitHostPort(addr string) (host string, port int, err error) {
 	h, p, err := net.SplitHostPort(addr)
@@ -205,6 +217,19 @@ func (g *Gateway) Stop() {
 	}
 }
 
+// dialDirect 智能分流命中「直连」时直接建立 TCP 连接（不经节点池）。
+func (g *Gateway) dialDirect(ctx context.Context, target string) (net.Conn, error) {
+	if g.bus != nil {
+		g.bus.Debug(fmt.Sprintf("shunt direct target=%s", target))
+	}
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return nil, fmt.Errorf("direct dial failed for %s: %w", target, err)
+	}
+	return conn, nil
+}
+
 // Upstream dials `target` through the best live node, retrying alternatives
 // and penalizing failed nodes so the next attempt prefers a healthy one.
 func (g *Gateway) Upstream(ctx context.Context, target string) (net.Conn, error) {
@@ -223,6 +248,13 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 
 	// 从 target（host:port）中提取纯域名，用于域名粘性选择。
 	host := targetHost(target)
+
+	// 智能分流：命中直连判断的目标直接建立连接，不经节点池。
+	// 直连语义下由本机 DNS 解析（命中直连的均为大陆/内网/未墙域名，DNS 干净）；
+	// 走代理的域名原样交给上游节点解析，避开本地 DNS 污染。
+	if g.shunt != nil && g.shunt(host) {
+		return g.dialDirect(ctx, target)
+	}
 
 	// 如果目标是 IPv6 字面量，尝试 PTR 反查域名，用域名连接。
 	// 部分上游节点只支持 IPv4 目标地址，客户端本地解析出 IPv6 后

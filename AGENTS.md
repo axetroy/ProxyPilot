@@ -109,6 +109,7 @@ proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPi
   collector/           # 订阅抓取（fetcher.go）与定时调度（subscription.go）
   config/              # 配置：默认值 + PROXYPILOT_* 环境变量覆盖
   gateway/             # 本地 HTTP / HTTPS CONNECT / SOCKS5 代理出口
+  rule/                # 智能分流规则：同步（Loyalsoldier/surge-rules）→ 域名白名单校验 → 匹配（代理名单/直连名单/.cn/geoip）
   model/               # 数据模型（ProxyNode / Subscription / CheckResult 等）
   parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）与导出（proxy_export.go）
   pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
@@ -180,6 +181,15 @@ app/                   # Electron UI
   从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。`subscription_token` 不进
   `/api/settings` 通用表单（避免泄露），由 `/api/subscription` 专门接口管理（GET 返回、
   PUT `{resetToken:true}` 重置），首次启动随机生成并持久化。
+- **智能分流规则**（`rule/`）：网关在建立上游连接前按 局域网 / `.cn` → 代理名单 → 直连名单 →
+  geoip(CN) → 默认动作（whitelist 走代理 / blacklist 直连） 的顺序匹配目标域名（域名列表按后缀
+  匹配，子域名命中父域条目），只改 proxy-core、不依赖系统 PAC。同步源默认固定为
+  Loyalsoldier/surge-rules（HTTPS，`raw.githubusercontent.com` + `cdn.jsdelivr.net` 镜像，失败
+  保留上次缓存 + go:embed 内置兜底列表）；解析只做域名白名单校验（小写、字符集受限、≤255），
+  **绝不执行远程内容**。规则源 URL 允许用户配置 http(s) 源（如自建/内网列表，仅作文本拉取）。
+  规则缓存写入与数据库同目录的 `pac_rules.json`。配置项
+  （`pac_enabled` / `pac_mode` / `pac_direct_urls` / `pac_proxy_urls` / `pac_refresh_interval`）
+  不进 `/api/settings` 通用表单，由 `/api/pac-config` 专门接口管理。设计见 DESIGN.md「智能分流设计」。
 - 匿名性评分优先使用真实探测（`check_anonymity_target` 回显端点，默认 `https://httpbin.org/anything`）：
   对比直连/经代理的出口 IP 与目标收到的请求头，按 源 IP 隐藏 40% + 头泄漏 30% + 代理特征 30% 加权；
   在此基础上叠加调节项：两次经代理采样出口 IP 不同（轮换代理）+5，请求被代理改写（回显

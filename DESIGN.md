@@ -1238,7 +1238,104 @@ SIGKILL / 任务管理器强制结束                                    → 无
 
 ---
 
-# 20. 最终架构总结
+# 20. 智能分流设计（网关内规则匹配）
+
+## 定位
+
+在网关入口（HTTP CONNECT / SOCKS5 隧道）解析出目标 host 后，先做规则匹配，
+决定该连接是「直连」还是「经节点池代理」。这是 Clash / Surge 等主流客户端的
+「规则分流」思路，**不是**浏览器 PAC 协议（`FindProxyForURL` 脚本交给系统代理）。
+
+为什么不用系统级 PAC：
+
+| 维度 | 网关内分流（本方案） | 系统级 PAC |
+| --- | --- | --- |
+| 生效范围 | 所有走网关的应用（HTTP + SOCKS5 统一入口） | 仅遵守系统代理的应用 |
+| IP 级判断 | 可用 geoip 离线库（纯 IP 目标也能判） | 只能域名规则，IP 需 dnsResolve（受本地污染影响） |
+| 匹配性能 | Go map / 哈希，毫秒级 | 浏览器 JS 解释执行 |
+| 改动范围 | 只改 proxy-core | proxy-core + Windows/macOS/Linux 三平台 system-proxy |
+| 网关崩溃时 | 直连也失效（本机进程，可接受） | 直连仍通 |
+
+## 分流决策
+
+连接建立时按以下优先级匹配目标 host（首条命中即生效）：
+
+1. **本机 / 局域网**（`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、
+   `169.254.0.0/16`、`::1`、`*.local` 及无点单标签 host）→ 直连
+2. **`.cn` 顶级域**（host 以 `.cn` 结尾）→ 直连
+3. **纯 IP 目标**（客户端未给域名）→ 白名单按 geoip 判定 CN → 直连、否则走代理；
+   黑名单默认直连（纯 IP 无法命中域名代理名单，直接放行更符合「默认直连」语义）
+4. **命中代理名单**（gfw 列表，同步自上游）→ 走节点池
+5. **命中直连名单**（direct 列表，同步自上游）→ 直连
+6. **默认动作** → 白名单走节点池 / 黑名单直连
+
+优先级设计说明：代理名单置于直连名单之前，保证「该走代理的绝不被误判直连」——
+直连被墙域名会因 DNS 污染解析到假 IP 而失败；反之即使代理名单误伤（把可直连域名
+放进代理），也只是多消耗节点流量，不会打不开。域名名单按**后缀匹配**（子域名命中
+父域条目，如 `app.baidu.com` 命中 `baidu.com`），与 Clash/Surge 的 DOMAIN-SUFFIX
+语义一致。
+
+## DNS 语义
+
+- **直连路径**：网关用本机 DNS 解析。命中直连的均为大陆 / 局域网 / 未被墙域名，
+  本机 DNS 干净，无污染问题。
+- **代理路径**：目标域名原样交给上游节点，由节点侧解析（远程解析，等价 socks5h），
+  避开本地 DNS 污染。
+
+## 规则来源与同步
+
+默认同步 Loyalsoldier/surge-rules（每日自动更新，每行一个域名的纯文本）：
+
+- 直连名单：`release/direct.txt`
+- 代理名单：`release/gfw.txt`
+
+主源 `raw.githubusercontent.com`，备用镜像 `cdn.jsdelivr.net`（约 12h 延迟），
+按顺序尝试直到成功。同步失败保留上次缓存，并用内置兜底列表（go:embed 最小集，
+覆盖常见国内域名与常见被墙域名）保证离线可用。
+
+同步周期默认 24h（`pac_refresh_interval`），启动时异步同步一次，之后按周期刷新。
+规则解析只做**域名白名单校验**（小写、字符集受限、长度 ≤ 255），绝不允许把远程
+内容作为代码执行。规则源 URL 允许用户配置 http(s) 源（如自建/内网列表，仅作文本
+拉取），默认源固定为 Loyalsoldier/surge-rules（HTTPS）。
+
+## 配置项
+
+持久化在 SQLite `settings` 表，经 `/api/pac-config` 专门接口校验与持久化（不
+进 `/api/settings` 通用表单，避免与通用设置混在一起）：
+
+| key | 默认 | 说明 |
+| --- | --- | --- |
+| `pac_enabled` | `1` | 分流开关（关闭时全部走节点池） |
+| `pac_mode` | `whitelist` | `whitelist`（默认走代理）/ `blacklist`（默认直连，命中代理名单才走代理） |
+| `pac_direct_urls` | direct.txt 主源+镜像 | 逗号分隔，按序尝试 |
+| `pac_proxy_urls` | gfw.txt 主源+镜像 | 逗号分隔，按序尝试 |
+| `pac_refresh_interval` | `24h` | 规则自动刷新周期 |
+
+## 接口
+
+- `GET /api/pac-config`：返回分流配置与规则同步状态（直连/代理规则数、最近同步
+  时间、最近错误、是否同步中）
+- `PUT /api/pac-config`：更新分流配置（`enabled` / `mode` / `urls` / `refresh`）；
+  规则源（urls）变化后自动异步触发一次同步，失败/进行中通过后续 GET 的
+  `syncError` / `syncing` 暴露
+- `POST /api/pac/sync`：立即同步规则
+
+## 模块结构
+
+```
+proxy-core/rule/       # 规则管理（RuleManager）
+  rule.go              # 内存规则集（direct / proxy 两个域名集合）+ Match(host)
+  sync.go              # 拉取（主源→镜像）→ 解析 → 白名单校验 → 写缓存
+  builtin.go           # go:embed 内置兜底列表
+gateway/               # 分流接入点：gateway.go 在建立上游连接前调用 RuleManager.Shunt
+```
+
+规则缓存文件与数据库同目录（`pac_rules.json`），格式为 JSON（域名数组 + 同步时间），
+启动时加载，避免每次启动重新拉取。
+
+---
+
+# 21. 最终架构总结
 
 最终技术栈：
 

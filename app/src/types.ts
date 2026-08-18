@@ -115,6 +115,20 @@ export interface CompactResult {
   historyCount: number
 }
 
+/** 智能分流配置与规则同步状态（GET/PUT /api/pac-config） */
+export interface PacConfig {
+  enabled: boolean
+  mode: 'whitelist' | 'blacklist'
+  directUrls: string
+  proxyUrls: string
+  refresh: string
+  directCount: number
+  proxyCount: number
+  syncAt?: string
+  syncError?: string
+  syncing: boolean
+}
+
 export interface CheckResult {
   ok: boolean
   latency: number

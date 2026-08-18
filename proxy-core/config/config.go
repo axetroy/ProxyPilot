@@ -37,6 +37,20 @@ const (
 	KeyPinnedProxy = "pinned_proxy_id"
 	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
 	KeyHistoryRetention = "history_retention_days"
+	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单
+	// （避免与通用设置表单混在一起），由 /api/pac-config 专门接口管理。
+	KeyPACEnabled    = "pac_enabled"
+	KeyPACMode       = "pac_mode"
+	KeyPACDirectURLs = "pac_direct_urls"
+	KeyPACProxyURLs  = "pac_proxy_urls"
+	KeyPACRefresh    = "pac_refresh_interval"
+)
+
+// 智能分流默认规则源：Loyalsoldier/surge-rules（每日自动更新）。
+// 每个 key 对应「主源 + 备用镜像」，按顺序尝试直到成功。
+const (
+	DefaultPACDirectURLs = "https://raw.githubusercontent.com/Loyalsoldier/surge-rules/release/direct.txt,https://cdn.jsdelivr.net/gh/Loyalsoldier/surge-rules@release/direct.txt"
+	DefaultPACProxyURLs  = "https://raw.githubusercontent.com/Loyalsoldier/surge-rules/release/gfw.txt,https://cdn.jsdelivr.net/gh/Loyalsoldier/surge-rules@release/gfw.txt"
 )
 
 // SettingDef 描述一个可在前端配置的项。
@@ -61,6 +75,11 @@ func Settings() []SettingDef {
 		{Key: KeySubListen, Default: "127.0.0.1:17891", Desc: "订阅服务监听地址（如需局域网设备订阅改为 0.0.0.0:17891）", Validate: validateHostPort},
 		{Key: KeySubHost, Default: "", Desc: "对外展示的订阅 IP（监听为 0.0.0.0 时用于生成订阅 URL）", Validate: validateIPOrEmpty},
 		{Key: KeyHistoryRetention, Default: "7", Desc: "检测历史保留天数（瘦身数据库时清理更早的记录）", Validate: validatePositiveInt},
+		{Key: KeyPACEnabled, Default: "1", Desc: "智能分流开关（0 关闭全部走代理 / 1 开启按规则分流）", Validate: validateBool},
+		{Key: KeyPACMode, Default: "whitelist", Desc: "智能分流模式（whitelist 默认走代理 / blacklist 默认直连）", Validate: validatePACMode},
+		{Key: KeyPACDirectURLs, Default: DefaultPACDirectURLs, Desc: "直连规则列表 URL（逗号分隔，按序尝试）", Validate: validateURLList},
+		{Key: KeyPACProxyURLs, Default: DefaultPACProxyURLs, Desc: "代理规则列表 URL（逗号分隔，按序尝试）", Validate: validateURLList},
+		{Key: KeyPACRefresh, Default: "24h", Desc: "分流规则自动刷新周期（如 12h、24h，最小 1 小时）", Validate: validatePACRefresh},
 	}
 }
 
@@ -116,6 +135,40 @@ func validateHostPort(v string) error {
 	return nil
 }
 
+// validatePACMode 校验智能分流模式。
+func validatePACMode(v string) error {
+	if v != "whitelist" && v != "blacklist" {
+		return fmt.Errorf("必须是 whitelist 或 blacklist")
+	}
+	return nil
+}
+
+// validateURLList 校验逗号分隔的 http(s) URL 列表（允许空，空表示不拉取该项规则）。
+func validateURLList(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	for _, u := range strings.Split(v, ",") {
+		u = strings.TrimSpace(u)
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			return fmt.Errorf("每个 URL 必须是 http:// 或 https:// 开头，逗号分隔")
+		}
+	}
+	return nil
+}
+
+// validatePACRefresh 校验分流规则刷新周期（最小 1 小时）。
+func validatePACRefresh(v string) error {
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fmt.Errorf("周期格式不合法，如 12h、24h")
+	}
+	if d < time.Hour {
+		return fmt.Errorf("周期不能小于 1 小时")
+	}
+	return nil
+}
+
 // validateIPOrEmpty 校验 IP 地址（空串表示未选择，允许）。
 func validateIPOrEmpty(v string) error {
 	if v == "" {
@@ -143,6 +196,11 @@ type Config struct {
 	SubHost              string // 对外展示的订阅 IP（监听为通配地址时用于生成订阅 URL，空则回退 127.0.0.1）
 	SubToken             string // 订阅密钥（独立于 SessionToken，随订阅 URL 提供给外部客户端）
 	HistoryRetentionDays int    // 检测历史保留天数（瘦身数据库时清理更早的记录）
+	PACEnabled           bool   // 智能分流开关（关闭时全部流量走代理）
+	PACMode              string // 智能分流模式（whitelist / blacklist）
+	PACDirectURLs        string // 直连规则列表 URL（逗号分隔，按序尝试）
+	PACProxyURLs         string // 代理规则列表 URL（逗号分隔，按序尝试）
+	PACRefreshInterval   time.Duration // 分流规则自动刷新周期
 }
 
 func New() *Config {
@@ -160,6 +218,11 @@ func New() *Config {
 		SubListen:            "127.0.0.1:17891",
 		SubToken:             generatedSessionToken(),
 		HistoryRetentionDays: 7,
+		PACEnabled:           true,
+		PACMode:              "whitelist",
+		PACDirectURLs:        DefaultPACDirectURLs,
+		PACProxyURLs:         DefaultPACProxyURLs,
+		PACRefreshInterval:   24 * time.Hour,
 	}
 	c.SessionToken = generatedSessionToken()
 	c.ApplyEnv()
@@ -256,6 +319,23 @@ func (c *Config) ApplyEnv() {
 			c.HistoryRetentionDays = n
 		}
 	}
+	if v := os.Getenv("PROXYPILOT_PAC_ENABLED"); v != "" {
+		c.PACEnabled = v == "1"
+	}
+	if v := os.Getenv("PROXYPILOT_PAC_MODE"); v != "" {
+		c.PACMode = v
+	}
+	if v := os.Getenv("PROXYPILOT_PAC_DIRECT_URLS"); v != "" {
+		c.PACDirectURLs = v
+	}
+	if v := os.Getenv("PROXYPILOT_PAC_PROXY_URLS"); v != "" {
+		c.PACProxyURLs = v
+	}
+	if v := os.Getenv("PROXYPILOT_PAC_REFRESH_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.PACRefreshInterval = d
+		}
+	}
 }
 
 func generatedSessionToken() string {
@@ -315,6 +395,20 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 				c.HistoryRetentionDays = n
 			}
 		}, true
+	case KeyPACEnabled:
+		return func(v string) { c.PACEnabled = v == "1" }, true
+	case KeyPACMode:
+		return func(v string) { c.PACMode = v }, true
+	case KeyPACDirectURLs:
+		return func(v string) { c.PACDirectURLs = v }, true
+	case KeyPACProxyURLs:
+		return func(v string) { c.PACProxyURLs = v }, true
+	case KeyPACRefresh:
+		return func(v string) {
+			if d, err := time.ParseDuration(v); err == nil {
+				c.PACRefreshInterval = d
+			}
+		}, true
 	default:
 		return nil, false
 	}
@@ -371,6 +465,19 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return c.SubHost, true
 	case KeyHistoryRetention:
 		return strconv.Itoa(c.HistoryRetentionDays), true
+	case KeyPACEnabled:
+		if c.PACEnabled {
+			return "1", true
+		}
+		return "0", true
+	case KeyPACMode:
+		return c.PACMode, true
+	case KeyPACDirectURLs:
+		return c.PACDirectURLs, true
+	case KeyPACProxyURLs:
+		return c.PACProxyURLs, true
+	case KeyPACRefresh:
+		return c.PACRefreshInterval.String(), true
 	default:
 		return "", false
 	}
