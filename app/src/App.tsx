@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Network, Route as RouteIcon, Rss, ScrollText, Settings } from 'lucide-react'
+import { GitBranch, LayoutDashboard, Network, Rss, ScrollText, Settings } from 'lucide-react'
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useLogStore } from '@/stores/logs'
@@ -17,7 +17,7 @@ import SettingsView from '@/views/Settings'
 const navItems = [
   { to: '/dashboard', label: '仪表盘', icon: LayoutDashboard },
   { to: '/proxies', label: '代理池', icon: Network },
-  { to: '/egress', label: '出口路由', icon: RouteIcon },
+  { to: '/egress', label: '出口路由', icon: GitBranch },
   { to: '/subscriptions', label: '订阅', icon: Rss },
   { to: '/logs', label: '日志', icon: ScrollText },
   { to: '/settings', label: '设置', icon: Settings },
