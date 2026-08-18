@@ -166,6 +166,8 @@ export interface AppSettings {
   closeBehavior: 'minimize' | 'quit'
   /** 自动检查并下载更新（默认开启） */
   autoUpdate: boolean
+  /** 开机自动启动（默认关闭） */
+  autoLaunch: boolean
   /** 系统代理开关与备份（关闭或退出时按备份还原原设置） */
   systemProxy?: {
     enabled: boolean

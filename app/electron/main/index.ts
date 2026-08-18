@@ -392,9 +392,24 @@ ipcMain.handle('get-token', async () => {
 })
 ipcMain.handle('get-api-base', () => apiBase)
 ipcMain.handle('get-platform', () => process.platform)
+// 开机自启：通过系统登录项实现（Windows 注册表 Run 键 / macOS LaunchAgents / Linux autostart）。
+// 仅在保存设置变化时写入，避免每次启动都重置用户手动在系统层的改动。
+function applyAutoLaunch(enabled: boolean): void {
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+  } catch (e) {
+    console.error(`[app] 设置开机自启失败: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 ipcMain.handle('get-app-settings', () => loadAppSettings())
 ipcMain.handle('set-app-settings', (_e, settings: AppSettings) => {
+  const prev = loadAppSettings()
   saveAppSettings(settings)
+  // 开机自启状态发生变化时同步系统登录项
+  if (prev.autoLaunch !== settings.autoLaunch) {
+    applyAutoLaunch(settings.autoLaunch)
+  }
   return loadAppSettings()
 })
 

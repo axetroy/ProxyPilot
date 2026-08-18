@@ -38,7 +38,11 @@ export default function Settings() {
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
-  const [appSettings, setAppSettings] = useState<AppSettings>({ closeBehavior: 'minimize', autoUpdate: true })
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    closeBehavior: 'minimize',
+    autoUpdate: true,
+    autoLaunch: false,
+  })
   // 订阅服务配置（独立于通用设置表单）
   const [subConfig, setSubConfig] = useState<SubscriptionExportConfig | null>(null)
   const [subListenDraft, setSubListenDraft] = useState('')
@@ -174,6 +178,17 @@ export default function Settings() {
       setNotice({ type: 'success', text: '窗口行为设置已保存' })
     } catch {
       setNotice({ type: 'error', text: '保存窗口行为设置失败' })
+    }
+  }
+
+  async function onChangeAutoLaunch(checked: boolean) {
+    const next: AppSettings = { ...appSettings, autoLaunch: checked }
+    setAppSettings(next)
+    try {
+      await window.proxypilot?.setAppSettings(next)
+      setNotice({ type: 'success', text: checked ? '已开启开机自启' : '已关闭开机自启' })
+    } catch {
+      setNotice({ type: 'error', text: '保存开机自启设置失败' })
     }
   }
 
@@ -734,6 +749,19 @@ export default function Settings() {
                     ]}
                   />
                 </div>
+
+                <Divider />
+
+                <Group justify="space-between" wrap="wrap">
+                  <div>
+                    <Text fw={600}>开机自启</Text>
+                    <Text size="sm" c="dimmed">登录系统后自动启动 ProxyPilot（默认关闭）</Text>
+                  </div>
+                  <Switch
+                    checked={appSettings.autoLaunch}
+                    onChange={(e) => void onChangeAutoLaunch(e.currentTarget.checked)}
+                  />
+                </Group>
               </Stack>
             </Card>
 

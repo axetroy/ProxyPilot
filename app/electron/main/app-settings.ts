@@ -11,6 +11,8 @@ export interface AppSettings {
   closeBehavior: 'minimize' | 'quit'
   /** 自动检查并下载更新，默认开启 */
   autoUpdate: boolean
+  /** 开机自动启动，默认关闭 */
+  autoLaunch: boolean
   /** 系统代理开关与备份（关闭/退出时按备份还原原设置） */
   systemProxy?: {
     enabled: boolean
@@ -30,11 +32,13 @@ export function loadAppSettings(): AppSettings {
       closeBehavior: raw.closeBehavior === 'quit' ? 'quit' : 'minimize',
       // 缺省开启自动更新（旧版本没有该字段）
       autoUpdate: raw.autoUpdate !== false,
+      // 缺省关闭开机自启（旧版本没有该字段）
+      autoLaunch: raw.autoLaunch === true,
       // 系统代理设置原样透传（旧版本没有该字段）
       ...(raw.systemProxy ? { systemProxy: raw.systemProxy } : {}),
     }
   } catch {
-    return { closeBehavior: 'minimize', autoUpdate: true }
+    return { closeBehavior: 'minimize', autoUpdate: true, autoLaunch: false }
   }
 }
 
