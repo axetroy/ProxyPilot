@@ -1,6 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowDown, Trash2 } from 'lucide-react'
-import { ActionIcon, Badge, Box, Button, Card, Group, ScrollArea, Stack, Text } from '@mantine/core'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, Search, Trash2 } from 'lucide-react'
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Group,
+  MultiSelect,
+  ScrollArea,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+} from '@mantine/core'
 import { useLogStore } from '@/stores/logs'
 
 function levelColor(level?: string) {
@@ -39,9 +52,28 @@ export default function Logs() {
   const stickToBottomRef = useRef(true)
   // 用户不在底部且来了新日志时，显示"回到最新"悬浮按钮
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
+  // 过滤：按级别（多选）与关键词搜索；是否显示进度事件
+  const [levels, setLevels] = useState<string[]>(['error', 'warn', 'info', 'debug'])
+  const [keyword, setKeyword] = useState('')
+  const [showProgress, setShowProgress] = useState(true)
 
-  // 只渲染最近 200 条，避免日志过多时全量渲染导致界面卡顿。
-  const visibleEvents = events.slice(-200)
+  // 先按过滤条件筛选；无关键词时只截取最近 200 条渲染，避免日志过多时全量渲染导致界面卡顿，
+  // 搜索时显示全部匹配结果（避免 slice 截断把命中的日志藏掉）。
+  const visibleEvents = useMemo(() => {
+    const kw = keyword.trim().toLowerCase()
+    const filtered = events.filter((e) => {
+      if (e.type === 'progress') {
+        // 进度事件无级别，仅受「进度」开关与关键词共同控制
+        if (!showProgress) return false
+        if (kw && !(e.message ?? '').toLowerCase().includes(kw)) return false
+        return true
+      }
+      if (!levels.includes(e.level ?? 'info')) return false
+      if (kw && !(e.message ?? '').toLowerCase().includes(kw)) return false
+      return true
+    })
+    return kw ? filtered : filtered.slice(-200)
+  }, [events, levels, keyword, showProgress])
 
   // 新日志到来时：若用户停留在底部则自动跟随滚动；否则停留在当前位置，并显示"回到最新"悬浮按钮
   useEffect(() => {
@@ -90,6 +122,35 @@ export default function Logs() {
               清空
             </Button>
           </Group>
+        </Group>
+        <Group gap="sm" mb="sm" wrap="wrap">
+          <TextInput
+            leftSection={<Search size={16} />}
+            placeholder="搜索日志内容..."
+            value={keyword}
+            onChange={(e) => setKeyword(e.currentTarget.value)}
+            style={{ flex: 1, minWidth: 200 }}
+            aria-label="搜索日志内容"
+          />
+          <MultiSelect
+            data={[
+              { value: 'error', label: '错误' },
+              { value: 'warn', label: '警告' },
+              { value: 'info', label: '信息' },
+              { value: 'debug', label: '调试' },
+            ]}
+            value={levels}
+            onChange={(v) => setLevels(v as string[])}
+            placeholder="日志级别"
+            aria-label="按日志级别过滤"
+            style={{ minWidth: 180 }}
+            clearable
+          />
+          <Switch
+            checked={showProgress}
+            onChange={(e) => setShowProgress(e.currentTarget.checked)}
+            label="进度"
+          />
         </Group>
         <Box style={{ position: 'relative' }}>
           <ScrollArea
