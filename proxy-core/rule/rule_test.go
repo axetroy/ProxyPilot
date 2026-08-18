@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -245,7 +246,7 @@ func TestSyncNow(t *testing.T) {
 		c.PACDirectURLs = srv.URL + "/direct.txt"
 		c.PACProxyURLs = srv.URL + "/gfw.txt"
 	})
-	if err := m.SyncNow(nil); err != nil {
+	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)
 	}
 	dc, pc, _, syncErr, _ := m.Stats()
@@ -287,7 +288,7 @@ func TestSyncNowFallbackMirror(t *testing.T) {
 		c.PACDirectURLs = "http://127.0.0.1:1/none.txt," + srv.URL + "/direct.txt"
 		c.PACProxyURLs = srv.URL + "/proxy.txt"
 	})
-	if err := m.SyncNow(nil); err != nil {
+	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)
 	}
 	if m.Match("direct-mirror.com") != ActionDirect {

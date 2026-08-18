@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -111,7 +112,7 @@ func TestPACConfigWithRuleManager(t *testing.T) {
 	s.Cfg.PACDirectURLs = srv.URL + "/direct.txt"
 	s.Cfg.PACProxyURLs = srv.URL + "/gfw.txt"
 	m.ApplyConfig()
-	if err := m.SyncNow(nil); err != nil {
+	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)
 	}
 	s.Rule = m
