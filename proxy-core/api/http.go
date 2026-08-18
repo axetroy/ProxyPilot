@@ -40,26 +40,20 @@ type response struct {
 func ok(data any) response               { return response{Code: 0, Msg: "ok", Data: data} }
 func fail(code int, msg string) response { return response{Code: code, Msg: msg} }
 
-func buildSystemStatus(running bool, total, alive int, currentNode, currentHTTPNode, currentSOCKS5Node *model.ProxyNode, httpBind, socksBind, version string) model.SystemStatus {
+func buildSystemStatus(running bool, total, alive int, currentNode *model.ProxyNode, httpBind, socksBind, version string) model.SystemStatus {
 	var currentIP string
-	if currentHTTPNode != nil {
-		currentIP = currentHTTPNode.Host
-	} else if currentSOCKS5Node != nil {
-		currentIP = currentSOCKS5Node.Host
-	} else if currentNode != nil {
+	if currentNode != nil {
 		currentIP = currentNode.Host
 	}
 	return model.SystemStatus{
-		Running:           running,
-		ProxyCount:        total,
-		AliveCount:        alive,
-		CurrentIP:         currentIP,
-		CurrentNode:       currentNode,
-		CurrentHTTPNode:   currentHTTPNode,
-		CurrentSOCKS5Node: currentSOCKS5Node,
-		HTTPProxyBind:     httpBind,
-		SOCKSProxyBind:    socksBind,
-		Version:           version,
+		Running:        running,
+		ProxyCount:     total,
+		AliveCount:     alive,
+		CurrentIP:      currentIP,
+		CurrentNode:    currentNode,
+		HTTPProxyBind:  httpBind,
+		SOCKSProxyBind: socksBind,
+		Version:        version,
 	}
 }
 
@@ -110,15 +104,11 @@ func (s *Services) status(c *gin.Context) {
 	total := s.Pool.Count()
 	alive := s.Pool.CountAlive()
 	currentNode := s.Gateway.CurrentNode()
-	currentHTTPNode := s.Gateway.CurrentHTTPNode()
-	currentSOCKS5Node := s.Gateway.CurrentSOCKS5Node()
 	st := buildSystemStatus(
 		s.Gateway.Running(),
 		total,
 		alive,
 		currentNode,
-		currentHTTPNode,
-		currentSOCKS5Node,
 		s.Gateway.HTTPAddr(),
 		s.Gateway.SOCKSAddr(),
 		config.Version,

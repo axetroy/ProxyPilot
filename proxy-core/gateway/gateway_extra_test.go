@@ -144,17 +144,10 @@ func TestUpstreamAndCurrentNode(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// 当前节点应被记录（HTTP 协议默认分支）
+	// 当前节点应被记录（选路不区分协议，统一记录 currentNode）
 	cur := g.CurrentNode()
 	if cur == nil || cur.Host != "127.0.0.1" {
 		t.Errorf("CurrentNode = %+v, want 127.0.0.1", cur)
-	}
-	httpNode := g.CurrentHTTPNode()
-	if httpNode == nil || httpNode.Host != "127.0.0.1" {
-		t.Errorf("CurrentHTTPNode = %+v, want 127.0.0.1", httpNode)
-	}
-	if g.CurrentSOCKS5Node() != nil {
-		t.Errorf("CurrentSOCKS5Node = %+v, want nil", g.CurrentSOCKS5Node())
 	}
 
 	// 连接可用：发送字节应回显

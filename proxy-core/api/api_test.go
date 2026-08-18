@@ -126,37 +126,28 @@ func decodeResponse(t *testing.T, w *httptest.ResponseRecorder) response {
 
 func TestBuildSystemStatus(t *testing.T) {
 	node := &model.ProxyNode{Host: "1.2.3.4", Port: 8080}
-	httpNode := &model.ProxyNode{Host: "5.6.7.8", Port: 8081}
-	socksNode := &model.ProxyNode{Host: "9.9.9.9", Port: 1080}
 
-	// 优先取 HTTP 节点 IP
-	s := buildSystemStatus(true, 10, 5, node, httpNode, socksNode, "127.0.0.1:7892", "127.0.0.1:7892", "0.1.4")
+	s := buildSystemStatus(true, 10, 5, node, "127.0.0.1:7892", "127.0.0.1:7892", "0.1.4")
 	if !s.Running || s.ProxyCount != 10 || s.AliveCount != 5 {
 		t.Errorf("basic fields wrong: %+v", s)
 	}
-	if s.CurrentIP != "5.6.7.8" {
-		t.Errorf("CurrentIP = %q, want 5.6.7.8 (http node wins)", s.CurrentIP)
+	if s.CurrentIP != "1.2.3.4" {
+		t.Errorf("CurrentIP = %q, want 1.2.3.4", s.CurrentIP)
+	}
+	if s.CurrentNode == nil || s.CurrentNode.Host != "1.2.3.4" {
+		t.Errorf("CurrentNode = %+v, want 1.2.3.4", s.CurrentNode)
 	}
 	if s.HTTPProxyBind != "127.0.0.1:7892" || s.SOCKSProxyBind != "127.0.0.1:7892" {
 		t.Errorf("binds wrong: %+v", s)
 	}
 
-	// 无 HTTP 节点时取 SOCKS5 节点
-	s2 := buildSystemStatus(false, 0, 0, nil, nil, socksNode, "", "", "0.1.4")
-	if s2.CurrentIP != "9.9.9.9" {
-		t.Errorf("CurrentIP = %q, want 9.9.9.9 (socks node)", s2.CurrentIP)
+	// 无当前节点
+	s2 := buildSystemStatus(false, 0, 0, nil, "", "", "0.1.4")
+	if s2.CurrentIP != "" {
+		t.Errorf("CurrentIP = %q, want empty", s2.CurrentIP)
 	}
-
-	// 都无时取 currentNode
-	s3 := buildSystemStatus(false, 0, 0, node, nil, nil, "", "", "0.1.4")
-	if s3.CurrentIP != "1.2.3.4" {
-		t.Errorf("CurrentIP = %q, want 1.2.3.4 (current node)", s3.CurrentIP)
-	}
-
-	// 全空
-	s4 := buildSystemStatus(false, 0, 0, nil, nil, nil, "", "", "0.1.4")
-	if s4.CurrentIP != "" {
-		t.Errorf("CurrentIP = %q, want empty", s4.CurrentIP)
+	if s2.CurrentNode != nil {
+		t.Errorf("CurrentNode = %+v, want nil", s2.CurrentNode)
 	}
 }
 

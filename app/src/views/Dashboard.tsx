@@ -31,8 +31,7 @@ export default function Dashboard() {
     return `${Math.round((status.aliveCount / status.proxyCount) * 100)}%`
   }, [status.aliveCount, status.proxyCount])
 
-  const currentHttpNode = status.currentHttpNode
-  const currentSocks5Node = status.currentSocks5Node
+  const currentNode = status.currentNode
 
   function formatNodeAddress(node?: ProxyNode, fallback = '等待首次请求') {
     return node ? `${node.host}:${node.port}` : fallback
@@ -270,67 +269,33 @@ export default function Dashboard() {
           </Badge>
         </Group>
 
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md" mt="md">
+        <SimpleGrid cols={{ base: 1, md: 1 }} spacing="md" mt="md">
           <Card padding="md" radius="md" withBorder>
             <Group justify="space-between" align="flex-start" wrap="wrap">
               <div>
-                <Text size="sm" c="dimmed">当前 HTTP 上游代理</Text>
-                <Text fw={600} size="lg" mt="xs">{formatNodeAddress(currentHttpNode, '等待首次 HTTP 请求')}</Text>
+                <Text size="sm" c="dimmed">当前出口节点</Text>
+                <Text fw={600} size="lg" mt="xs">{formatNodeAddress(currentNode, '等待首次请求')}</Text>
               </div>
-              <Badge color={currentHttpNode ? 'green' : 'gray'} variant="light">
-                {currentHttpNode ? '已命中' : '等待命中'}
+              <Badge color={currentNode ? 'green' : 'gray'} variant="light">
+                {currentNode ? '已命中' : '等待命中'}
               </Badge>
             </Group>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="md">
+            <SimpleGrid cols={{ base: 1, sm: 4 }} spacing="xs" mt="md">
               <div>
                 <Text size="xs" c="dimmed">协议</Text>
-                <Text size="sm" mt={4}>{formatNodeProtocol(currentHttpNode)}</Text>
+                <Text size="sm" mt={4}>{formatNodeProtocol(currentNode)}</Text>
               </div>
               <div>
                 <Text size="xs" c="dimmed">评分</Text>
-                <Text size="sm" mt={4}>{currentHttpNode?.score ?? '—'}</Text>
+                <Text size="sm" mt={4}>{currentNode?.score ?? '—'}</Text>
               </div>
-            </SimpleGrid>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="md">
               <div>
                 <Text size="xs" c="dimmed">状态</Text>
-                <Text size="sm" mt={4}>{formatNodeStatus(currentHttpNode)}</Text>
+                <Text size="sm" mt={4}>{formatNodeStatus(currentNode)}</Text>
               </div>
               <div>
                 <Text size="xs" c="dimmed">延迟</Text>
-                <Text size="sm" mt={4}>{formatNodeLatency(currentHttpNode)}</Text>
-              </div>
-            </SimpleGrid>
-          </Card>
-
-          <Card padding="md" radius="md" withBorder>
-            <Group justify="space-between" align="flex-start" wrap="wrap">
-              <div>
-                <Text size="sm" c="dimmed">当前 SOCKS5 上游代理</Text>
-                <Text fw={600} size="lg" mt="xs">{formatNodeAddress(currentSocks5Node, '等待首次 SOCKS5 请求')}</Text>
-              </div>
-              <Badge color={currentSocks5Node ? 'green' : 'gray'} variant="light">
-                {currentSocks5Node ? '已命中' : '等待命中'}
-              </Badge>
-            </Group>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="md">
-              <div>
-                <Text size="xs" c="dimmed">协议</Text>
-                <Text size="sm" mt={4}>{formatNodeProtocol(currentSocks5Node)}</Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">评分</Text>
-                <Text size="sm" mt={4}>{currentSocks5Node?.score ?? '—'}</Text>
-              </div>
-            </SimpleGrid>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="md">
-              <div>
-                <Text size="xs" c="dimmed">状态</Text>
-                <Text size="sm" mt={4}>{formatNodeStatus(currentSocks5Node)}</Text>
-              </div>
-              <div>
-                <Text size="xs" c="dimmed">延迟</Text>
-                <Text size="sm" mt={4}>{formatNodeLatency(currentSocks5Node)}</Text>
+                <Text size="sm" mt={4}>{formatNodeLatency(currentNode)}</Text>
               </div>
             </SimpleGrid>
           </Card>

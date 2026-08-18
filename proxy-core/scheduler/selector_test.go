@@ -110,30 +110,28 @@ func TestSuccessClearsFailure(t *testing.T) {
 	}
 }
 
-func TestNextPrefersSocks5WhenSelectingForSocks5(t *testing.T) {
+func TestNextDoesNotFilterByProtocol(t *testing.T) {
+	// 选路不区分协议：HTTP 与 SOCKS5 流量统一按策略从全部存活节点中选择，
+	// ConnectTCP 会按节点自身协议完成握手，任何协议流量都能复用任意节点。
+
+	// 方向 1：SOCKS5 流量也应能选中高分 HTTP 节点（不再偏好 SOCKS5 族）
 	m := newTestPool(t)
-	addAliveWithProtocol(t, m, "http-node", 90, 100, model.ProtocolHTTP)
-	socks := addAliveWithProtocol(t, m, "socks-node", 80, 100, model.ProtocolSOCKS5)
+	httpNode := addAliveWithProtocol(t, m, "http-node", 90, 100, model.ProtocolHTTP)
+	addAliveWithProtocol(t, m, "socks-node", 80, 100, model.ProtocolSOCKS5)
 
 	s := NewSelector(m)
-	got := s.NextForProtocol(model.ProtocolSOCKS5)
-	if got == nil || got.ID != socks.ID {
-		t.Fatalf("expected socks5 node %d, got %+v", socks.ID, got)
+	if got := s.NextForProtocol(model.ProtocolSOCKS5); got == nil || got.ID != httpNode.ID {
+		t.Fatalf("expected http node %d for socks5 traffic (no protocol filter), got %+v", httpNode.ID, got)
 	}
-}
 
-func TestNextPrefersHTTPFamilyWhenSelectingForHTTP(t *testing.T) {
-	m := newTestPool(t)
-	socks := addAliveWithProtocol(t, m, "socks-node", 90, 100, model.ProtocolSOCKS5)
-	http := addAliveWithProtocol(t, m, "http-node", 80, 100, model.ProtocolHTTP)
+	// 方向 2：HTTP 流量也应能选中高分 SOCKS5 节点（不再偏好 HTTP 族）
+	m2 := newTestPool(t)
+	socks := addAliveWithProtocol(t, m2, "socks-node", 90, 100, model.ProtocolSOCKS5)
+	addAliveWithProtocol(t, m2, "http-node", 80, 100, model.ProtocolHTTP)
 
-	s := NewSelector(m)
-	got := s.NextForProtocol(model.ProtocolHTTP)
-	if got == nil || got.ID != http.ID {
-		t.Fatalf("expected http node %d, got %+v", http.ID, got)
-	}
-	if got != nil && got.ID == socks.ID {
-		t.Fatalf("expected http-family proxy, got socks5 node %d", socks.ID)
+	s2 := NewSelector(m2)
+	if got := s2.NextForProtocol(model.ProtocolHTTP); got == nil || got.ID != socks.ID {
+		t.Fatalf("expected socks5 node %d for http traffic (no protocol filter), got %+v", socks.ID, got)
 	}
 }
 
@@ -230,9 +228,9 @@ func TestStickyExpiry(t *testing.T) {
 
 	// 模拟粘性窗口过期：把绑定时间改到过去。
 	s.mu.Lock()
-	entry := s.sticky[stickyKey(model.ProtocolHTTP, "example.com")]
+	entry := s.sticky[stickyKey("example.com")]
 	entry.expiresAt = time.Now().Add(-time.Second)
-	s.sticky[stickyKey(model.ProtocolHTTP, "example.com")] = entry
+	s.sticky[stickyKey("example.com")] = entry
 	s.mu.Unlock()
 
 	// 过期后应重新选择（a 权重仍最高，所以还是 a，但绑定已刷新）。
@@ -242,7 +240,7 @@ func TestStickyExpiry(t *testing.T) {
 	}
 	// 绑定应被刷新为新的过期时间。
 	s.mu.Lock()
-	refreshed := s.sticky[stickyKey(model.ProtocolHTTP, "example.com")]
+	refreshed := s.sticky[stickyKey("example.com")]
 	s.mu.Unlock()
 	if !refreshed.expiresAt.After(time.Now()) {
 		t.Fatalf("expected sticky binding refreshed after expiry, got %+v", refreshed)
@@ -311,15 +309,14 @@ func TestNextNoNodes(t *testing.T) {
 	}
 }
 
-func TestStickyKeySeparatesProtocolAndHost(t *testing.T) {
-	if stickyKey(model.ProtocolHTTP, "example.com") == stickyKey(model.ProtocolSOCKS5, "example.com") {
-		t.Fatal("sticky keys for different protocols must differ")
-	}
-	if stickyKey(model.ProtocolHTTP, "a.com") == stickyKey(model.ProtocolHTTP, "b.com") {
+func TestStickyKeySeparatesHosts(t *testing.T) {
+	// 选路不区分协议后，粘性 key 只按域名区分：
+	// 同一域名无论 HTTP 还是 SOCKS5 流量都复用同一出口节点。
+	if stickyKey("example.com") == stickyKey("a.com") {
 		t.Fatal("sticky keys for different hosts must differ")
 	}
-	if stickyKey(model.ProtocolHTTP, "") == stickyKey(model.ProtocolSOCKS5, "") {
-		t.Fatal("sticky keys for different protocols with empty host must differ")
+	if stickyKey("example.com") == stickyKey("example.com:443") {
+		t.Fatal("sticky keys for different hosts must differ")
 	}
 }
 
@@ -349,9 +346,9 @@ func TestNextStrictNoCrossProtocolFallback(t *testing.T) {
 	if got := s.NextStrict(model.ProtocolSOCKS5); got != nil {
 		t.Fatalf("expected nil for socks5 with only http nodes, got %+v", got)
 	}
-	// 对比：NextForProtocol（软限制）此时会回退到 HTTP 节点。
+	// 对比：NextForProtocol 选路不区分协议，直接返回存活节点（HTTP 节点）。
 	if got := s.NextForProtocol(model.ProtocolSOCKS5); got == nil {
-		t.Fatal("expected cross-protocol fallback in NextForProtocol")
+		t.Fatal("expected node from pool in NextForProtocol (no protocol filter)")
 	}
 }
 

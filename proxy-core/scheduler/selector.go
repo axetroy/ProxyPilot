@@ -167,22 +167,20 @@ func (s *Selector) Next() *model.ProxyNode {
 }
 
 // NextForProtocol returns the recommended node for the given protocol.
-// 选择时会优先在相同协议族内比较：
-// - SOCKS5 流量只从 SOCKS5 代理中挑选；
-// - HTTP/HTTPS 流量只从 HTTP/HTTPS 代理中挑选；
-// 这样不会把不同协议类型的代理混在一起比较。
+// 选路不区分协议：ConnectTCP 会按节点自身协议完成握手，任何协议流量都能复用任意节点，
+// 因此这里与按策略的通用选择一致（protocol 仅作兼容参数保留，不参与筛选）。
 func (s *Selector) NextForProtocol(protocol model.ProxyProtocol) *model.ProxyNode {
 	return s.NextForHost(protocol, "")
 }
 
-// stickyKey 返回粘性绑定的 key：协议 + 目标域名。
-// 不同协议（HTTP/SOCKS5）访问同一域名时使用独立的粘性绑定，
-// 避免 HTTP 流量复用到 SOCKS5 节点（或反之），保证协议语义正确。
-func stickyKey(protocol model.ProxyProtocol, host string) string {
-	return string(protocol) + "|" + host
+// stickyKey 返回粘性绑定的 key：目标域名。
+// 选路不区分协议后，HTTP 与 SOCKS5 流量访问同一域名时复用同一个出口节点，
+// 因此粘性绑定只按域名区分，避免同一网站短时间内多个 IP 访问触发防控。
+func stickyKey(host string) string {
+	return host
 }
 
-// NextForHost 返回指定协议下、针对目标域名 host 的出口节点，按当前策略分发：
+// NextForHost 返回针对目标域名 host 的出口节点，按当前策略分发：
 //   - fixed：固定出口节点存活时直接返回；未指定或节点失效时回退到加权策略；
 //   - best：存活节点中选评分最高（叠加失败惩罚）；
 //   - random：存活节点中随机挑选，同一域名在粘性窗口内保持稳定；
@@ -191,11 +189,13 @@ func stickyKey(protocol model.ProxyProtocol, host string) string {
 //   - weighted（默认）：按权重（score/latency，叠加失败惩罚）选优，
 //     同一域名在窗口内复用同一出口节点，避免同一网站短时间内多个 IP 访问触发防控。
 //
-// 说明：指定节点跨协议使用是安全的——ConnectTCP 会按节点自身协议选择握手方式
-// （SOCKS5 握手 / HTTP CONNECT），因此任何协议流量都能复用同一个指定节点。
+// protocol 参数已不参与选路：ConnectTCP 会按节点自身协议选择握手方式
+// （SOCKS5 握手 / HTTP CONNECT / HTTPS TLS+CONNECT），因此 HTTP 与 SOCKS5
+// 流量都能复用任意节点，无需按协议族分流，统一按当前策略从存活节点中选择。
 //
-// host 为空时退化为普通的按协议选择（不做粘性）。
+// host 为空时退化为普通的按策略选择（不做粘性）。
 func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model.ProxyNode {
+	_ = protocol // 选路不区分协议：见函数注释
 	switch s.Strategy() {
 	case StrategyFixed:
 		if n := s.pinnedNode(); n != nil {
@@ -203,24 +203,24 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 		}
 		// 未指定固定节点或节点失效：回退到加权策略继续。
 	case StrategyBest:
-		return s.selectBest(protocol)
+		return s.selectBest()
 	case StrategyRandom:
-		return s.selectRandom(protocol, host)
+		return s.selectRandom(host)
 	case StrategyRoundRobin:
-		return s.selectRoundRobin(protocol)
+		return s.selectRoundRobin()
 	case StrategyChain:
 		// 链路策略不在此选择单跳节点，由网关按已配置的链路逐跳连接。
 		return nil
 	}
 
 	// weighted（默认）：先尝试命中粘性绑定，否则按权重选优并记录绑定。
-	key := stickyKey(protocol, host)
+	key := stickyKey(host)
 	if host != "" {
 		if node := s.stickyNode(key); node != nil {
 			return node
 		}
 	}
-	node := s.selectBest(protocol)
+	node := s.selectBest()
 	if node == nil {
 		return nil
 	}
@@ -285,28 +285,23 @@ func (s *Selector) stickyNode(key string) *model.ProxyNode {
 	return nil
 }
 
-// selectBest 在指定协议族内挑选最优节点；协议族内没有候选时回退到全部存活节点
-// （软限制：SOCKS5 流量没有 SOCKS5 节点时也可以复用 HTTP 节点）。
+// selectBest 在全部存活节点中挑选最优节点。
 // 排序优先级：存活（优先）→ 有效分数（降序）→ 延迟（升序）→ ID（升序）→ host（升序）。
 // 有效分数 = 原始分数 × 失败惩罚（失败窗口内按 0.5^failures 衰减），
 // 与代理池列表的排序口径保持一致：存活优先，分数优先，同分比延迟。
-func (s *Selector) selectBest(protocol model.ProxyProtocol) *model.ProxyNode {
+func (s *Selector) selectBest() *model.ProxyNode {
 	alive := s.pool.Alive()
 	if len(alive) == 0 {
 		return nil
 	}
-	candidates := filterByProtocol(alive, protocol)
-	if len(candidates) == 0 {
-		candidates = alive
-	}
-	s.sortCandidates(candidates)
-	return candidates[0]
+	s.sortCandidates(alive)
+	return alive[0]
 }
 
-// selectRandom 在指定协议族内随机挑选一个存活节点；协议族内没有候选时回退到全部存活节点。
+// selectRandom 从全部存活节点中随机挑选一个。
 // 同一目标域名在粘性窗口内保持稳定，避免同一网站短时间内频繁更换出口 IP。
-func (s *Selector) selectRandom(protocol model.ProxyProtocol, host string) *model.ProxyNode {
-	key := stickyKey(protocol, host)
+func (s *Selector) selectRandom(host string) *model.ProxyNode {
+	key := stickyKey(host)
 	if host != "" {
 		if node := s.stickyNode(key); node != nil {
 			return node
@@ -317,11 +312,7 @@ func (s *Selector) selectRandom(protocol model.ProxyProtocol, host string) *mode
 	if len(alive) == 0 {
 		return nil
 	}
-	candidates := filterByProtocol(alive, protocol)
-	if len(candidates) == 0 {
-		candidates = alive
-	}
-	node := candidates[rand.Intn(len(candidates))]
+	node := alive[rand.Intn(len(alive))]
 
 	if host != "" {
 		s.mu.Lock()
@@ -334,21 +325,17 @@ func (s *Selector) selectRandom(protocol model.ProxyProtocol, host string) *mode
 	return node
 }
 
-// selectRoundRobin 在指定协议族内按 ID 顺序轮流返回存活节点（协议族内为空时回退到全部存活节点）。
+// selectRoundRobin 按 ID 顺序轮流返回全部存活节点。
 // 游标为原子计数器，多 goroutine 并发调用时也能保证不重复。
-func (s *Selector) selectRoundRobin(protocol model.ProxyProtocol) *model.ProxyNode {
+func (s *Selector) selectRoundRobin() *model.ProxyNode {
 	alive := s.pool.Alive()
 	if len(alive) == 0 {
 		return nil
 	}
-	candidates := filterByProtocol(alive, protocol)
-	if len(candidates) == 0 {
-		candidates = alive
-	}
 	// 按 ID 稳定排序，保证轮转顺序确定（不依赖池内顺序）。
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
+	sort.Slice(alive, func(i, j int) bool { return alive[i].ID < alive[j].ID })
 	i := s.rrCounter.Add(1) - 1
-	return candidates[i%uint64(len(candidates))]
+	return alive[i%uint64(len(alive))]
 }
 
 // NextStrict 返回指定协议族内的最优存活节点，且不做跨协议回退。
@@ -369,6 +356,7 @@ func (s *Selector) NextStrict(protocol model.ProxyProtocol) *model.ProxyNode {
 
 // filterByProtocol 返回 nodes 中属于指定协议族的存活节点。
 // SOCKS5 只匹配 SOCKS5 节点；HTTP/HTTPS 匹配两者；protocol 为空时不筛选。
+// 仅用于 NextStrict（UDP 中继必须经 SOCKS5 节点承载）；常规 TCP 选路不区分协议。
 func filterByProtocol(nodes []*model.ProxyNode, protocol model.ProxyProtocol) []*model.ProxyNode {
 	switch protocol {
 	case model.ProtocolSOCKS5:

@@ -14,8 +14,7 @@ const emptyStatus: SystemStatus = {
   proxyCount: 0,
   aliveCount: 0,
   currentIP: '',
-  currentHttpNode: undefined,
-  currentSocks5Node: undefined,
+  currentNode: undefined,
   httpProxyBind: '',
   socks5ProxyBind: '',
   version: '',
@@ -34,8 +33,6 @@ export const useStatusStore = create<StatusState>((set, get) => ({
           // 直接展开会残留旧值（如取消固定出口后 pinnedNode 不消失）。
           // 这里显式同步，让 nil/null/undefined 也能清除旧状态。
           currentNode: res.data.currentNode,
-          currentHttpNode: res.data.currentHttpNode,
-          currentSocks5Node: res.data.currentSocks5Node,
           pinnedNode: res.data.pinnedNode,
         },
       }))

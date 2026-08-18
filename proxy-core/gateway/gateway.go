@@ -59,8 +59,6 @@ type Gateway struct {
 	startedAt         time.Time
 	limitCtx          int
 	currentNode       *model.ProxyNode
-	currentHTTPNode   *model.ProxyNode
-	currentSOCKS5Node *model.ProxyNode
 
 	// ipv6Cache 缓存 IPv6 字面量地址的 PTR 反查结果（空串表示反查失败），
 	// 避免每次 SOCKS5 请求都阻塞在 DNS 反查上。
@@ -110,26 +108,6 @@ func (g *Gateway) CurrentNode() *model.ProxyNode {
 		return nil
 	}
 	copyNode := *g.currentNode
-	return &copyNode
-}
-
-func (g *Gateway) CurrentHTTPNode() *model.ProxyNode {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.currentHTTPNode == nil {
-		return nil
-	}
-	copyNode := *g.currentHTTPNode
-	return &copyNode
-}
-
-func (g *Gateway) CurrentSOCKS5Node() *model.ProxyNode {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.currentSOCKS5Node == nil {
-		return nil
-	}
-	copyNode := *g.currentSOCKS5Node
 	return &copyNode
 }
 
@@ -232,8 +210,6 @@ func (g *Gateway) Stop() {
 		g.mixed = nil
 	}
 	g.currentNode = nil
-	g.currentHTTPNode = nil
-	g.currentSOCKS5Node = nil
 	if g.bus != nil {
 		g.bus.Info("proxy gateway stopped")
 	}
@@ -259,8 +235,8 @@ func (g *Gateway) Upstream(ctx context.Context, target string) (net.Conn, error)
 }
 
 // UpstreamWithDial dials `t` through the best live node for the given
-// protocol. SOCKS5 traffic prefers SOCKS5 upstreams to keep routing semantics
-// aligned with the local SOCKS5 listener.
+// protocol. 选路不区分协议：ConnectTCP 会按节点自身协议完成握手，HTTP 与 SOCKS5
+// 流量统一按当前策略从存活节点中选择（protocol 仅作兼容参数保留，不影响选路）。
 // 目标域名会传给选择器做\"域名粘性\"：同一域名在窗口内复用同一出口 IP，
 // 避免短时间内多个 IP 访问同一网站触发目标站点的安全防控。
 func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, protocol model.ProxyProtocol) (net.Conn, error) {
@@ -313,12 +289,6 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 		}
 		g.mu.Lock()
 		g.currentNode = node
-		switch protocol {
-		case model.ProtocolSOCKS5:
-			g.currentSOCKS5Node = node
-		default:
-			g.currentHTTPNode = node
-		}
 		g.mu.Unlock()
 
 		if g.bus != nil {
@@ -364,7 +334,6 @@ func (g *Gateway) NewUDPRelay() (udpBackend, error) {
 
 	g.mu.Lock()
 	g.currentNode = node
-	g.currentSOCKS5Node = node
 	g.mu.Unlock()
 	if g.bus != nil {
 		g.bus.Debug(fmt.Sprintf("udp relay established via node=%s", node.Key()))
@@ -439,8 +408,6 @@ func (g *Gateway) upstreamViaChain(ctx context.Context, target string) (net.Conn
 		}
 		g.mu.Lock()
 		g.currentNode = nodes[len(nodes)-1]
-		g.currentHTTPNode = nodes[len(nodes)-1]
-		g.currentSOCKS5Node = nodes[len(nodes)-1]
 		g.mu.Unlock()
 		if g.bus != nil {
 			names := make([]string, 0, len(nodes))

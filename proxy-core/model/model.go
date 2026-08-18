@@ -97,13 +97,11 @@ type CheckHistory struct {
 }
 
 type SystemStatus struct {
-	Running           bool       `json:"running"`
-	ProxyCount        int        `json:"proxyCount"`
-	AliveCount        int        `json:"aliveCount"`
-	CurrentIP         string     `json:"currentIP"`
-	CurrentNode       *ProxyNode `json:"currentNode,omitempty"`
-	CurrentHTTPNode   *ProxyNode `json:"currentHttpNode,omitempty"`
-	CurrentSOCKS5Node *ProxyNode `json:"currentSocks5Node,omitempty"`
+	Running     bool       `json:"running"`
+	ProxyCount  int        `json:"proxyCount"`
+	AliveCount  int        `json:"aliveCount"`
+	CurrentIP   string     `json:"currentIP"`
+	CurrentNode *ProxyNode `json:"currentNode,omitempty"`
 	// PinnedNode 用户指定的固定出口节点（未指定或节点已删除时为 nil），
 	// 与 CurrentNode 不同：这是用户主动指定的，不随请求命中而变化。
 	PinnedNode     *ProxyNode `json:"pinnedNode,omitempty"`
