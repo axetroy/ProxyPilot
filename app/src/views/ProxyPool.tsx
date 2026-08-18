@@ -274,7 +274,7 @@ export default function ProxyPool() {
         </Alert>
       )}
 
-      {pinnedNode ? (
+      {pinnedNode && (
         <Alert color="blue" variant="light" withCloseButton onClose={onUnpin} style={{ flexShrink: 0 }}>
           <Group gap="xs" wrap="nowrap">
             <Pin size={16} />
@@ -291,13 +291,6 @@ export default function ProxyPool() {
                 </Text>
               )}
             </Box>
-          </Group>
-        </Alert>
-      ) : (
-        <Alert color="gray" variant="light" style={{ flexShrink: 0 }}>
-          <Group gap="xs" wrap="nowrap">
-            <PinOff size={16} />
-            <Text size="sm">未指定固定出口，自动按评分选择最优节点；可在任意节点行点击「指定」固定使用</Text>
           </Group>
         </Alert>
       )}
