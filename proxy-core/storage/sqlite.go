@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -17,6 +18,13 @@ type Store struct {
 }
 
 func New(path string) (*Store, error) {
+	// 数据库由 Electron 放在用户数据目录（appdata）下，目录可能尚不存在，
+	// 这里自动创建，避免打开 SQLite 时报 "unable to open database file"。
+	if path != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err

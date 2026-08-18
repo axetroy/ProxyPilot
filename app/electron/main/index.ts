@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage } from 'electron'
 import { spawn, ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import * as path from 'node:path'
 import { isProxyPilotStatus } from './core-process'
 import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
@@ -94,9 +94,20 @@ async function startCore(): Promise<void> {
   } else {
     console.log(`[core] starting proxy-core: ${exe}`)
   }
+  // 数据库放在 Electron 用户数据目录（appdata）下，由应用创建专属目录：
+  // 打包后 install 目录 / resources 可能只读或随版本更替被清空，数据不应写在那里。
+  // 目录确保存在后再启动 core（storage 侧也会做同样兜底）。
+  const dataDir = app.getPath('userData')
+  mkdirSync(dataDir, { recursive: true })
+  const dbPath = path.join(dataDir, 'proxypilot.db')
+
   core = spawn(exe, [], {
     cwd: path.dirname(exe),
-    env: { ...process.env, PROXYPILOT_TOKEN: sessionToken },
+    env: {
+      ...process.env,
+      PROXYPILOT_TOKEN: sessionToken,
+      PROXYPILOT_DB_PATH: dbPath,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
   })
