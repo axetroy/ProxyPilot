@@ -178,3 +178,111 @@ func TestGatewayChainUnavailable(t *testing.T) {
 		t.Fatal("expected error when all chains fail")
 	}
 }
+
+// TestGatewayAutoChainStrategy auto-chain 策略下网关按配置层数与选择策略
+// 自动挑选节点建立链路 A→B→target，流量可达目标。
+func TestGatewayAutoChainStrategy(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "gateway-auto-chain-ok")
+	}))
+	defer target.Close()
+	hopB := httptest.NewServer(connectProxyServer(target.Listener.Addr().String()))
+	defer hopB.Close()
+	hopA := httptest.NewServer(connectProxyServer(hopB.Listener.Addr().String()))
+	defer hopA.Close()
+
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	poolMgr := pool.NewManager(st, nil, bus.New(), 4)
+	// 分数不同使 best 策略选序确定：hopA(100) → hopB(50)，保证链路顺序为 A→B→target。
+	hostA, portA, err := net.SplitHostPort(hopA.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split hopA addr: %v", err)
+	}
+	portAInt, _ := strconv.Atoi(portA)
+	hostB, portB, err := net.SplitHostPort(hopB.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split hopB addr: %v", err)
+	}
+	portBInt, _ := strconv.Atoi(portB)
+	if poolMgr.AddNodes([]*model.ProxyNode{
+		{Host: hostA, Port: portAInt, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 100, Latency: 1},
+		{Host: hostB, Port: portBInt, Protocol: model.ProtocolHTTP, Status: model.StatusAlive, Score: 50, Latency: 1},
+	}) != 2 {
+		t.Fatal("failed to add auto-chain nodes")
+	}
+
+	sel := scheduler.NewSelector(poolMgr)
+	sel.SetStrategy(scheduler.StrategyAutoChain)
+
+	g := NewGateway(poolMgr, sel, nil, "127.0.0.1:0")
+	g.SetAutoChainConfig(func() (int, scheduler.Strategy) {
+		return 2, scheduler.StrategyBest
+	})
+
+	conn, err := g.Upstream(context.Background(), target.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Upstream via auto-chain: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// 通过隧道发送明文 HTTP，验证到达 target。
+	req, _ := http.NewRequest(http.MethodGet, "http://"+target.Listener.Addr().String()+"/", nil)
+	if err := req.Write(conn); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "gateway-auto-chain-ok" {
+		t.Fatalf("response = %d %q, want 200 gateway-auto-chain-ok", resp.StatusCode, body)
+	}
+}
+
+// TestGatewayAutoChainNoConfig auto-chain 策略但未注入配置读取函数时返回明确错误。
+func TestGatewayAutoChainNoConfig(t *testing.T) {
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	poolMgr := pool.NewManager(st, nil, bus.New(), 4)
+
+	sel := scheduler.NewSelector(poolMgr)
+	sel.SetStrategy(scheduler.StrategyAutoChain)
+	g := NewGateway(poolMgr, sel, nil, "127.0.0.1:0")
+
+	_, err = g.Upstream(context.Background(), "127.0.0.1:1")
+	if err == nil {
+		t.Fatal("expected error when auto-chain config provider missing")
+	}
+}
+
+// TestGatewayAutoChainNoLiveNode auto-chain 策略下节点池无存活节点时返回明确错误。
+func TestGatewayAutoChainNoLiveNode(t *testing.T) {
+	st, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	poolMgr := pool.NewManager(st, nil, bus.New(), 4)
+
+	sel := scheduler.NewSelector(poolMgr)
+	sel.SetStrategy(scheduler.StrategyAutoChain)
+	g := NewGateway(poolMgr, sel, nil, "127.0.0.1:0")
+	g.SetAutoChainConfig(func() (int, scheduler.Strategy) {
+		return 2, scheduler.StrategyBest
+	})
+
+	_, err = g.Upstream(context.Background(), "127.0.0.1:1")
+	if err == nil {
+		t.Fatal("expected error when no live node for auto-chain")
+	}
+}

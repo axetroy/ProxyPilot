@@ -758,3 +758,102 @@ func handleMockSOCKS5(conn net.Conn) {
 	<-done
 	<-done
 }
+
+// TestSocks5UserPassAuthOK 完成 RFC1929 认证，服务端确认成功。
+func TestSocks5UserPassAuthOK(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close(); _ = client.Close() }()
+
+	// 服务端读取握手请求，返回认证成功响应。
+	go func() {
+		head := make([]byte, 2)
+		if _, err := io.ReadFull(server, head); err != nil {
+			return
+		}
+		if head[0] != 0x01 {
+			return
+		}
+		user := make([]byte, int(head[1]))
+		if _, err := io.ReadFull(server, user); err != nil {
+			return
+		}
+		passLen := make([]byte, 1)
+		if _, err := io.ReadFull(server, passLen); err != nil {
+			return
+		}
+		pass := make([]byte, int(passLen[0]))
+		if _, err := io.ReadFull(server, pass); err != nil {
+			return
+		}
+		if string(user) == "user" && string(pass) == "pass" {
+			_, _ = server.Write([]byte{0x01, 0x00})
+		} else {
+			_, _ = server.Write([]byte{0x01, 0x01})
+		}
+	}()
+
+	if err := socks5UserPassAuth(client, "user", "pass"); err != nil {
+		t.Fatalf("socks5UserPassAuth: %v", err)
+	}
+}
+
+// TestSocks5UserPassAuthFailure 服务端拒绝认证时返回错误。
+func TestSocks5UserPassAuthFailure(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close(); _ = client.Close() }()
+
+	go func() {
+		buf := make([]byte, 9) // 0x01 + len("foo") + "foo" + len("bar") + "bar"
+		if _, err := io.ReadFull(server, buf); err != nil {
+			return
+		}
+		_, _ = server.Write([]byte{0x01, 0x01}) // 认证失败
+	}()
+
+	if err := socks5UserPassAuth(client, "foo", "bar"); err == nil {
+		t.Fatal("expected auth failure error")
+	}
+}
+
+// TestSocks5UserPassAuthEmptyUser 空用户名直接报错，不发送握手。
+func TestSocks5UserPassAuthEmptyUser(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close(); _ = client.Close() }()
+
+	if err := socks5UserPassAuth(client, "", "pass"); err == nil {
+		t.Fatal("expected error for empty username")
+	}
+}
+
+// TestWriteSocks5UserPass 发送用户名/密码子协商（UDP 会话路径）。
+func TestWriteSocks5UserPass(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close(); _ = client.Close() }()
+
+	go func() {
+		buf := make([]byte, 14) // 0x01 + len("user") + "user" + len("pass") + "pass"
+		n, err := io.ReadFull(server, buf)
+		if err != nil {
+			return
+		}
+		if n != 14 {
+			return
+		}
+		_ = server.Close()
+	}()
+
+	if err := writeSocks5UserPass(client, "user", "pass"); err != nil {
+		t.Fatalf("writeSocks5UserPass: %v", err)
+	}
+}
+
+// TestWriteSocks5UserPassTooLong 超长凭据（>255 字节）直接报错。
+func TestWriteSocks5UserPassTooLong(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = server.Close(); _ = client.Close() }()
+
+	long := strings.Repeat("x", 300)
+	if err := writeSocks5UserPass(client, long, "pass"); err == nil {
+		t.Fatal("expected error for over-long username")
+	}
+}

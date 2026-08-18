@@ -298,3 +298,58 @@ func TestSettingValue(t *testing.T) {
 		t.Error("SettingValue(unknown) ok = true, want false")
 	}
 }
+
+// TestValidatePACMode 智能分流模式校验。
+func TestValidatePACMode(t *testing.T) {
+	for _, ok := range []string{"whitelist", "blacklist"} {
+		if err := validatePACMode(ok); err != nil {
+			t.Errorf("validatePACMode(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "list", "WHITELIST", "auto"} {
+		if err := validatePACMode(bad); err == nil {
+			t.Errorf("validatePACMode(%q) = nil, want error", bad)
+		}
+	}
+}
+
+// TestValidateURLList 分流规则 URL 列表校验（逗号分隔，允许空）。
+func TestValidateURLList(t *testing.T) {
+	okCases := []string{
+		"",
+		"   ",
+		"https://raw.githubusercontent.com/x/y.list",
+		"http://a.example/list, https://b.example/list",
+		"https://a.example/1,https://a.example/2,https://a.example/3",
+	}
+	for _, v := range okCases {
+		if err := validateURLList(v); err != nil {
+			t.Errorf("validateURLList(%q) = %v, want nil", v, err)
+		}
+	}
+	badCases := []string{
+		"ftp://a.example/list",
+		"https://a.example/list, ftp://b.example/list",
+		"just-a-path",
+		"https://a.example/list,", // 尾随逗号产生空段，仍应报错（空段非 URL）
+	}
+	for _, v := range badCases {
+		if err := validateURLList(v); err == nil {
+			t.Errorf("validateURLList(%q) = nil, want error", v)
+		}
+	}
+}
+
+// TestValidatePACRefresh 分流规则刷新周期校验（合法时长且不小于 1 小时）。
+func TestValidatePACRefresh(t *testing.T) {
+	for _, ok := range []string{"1h", "2h", "24h", "1h30m", "48h"} {
+		if err := validatePACRefresh(ok); err != nil {
+			t.Errorf("validatePACRefresh(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "abc", "30m", "59m", "1h:0"} {
+		if err := validatePACRefresh(bad); err == nil {
+			t.Errorf("validatePACRefresh(%q) = nil, want error", bad)
+		}
+	}
+}

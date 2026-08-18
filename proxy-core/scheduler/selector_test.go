@@ -871,3 +871,79 @@ func TestSelectChainRandomVariety(t *testing.T) {
 		t.Fatalf("random chain should eventually cover all nodes, got %d distinct", len(seenIDs))
 	}
 }
+
+// TestSelectChainWeightedDefault 未指定策略时按 weighted 挑选（默认分支）。
+func TestSelectChainWeightedDefault(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 80, 100)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(2, "")
+	if len(nodes) != 2 {
+		t.Fatalf("SelectChain(2, \"\") = %d nodes, want 2", len(nodes))
+	}
+	if nodes[0].ID == nodes[1].ID {
+		t.Fatalf("duplicate node in weighted chain: %d", nodes[0].ID)
+	}
+}
+
+// TestSelectChainWeightedPrefersHighScore weighted 策略下高分节点被选中的概率显著更高。
+// 权重按评分线性，90 vs 10 差距大，100 次采样下统计性断言稳定（期望 90/10）。
+func TestSelectChainWeightedPrefersHighScore(t *testing.T) {
+	m := newTestPool(t)
+	hi := addAlive(t, m, "hi", 90, 100)
+	lo := addAlive(t, m, "lo", 10, 100)
+
+	s := NewSelector(m)
+	counts := map[int64]int{}
+	for i := 0; i < 100; i++ {
+		nodes := s.SelectChain(1, StrategyWeighted)
+		if len(nodes) != 1 {
+			t.Fatalf("SelectChain(1) = %d nodes, want 1", len(nodes))
+		}
+		counts[nodes[0].ID]++
+	}
+	if counts[hi.ID] <= 50 {
+		t.Fatalf("weighted selection should strongly prefer high-score node, got hi=%d lo=%d", counts[hi.ID], counts[lo.ID])
+	}
+}
+
+// TestSelectChainWeightedSkipsPicked 加权挑选跳过已选节点（同链去重）。
+func TestSelectChainWeightedSkipsPicked(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 90, 100)
+	addAlive(t, m, "c", 90, 100)
+
+	s := NewSelector(m)
+	for i := 0; i < 30; i++ {
+		nodes := s.SelectChain(3, StrategyWeighted)
+		if len(nodes) != 3 {
+			t.Fatalf("SelectChain(3) = %d nodes, want 3", len(nodes))
+		}
+		seen := map[int64]bool{}
+		for _, n := range nodes {
+			if seen[n.ID] {
+				t.Fatalf("duplicate node %d in weighted chain", n.ID)
+			}
+			seen[n.ID] = true
+		}
+	}
+}
+
+// TestSelectChainWeightedAllZeroScore 全部节点无效分数时 weighted 退化为随机挑选。
+func TestSelectChainWeightedAllZeroScore(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 0, 100)
+	addAlive(t, m, "b", 0, 100)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(2, StrategyWeighted)
+	if len(nodes) != 2 {
+		t.Fatalf("SelectChain(2) with zero scores = %d nodes, want 2", len(nodes))
+	}
+	if nodes[0].ID == nodes[1].ID {
+		t.Fatalf("duplicate node in degraded weighted chain: %d", nodes[0].ID)
+	}
+}
