@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -278,10 +278,22 @@ export async function getEgressConfig(): Promise<ApiResponse<EgressConfig>> {
   return data
 }
 
-/** 切换出口策略；固定策略可同时指定节点（pinId） */
-export async function updateEgressConfig(patch: { strategy: EgressStrategy; pinId?: number }): Promise<ApiResponse<EgressConfig>> {
+/** 切换出口策略；固定策略可同时指定节点（pinId），自动链路可同时指定层数与每层选择策略 */
+export async function updateEgressConfig(patch: {
+  strategy: EgressStrategy
+  pinId?: number
+  chainHops?: number
+  chainSelection?: ChainSelection
+}): Promise<ApiResponse<EgressConfig>> {
   await ensureApiReady()
   const { data } = await http.put<ApiResponse<EgressConfig>>('/api/egress', patch)
+  return data
+}
+
+/** 测试自动链路：按当前配置从存活节点中挑选节点逐跳测试 */
+export async function testAutoChain(): Promise<ApiResponse<ChainTestResult>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<ChainTestResult>>('/api/egress/auto-chain/test')
   return data
 }
 

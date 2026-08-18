@@ -35,9 +35,13 @@ const (
 	// 固定出口节点 ID（用户指定使用哪个代理）。单独管理，
 	// 不进 Settings() 列表（避免与通用设置表单混在一起）。
 	KeyPinnedProxy = "pinned_proxy_id"
-	// 出口策略（fixed / best / random / weighted / round-robin）。
+	// 出口策略（fixed / best / random / weighted / round-robin / chain / auto-chain）。
 	// 与固定出口同属「出口路由」管理，不进 Settings() 通用表单。
 	KeyEgressStrategy = "egress_strategy"
+	// 自动链路（auto-chain）参数：层数与每层选择策略。
+	// 与出口策略同属「出口路由」管理，不进 Settings() 通用表单。
+	KeyChainHops      = "chain_hops"
+	KeyChainSelection = "chain_selection"
 	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
 	KeyHistoryRetention = "history_retention_days"
 	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单
@@ -204,6 +208,9 @@ type Config struct {
 	PACDirectURLs        string // 直连规则列表 URL（逗号分隔，按序尝试）
 	PACProxyURLs         string // 代理规则列表 URL（逗号分隔，按序尝试）
 	PACRefreshInterval   time.Duration // 分流规则自动刷新周期
+	// 自动链路（auto-chain）策略参数：层数与每层选择策略。
+	ChainHops      int    // 自动链路层数（默认 2）
+	ChainSelection string // 每层选择策略（weighted / random / best，默认 weighted）
 }
 
 func New() *Config {
@@ -226,6 +233,8 @@ func New() *Config {
 		PACDirectURLs:        DefaultPACDirectURLs,
 		PACProxyURLs:         DefaultPACProxyURLs,
 		PACRefreshInterval:   24 * time.Hour,
+		ChainHops:            2,
+		ChainSelection:       "weighted",
 	}
 	c.SessionToken = generatedSessionToken()
 	c.ApplyEnv()
@@ -412,6 +421,19 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 				c.PACRefreshInterval = d
 			}
 		}, true
+	case KeyChainHops:
+		return func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 8 {
+				c.ChainHops = n
+			}
+		}, true
+	case KeyChainSelection:
+		return func(v string) {
+			switch v {
+			case "weighted", "random", "best":
+				c.ChainSelection = v
+			}
+		}, true
 	default:
 		return nil, false
 	}
@@ -439,6 +461,15 @@ func (c *Config) LoadOverrides(st *storage.Store) {
 		c.SubToken = v
 	} else {
 		_ = st.SetSetting(KeySubToken, c.SubToken)
+	}
+	// 自动链路参数独立加载：不进 Settings() 通用表单（由出口路由管理），
+	// 合法性由各 settingKey 应用逻辑保证（非法值自动忽略，保持默认）。
+	for _, k := range []string{KeyChainHops, KeyChainSelection} {
+		if v, err := st.GetSetting(k); err == nil && v != "" {
+			if apply, ok := c.settingKey(k); ok {
+				apply(v)
+			}
+		}
 	}
 }
 
@@ -481,6 +512,10 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return c.PACProxyURLs, true
 	case KeyPACRefresh:
 		return c.PACRefreshInterval.String(), true
+	case KeyChainHops:
+		return strconv.Itoa(c.ChainHops), true
+	case KeyChainSelection:
+		return c.ChainSelection, true
 	default:
 		return "", false
 	}

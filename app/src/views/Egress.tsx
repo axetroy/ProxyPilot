@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Activity, GitBranch, MapPin, Pencil, Pin, PinOff, Plus, RadioTower, Trash2 } from 'lucide-react'
-import { ActionIcon, Alert, Badge, Button, Card, Divider, Group, Modal, MultiSelect, Radio, Select, Stack, Switch, Text, TextInput, type ComboboxItem, type ComboboxParsedItem } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Button, Card, Divider, Group, Modal, MultiSelect, NumberInput, Radio, Select, Stack, Switch, Text, TextInput, type ComboboxItem, type ComboboxParsedItem } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
-import { createChain, deleteChain, getEgressConfig, getErrorMessage, listChains, testChain, updateChain, updateEgressConfig } from '@/api'
-import type { ChainTestResult, EgressConfig, ProxyChain, ProxyNode } from '@/types'
+import { createChain, deleteChain, getEgressConfig, getErrorMessage, listChains, testAutoChain, testChain, updateChain, updateEgressConfig } from '@/api'
+import type { ChainSelection, ChainTestResult, EgressConfig, EgressStrategy, ProxyChain, ProxyNode } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -351,6 +351,140 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
   )
 }
 
+// AutoChainConfig 自动链路（auto-chain）策略配置：层数与每层选择策略，附带一键测试。
+function AutoChainConfig({
+  hops,
+  selection,
+  busy,
+  onSave,
+}: {
+  hops: number
+  selection: ChainSelection
+  busy: boolean
+  onSave: (hops: number, selection: ChainSelection) => void
+}) {
+  const [hopsValue, setHopsValue] = useState(hops)
+  const [selectionValue, setSelectionValue] = useState<ChainSelection>(selection)
+  const dirty = hopsValue !== hops || selectionValue !== selection
+  // 自动链路测试：进行中状态与结果
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<ChainTestResult | null>(null)
+
+  async function runTest() {
+    setTesting(true)
+    try {
+      const res = await testAutoChain()
+      if (res.code === 0 && res.data) {
+        setTestResult(res.data)
+      } else {
+        setTestResult({ ok: false, totalLatency: 0, hops: [] })
+      }
+    } catch (e) {
+      setTestResult({ ok: false, totalLatency: 0, hops: [] })
+      console.error(getErrorMessage(e))
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
+      <Stack gap="md">
+        <div>
+          <Text fw={700}>自动链路配置</Text>
+          <Text size="sm" c="dimmed" mt={4}>
+            网关每次连接会自动从存活节点中挑选 N 个互不相同的节点组成链路，无需手动指定。层数越大匿名性越强，但延迟与失败概率也随之增加
+          </Text>
+        </div>
+
+        <Divider />
+
+        <Group align="flex-end" wrap="wrap">
+          <NumberInput
+            label="链路层数"
+            description="每个连接经过的节点数量（1-8）"
+            min={1}
+            max={8}
+            value={hopsValue}
+            onChange={(v) => setHopsValue(typeof v === 'number' ? v : hops)}
+            disabled={busy}
+            w={140}
+          />
+          <Select
+            label="每层选择策略"
+            description="每一跳如何从存活节点中挑选"
+            value={selectionValue}
+            onChange={(v) => v && setSelectionValue(v as ChainSelection)}
+            data={[
+              { value: 'weighted', label: '智能加权（推荐）' },
+              { value: 'random', label: '随机可用' },
+              { value: 'best', label: '最高评分' },
+            ]}
+            disabled={busy}
+            w={240}
+          />
+          <Button onClick={() => onSave(hopsValue, selectionValue)} disabled={!dirty} loading={busy}>
+            保存
+          </Button>
+          <Button variant="light" leftSection={<Activity size={14} />} onClick={runTest} loading={testing} disabled={busy}>
+            测试自动链路
+          </Button>
+        </Group>
+
+        <Text size="xs" c="dimmed">
+          存活节点不足层数时自动按实际存活数建链；无存活节点时该策略暂无法出口
+        </Text>
+      </Stack>
+
+      <Modal opened={!!testResult} onClose={() => setTestResult(null)} title="测试自动链路" size="lg" centered>
+        {testResult && <ChainTestResultPanel result={testResult} />}
+      </Modal>
+    </Card>
+  )
+}
+
+// ChainTestResultPanel 展示链路测试结果：整体状态 + 每跳延迟/错误。
+function ChainTestResultPanel({ result }: { result: ChainTestResult }) {
+  return (
+    <Stack gap="md">
+      <Alert color={result.ok ? 'green' : 'red'} variant="light">
+        {result.ok
+          ? `整条链路连通正常，总耗时 ${result.totalLatency} ms`
+          : `链路不可用：第 ${result.hops.length} 跳失败（${result.hops[result.hops.length - 1]?.error ?? '未知错误'}）`}
+      </Alert>
+      {result.hops.length === 0 ? (
+        <Text size="sm" c="dimmed">未返回任何跳的测试结果</Text>
+      ) : (
+        <Stack gap="sm">
+          {result.hops.map((h) => (
+            <Group key={h.hop} justify="space-between" wrap="wrap">
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <Group gap="xs">
+                  <Badge size="xs" variant="light">第 {h.hop} 跳</Badge>
+                  <Text fw={600} size="sm">{h.key}</Text>
+                </Group>
+                {!h.ok && h.error && (
+                  <Text size="xs" c="red" mt={2} style={{ wordBreak: 'break-all' }}>{h.error}</Text>
+                )}
+              </div>
+              <Group gap="xs">
+                {h.ok ? (
+                  <>
+                    <Badge size="sm" color="green" variant="light">正常</Badge>
+                    <Text size="sm">{h.latency} ms</Text>
+                  </>
+                ) : (
+                  <Badge size="sm" color="red" variant="light">失败</Badge>
+                )}
+              </Group>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  )
+}
+
 export default function Egress() {
   const nodes = usePoolStore((s) => s.nodes)
   const refreshPool = usePoolStore((s) => s.refresh)
@@ -424,12 +558,37 @@ export default function Egress() {
   async function selectStrategy(value: string) {
     setBusy(true)
     try {
-      const res = await updateEgressConfig({ strategy: value as EgressConfig['strategy'] })
+      // 切到 auto-chain 时带上当前配置（首次切换用默认值：2 层 / 智能加权）
+      const patch: { strategy: EgressStrategy; chainHops?: number; chainSelection?: ChainSelection } = {
+        strategy: value as EgressStrategy,
+      }
+      if (value === 'auto-chain') {
+        patch.chainHops = config?.chainHops ?? 2
+        patch.chainSelection = config?.chainSelection ?? 'weighted'
+      }
+      const res = await updateEgressConfig(patch)
       if (res.code === 0 && res.data) {
         setConfig(res.data)
         setNotice({ type: 'success', text: `已切换到「${res.data.strategies.find((s) => s.value === value)?.label ?? value}」策略` })
       } else {
         setNotice({ type: 'error', text: res.msg || '切换策略失败' })
+      }
+    } catch (e) {
+      setNotice({ type: 'error', text: getErrorMessage(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveAutoChain(hops: number, selection: ChainSelection) {
+    setBusy(true)
+    try {
+      const res = await updateEgressConfig({ strategy: 'auto-chain', chainHops: hops, chainSelection: selection })
+      if (res.code === 0 && res.data) {
+        setConfig(res.data)
+        setNotice({ type: 'success', text: '自动链路配置已保存' })
+      } else {
+        setNotice({ type: 'error', text: res.msg || '保存自动链路配置失败' })
       }
     } catch (e) {
       setNotice({ type: 'error', text: getErrorMessage(e) })
@@ -621,7 +780,16 @@ export default function Egress() {
 
       {config?.strategy === 'chain' && <ChainManager nodes={nodes} />}
 
-      {config?.strategy !== 'fixed' && config?.strategy !== 'chain' && (
+      {config?.strategy === 'auto-chain' && (
+        <AutoChainConfig
+          hops={config.chainHops}
+          selection={config.chainSelection}
+          busy={busy}
+          onSave={saveAutoChain}
+        />
+      )}
+
+      {config?.strategy !== 'fixed' && config?.strategy !== 'chain' && config?.strategy !== 'auto-chain' && (
         <Card padding="lg" radius="md" withBorder style={{ maxWidth: 620 }}>
           <Group gap="sm">
             <RadioTower size={18} />

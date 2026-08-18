@@ -48,6 +48,10 @@ type Gateway struct {
 	// nil 表示未注入（chain 策略无链可用）。
 	chainsProvider func() ([]model.ProxyChain, error)
 
+	// autoChainConfig 返回自动链路（auto-chain）策略的层数与每层选择策略。由外部注入。
+	// 返回 hops=0 时视为未配置，自动链路策略不可用。
+	autoChainConfig func() (hops int, selection scheduler.Strategy)
+
 	// chainCache 是链列表的 TTL 缓存：链列表来自 SQLite，每次请求都查询会浪费 DB 访问。
 	// 链的增删/启停通过 API 变更，最多延迟 chainCacheTTL 生效。
 	chainMu       sync.Mutex
@@ -188,6 +192,14 @@ func (g *Gateway) SetChainsProvider(p func() ([]model.ProxyChain, error)) {
 	g.chainsProvider = p
 }
 
+// SetAutoChainConfig 注入自动链路（auto-chain）策略的层数与每层选择策略读取函数。
+// 层数/选择策略可在运行时通过配置修改，每次建立自动链路时都会重新读取。
+func (g *Gateway) SetAutoChainConfig(f func() (int, scheduler.Strategy)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.autoChainConfig = f
+}
+
 // splitHostPort 将 host:port 拆分为 host 与端口号。
 func splitHostPort(addr string) (host string, port int, err error) {
 	h, p, err := net.SplitHostPort(addr)
@@ -272,12 +284,20 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 
 	var lastErr error
 	for attempt := 0; attempt < g.limitCtx; attempt++ {
-		// chain 策略：不选单跳节点，而是从已启用的链路中随机挑一条可用链逐跳连接。
-		if g.selector.Strategy() == scheduler.StrategyChain {
-			conn, err := g.upstreamViaChain(ctx, target)
+		// 链路类策略：不选单跳节点，按链路建立隧道。
+		// chain 从已启用的手动链路挑选；auto-chain 按配置自动挑选 N 个节点。
+		strategy := g.selector.Strategy()
+		if strategy == scheduler.StrategyChain || strategy == scheduler.StrategyAutoChain {
+			var conn net.Conn
+			var err error
+			if strategy == scheduler.StrategyChain {
+				conn, err = g.upstreamViaChain(ctx, target)
+			} else {
+				conn, err = g.upstreamViaAutoChain(ctx, target)
+			}
 			if err != nil {
 				lastErr = err
-				break
+				break // 链路建立失败不重试单跳，直接返回错误
 			}
 			return conn, nil
 		}
@@ -422,6 +442,44 @@ func (g *Gateway) upstreamViaChain(ctx context.Context, target string) (net.Conn
 		lastErr = fmt.Errorf("no usable chain (all chains have dead nodes)")
 	}
 	return nil, fmt.Errorf("all chains failed for %s: %w", target, lastErr)
+}
+
+// upstreamViaAutoChain 按自动链路配置（层数 + 每层选择策略）从存活节点中
+// 自动挑选 N 个互不相同的节点，逐跳建立直达 target 的隧道。
+func (g *Gateway) upstreamViaAutoChain(ctx context.Context, target string) (net.Conn, error) {
+	g.mu.Lock()
+	configFn := g.autoChainConfig
+	g.mu.Unlock()
+	if configFn == nil {
+		return nil, fmt.Errorf("auto-chain strategy enabled but no config provider configured")
+	}
+	hops, selection := configFn()
+	if hops <= 0 {
+		return nil, fmt.Errorf("auto-chain strategy enabled but hops not configured")
+	}
+
+	// 每次请求现选节点，节点池变化即时生效（无需缓存）；
+	// 链路建立失败时由调用方整体报错，下一次请求会重新挑选。
+	nodes := g.selector.SelectChain(hops, selection)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("auto-chain strategy enabled but no live node in pool")
+	}
+
+	conn, err := validator.ConnectChain(nodes, target, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	g.mu.Lock()
+	g.currentNode = nodes[len(nodes)-1]
+	g.mu.Unlock()
+	if g.bus != nil {
+		names := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			names = append(names, n.Key())
+		}
+		g.bus.Debug(fmt.Sprintf("auto-chain established via [%s] -> %s", strings.Join(names, " -> "), target))
+	}
+	return conn, nil
 }
 
 // ipv6Domain 对 IPv6 字面量地址做 PTR 反查，返回对应的域名（去掉末尾点）。

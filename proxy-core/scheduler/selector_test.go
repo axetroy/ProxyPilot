@@ -705,3 +705,169 @@ func TestPinnedOnlyInFixedStrategy(t *testing.T) {
 		t.Fatalf("fixed strategy should restore pinned node, got %+v", s.Pinned())
 	}
 }
+
+// ---------- 自动链路（auto-chain） ----------
+
+// TestValidChainSelection 每层选择策略的合法性校验。
+func TestValidChainSelection(t *testing.T) {
+	for _, ok := range []string{"weighted", "random", "best"} {
+		if !ValidChainSelection(ok) {
+			t.Errorf("ValidChainSelection(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"fixed", "round-robin", "chain", "auto-chain", ""} {
+		if ValidChainSelection(bad) {
+			t.Errorf("ValidChainSelection(%q) = true, want false", bad)
+		}
+	}
+}
+
+// TestAutoChainRegistered auto-chain 是合法策略且不参与单跳节点选择。
+func TestAutoChainRegistered(t *testing.T) {
+	if !ValidStrategy(string(StrategyAutoChain)) {
+		t.Fatal("auto-chain should be a valid strategy")
+	}
+	s := NewSelector(newTestPool(t))
+	s.SetStrategy(StrategyAutoChain)
+	if s.Strategy() != StrategyAutoChain {
+		t.Fatalf("strategy = %s, want auto-chain", s.Strategy())
+	}
+	if n := s.Next(); n != nil {
+		t.Fatalf("Next() = %+v, want nil under auto-chain strategy", n)
+	}
+}
+
+// TestSelectChainBest 按层数挑选互不相同的节点（best 策略）。
+func TestSelectChainBest(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 80, 100)
+	addAlive(t, m, "c", 70, 100)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(3, StrategyBest)
+	if len(nodes) != 3 {
+		t.Fatalf("SelectChain(3) = %d nodes, want 3", len(nodes))
+	}
+	// best：先高分后低分，顺序确定
+	if nodes[0].Score < nodes[1].Score || nodes[1].Score < nodes[2].Score {
+		t.Fatalf("best selection not sorted by score desc: %v", nodes)
+	}
+	// 节点互不相同
+	seen := map[int64]bool{}
+	for _, n := range nodes {
+		if seen[n.ID] {
+			t.Fatalf("duplicate node %d in chain", n.ID)
+		}
+		seen[n.ID] = true
+	}
+}
+
+// TestSelectChainBestDedup 相同分数的节点也应去重。
+func TestSelectChainBestDedup(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 90, 100)
+	addAlive(t, m, "c", 90, 100)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(3, StrategyBest)
+	if len(nodes) != 3 {
+		t.Fatalf("SelectChain(3) = %d nodes, want 3", len(nodes))
+	}
+	seen := map[int64]bool{}
+	for _, n := range nodes {
+		if seen[n.ID] {
+			t.Fatalf("duplicate node %d in chain (same score)", n.ID)
+		}
+		seen[n.ID] = true
+	}
+}
+
+// TestSelectChainLimitToAlive 存活节点不足层数时按实际存活数返回。
+func TestSelectChainLimitToAlive(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 80, 100)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(5, StrategyRandom)
+	if len(nodes) != 2 {
+		t.Fatalf("SelectChain(5) with 2 alive = %d nodes, want 2", len(nodes))
+	}
+}
+
+// TestSelectChainNoAlive 无存活节点时返回空。
+func TestSelectChainNoAlive(t *testing.T) {
+	m := newTestPool(t)
+	s := NewSelector(m)
+	if nodes := s.SelectChain(3, StrategyRandom); nodes != nil {
+		t.Fatalf("SelectChain with empty pool = %v, want nil", nodes)
+	}
+}
+
+// TestSelectChainSkipsDead 自动链路只从存活节点中挑选（dead 节点不参与）。
+func TestSelectChainSkipsDead(t *testing.T) {
+	checker := &mockChecker{fail: map[int64]bool{}}
+	m := newTestPoolWithChecker(t, checker)
+	addAlive(t, m, "alive", 90, 100)
+	dead := addAlive(t, m, "dead", 80, 100)
+	// 让 dead 节点检测失败 -> 状态变 dead
+	checker.fail[dead.ID] = true
+	m.CheckNode(dead)
+
+	s := NewSelector(m)
+	nodes := s.SelectChain(3, StrategyBest)
+	if len(nodes) != 1 {
+		t.Fatalf("SelectChain with 1 alive = %d nodes, want 1", len(nodes))
+	}
+	if nodes[0].Status != model.StatusAlive {
+		t.Fatalf("selected node should be alive, got %+v", nodes[0])
+	}
+}
+
+// TestSelectChainHonorsPenalty 连续失败的节点在自动链路中权重被惩罚（best 不再选中）。
+func TestSelectChainHonorsPenalty(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	b := addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	// a 连续失败两次 -> 权重衰减为 90*0.25 = 22.5，低于 b 的 50
+	s.FailOn(a.ID)
+	s.FailOn(a.ID)
+
+	nodes := s.SelectChain(1, StrategyBest)
+	if len(nodes) != 1 {
+		t.Fatalf("SelectChain(1) = %d nodes, want 1", len(nodes))
+	}
+	if nodes[0].ID == a.ID {
+		t.Fatalf("expected penalized node a not selected, got %d", nodes[0].ID)
+	}
+	_ = b
+}
+
+// TestSelectChainRandomVariety random 策略多次调用应覆盖多个节点且互不相同。
+func TestSelectChainRandomVariety(t *testing.T) {
+	m := newTestPool(t)
+	addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 80, 100)
+	addAlive(t, m, "c", 70, 100)
+
+	s := NewSelector(m)
+	seenIDs := map[int64]bool{}
+	for i := 0; i < 30; i++ {
+		nodes := s.SelectChain(2, StrategyRandom)
+		if len(nodes) != 2 {
+			t.Fatalf("SelectChain(2) = %d nodes, want 2", len(nodes))
+		}
+		if nodes[0].ID == nodes[1].ID {
+			t.Fatalf("duplicate node in random chain: %d", nodes[0].ID)
+		}
+		seenIDs[nodes[0].ID] = true
+		seenIDs[nodes[1].ID] = true
+	}
+	if len(seenIDs) < 3 {
+		t.Fatalf("random chain should eventually cover all nodes, got %d distinct", len(seenIDs))
+	}
+}

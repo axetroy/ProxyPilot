@@ -128,7 +128,10 @@ export interface PacConfig {
 }
 
 /** 网关出口策略 */
-export type EgressStrategy = 'fixed' | 'best' | 'random' | 'weighted' | 'round-robin' | 'chain'
+export type EgressStrategy = 'fixed' | 'best' | 'random' | 'weighted' | 'round-robin' | 'chain' | 'auto-chain'
+
+/** 自动链路每层可用的选择策略 */
+export type ChainSelection = 'weighted' | 'random' | 'best'
 
 /** 出口策略描述（后端 scheduler.StrategyMeta） */
 export interface EgressStrategyMeta {
@@ -143,6 +146,9 @@ export interface EgressConfig {
   pinnedNode?: ProxyNode
   aliveCount: number
   strategies: EgressStrategyMeta[]
+  /** 自动链路（auto-chain）层数与每层选择策略 */
+  chainHops: number
+  chainSelection: ChainSelection
 }
 
 /** 代理链路（客户端按序经过多个节点到达目标） */

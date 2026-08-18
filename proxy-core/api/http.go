@@ -84,6 +84,7 @@ func NewRouter(s *Services) *gin.Engine {
 	r.DELETE("/api/proxy/pin", s.unpinProxy)
 	r.GET("/api/egress", s.getEgress)
 	r.PUT("/api/egress", s.updateEgress)
+	r.POST("/api/egress/auto-chain/test", s.testAutoChain)
 	r.GET("/api/chains", s.listChains)
 	r.POST("/api/chain", s.createChain)
 	r.PUT("/api/chain/:id", s.updateChain)

@@ -753,6 +753,9 @@ score / latency
 5. **round-robin 轮询**：存活节点按 ID 顺序轮流使用（协议族内过滤 + 回退），均衡负载，不做粘性。
 6. **chain 代理链路**：客户端依次经过多个代理节点到达目标（客户端 → n0 → n1 → … → target），
    提升匿名性与绕过能力。链路由用户配置（`proxy_chains` 表，有序节点 ID 列表，可按需启用多条）。
+7. **auto-chain 自动链路**：无需手动指定节点，按配置的层数 N 与每层选择策略
+   （weighted / random / best），每次连接自动从存活节点中挑选 N 个互不相同的节点组成链路
+   （客户端 → nodes[0] → … → target），节点池变化即时生效、节点失效自动换新。
 
 ### 代理链路（chain）
 
@@ -766,6 +769,25 @@ score / latency
 - 链 CRUD 由 `/api/chain`（`GET /api/chains`、`POST /api/chain`、`PUT /api/chain/:id`、`DELETE /api/chain/:id`）管理，
   节点校验：全部存在于节点池、去重保序；链默认停用，需在界面显式启用。
 - 限制：SOCKS5 UDP 中继不支持链路承载，chain 策略下 UDP 流量回退到单跳 SOCKS5 节点。
+
+### 自动链路（auto-chain）
+
+- 与手动 chain 不同，auto-chain **不需要用户指定节点**：按配置的层数 N 与每层选择策略，
+  由 `scheduler.Selector.SelectChain(N, strategy)` 从存活节点中挑选 N 个**互不相同**的节点
+  （每层按 weighted 加权 / random 随机 / best 最高分挑选，叠加失败惩罚；存活节点不足 N 时
+  按实际存活数建链，无存活节点时报错）。
+- 链路连接同样走 `validator.ConnectChain`（逐跳握手：HTTP CONNECT / HTTPS TLS+CONNECT / SOCKS5），
+  返回的节点顺序即链路跳顺序。每层不限制协议，各跳节点协议可混合。
+- 配置项：`chain_hops`（层数，1-8，默认 2）与 `chain_selection`（每层策略，
+  weighted / random / best，默认 weighted），由 `/api/egress` 接口管理（PUT 时可携带
+  `chainHops` / `chainSelection`，持久化在 settings 表，重启自动恢复）。
+- 一键测试：`POST /api/egress/auto-chain/test` 按当前配置从存活节点中挑选节点，
+  复用 `validator.TestChain` 逐跳测试，返回与手动链路测试相同的 `ChainTestResult` 结构
+  （每跳 key/latency/error），供前端展示整链连通性与每跳延迟。
+- 网关每次请求现选节点（无缓存），节点池增删/状态变化即时生效；链路建立失败时整体报错，
+  下一次请求重新挑选节点。适配场景：不想维护具体链路、希望节点失效自动换新。
+- 限制：同 chain 策略，UDP 流量回退到单跳 SOCKS5 节点；auto-chain 为动态现选，
+  无法像手动链路那样预先固定并测试整条链（测试仅反映当前一次挑选）。
 
 固定出口（Pin）与策略联动：`Pin` 自动切到 fixed 策略，`Unpin` 恢复智能加权；
 指定节点被删除时选择器自动清除（内存），重启时清理持久化。

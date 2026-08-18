@@ -113,7 +113,7 @@ proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPi
   model/               # 数据模型（ProxyNode / Subscription / CheckResult 等）
   parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）与导出（proxy_export.go）
   pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
-  scheduler/           # 出口选择：集中策略（fixed 固定 / best 最高评分 / random 随机 / weighted 智能加权 / round-robin 轮询 / chain 代理链路），失败惩罚窗口 30s，粘性绑定 10min，固定出口自动联动 fixed 策略
+  scheduler/           # 出口选择：集中策略（fixed 固定 / best 最高评分 / random 随机 / weighted 智能加权 / round-robin 轮询 / chain 代理链路 / auto-chain 自动链路），失败惩罚窗口 30s，粘性绑定 10min，固定出口自动联动 fixed 策略
   geoip/               # 离线 IP 地区解析（ip2region xdb 数据 go:embed 内嵌，无外部 API）
   storage/             # SQLite（modernc.org/sqlite，无 CGO）：proxy_nodes/subscriptions/check_history/settings/proxy_chains
   validator/           # 节点连通性检测（HTTP 探测 + TCP 隧道）+ ConnectChain 逐跳链路连接（HTTP CONNECT / HTTPS TLS / SOCKS5 手写握手）

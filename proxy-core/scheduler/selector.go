@@ -30,12 +30,24 @@ const (
 	// StrategyChain 代理链路：客户端按序经过多个代理节点到达目标。
 	// 链的选择与连接由网关负责（链上任意节点失效则该链不可用）。
 	StrategyChain Strategy = "chain"
+	// StrategyAutoChain 自动链路：按配置的层数与每层选择策略，
+	// 自动从存活节点中挑出 N 个互不相同的节点组成链路，无需手动指定节点。
+	StrategyAutoChain Strategy = "auto-chain"
 )
 
 // ValidStrategy 判断字符串是否是合法的出口策略。
 func ValidStrategy(s string) bool {
 	switch Strategy(s) {
-	case StrategyFixed, StrategyBest, StrategyRandom, StrategyWeighted, StrategyRoundRobin, StrategyChain:
+	case StrategyFixed, StrategyBest, StrategyRandom, StrategyWeighted, StrategyRoundRobin, StrategyChain, StrategyAutoChain:
+		return true
+	}
+	return false
+}
+
+// ValidChainSelection 判断字符串是否是合法的自动链路每层选择策略。
+func ValidChainSelection(s string) bool {
+	switch Strategy(s) {
+	case StrategyWeighted, StrategyRandom, StrategyBest:
 		return true
 	}
 	return false
@@ -57,6 +69,7 @@ func Strategies() []StrategyMeta {
 		{Value: string(StrategyWeighted), Label: "智能加权", Desc: "评分/延迟加权，叠加失败惩罚与域名粘性（默认，推荐）"},
 		{Value: string(StrategyRoundRobin), Label: "轮询", Desc: "存活节点按顺序轮流使用，均衡负载"},
 		{Value: string(StrategyChain), Label: "代理链路", Desc: "客户端依次经过多个代理节点到达目标（链上节点全部存活才可用）"},
+		{Value: string(StrategyAutoChain), Label: "自动链路", Desc: "按配置的层数自动从存活节点中挑选节点组成链路，无需手动指定"},
 	}
 }
 
@@ -210,6 +223,9 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 		return s.selectRoundRobin()
 	case StrategyChain:
 		// 链路策略不在此选择单跳节点，由网关按已配置的链路逐跳连接。
+		return nil
+	case StrategyAutoChain:
+		// 自动链路策略不在此选择单跳节点，由网关按配置自动挑选 N 个节点逐跳连接。
 		return nil
 	}
 
@@ -457,4 +473,121 @@ func effectiveScore(n *model.ProxyNode, failures int) float64 {
 		s *= math.Pow(failurePenalty, float64(failures))
 	}
 	return s
+}
+
+// SelectChain 为自动链路策略挑选 n 个互不相同的存活节点，
+// 每层按 selection 策略选择（weighted / random / best）。
+// 存活节点不足 n 时返回实际可用数量；无存活节点时返回空切片。
+// 返回的节点顺序即链路的跳顺序（客户端 → nodes[0] → … → target）。
+func (s *Selector) SelectChain(n int, selection Strategy) []*model.ProxyNode {
+	if n <= 0 {
+		return nil
+	}
+	alive := s.pool.Alive()
+	if len(alive) == 0 {
+		return nil
+	}
+	if n > len(alive) {
+		n = len(alive)
+	}
+	// 逐层挑选，每层排除已选节点，保证同一链路内节点不重复。
+	picked := make(map[int64]bool, n)
+	nodes := make([]*model.ProxyNode, 0, n)
+	for len(nodes) < n {
+		var node *model.ProxyNode
+		switch selection {
+		case StrategyBest:
+			node = s.pickBestNotIn(alive, picked)
+		case StrategyRandom:
+			node = s.pickRandomNotIn(alive, picked)
+		default: // weighted（默认）：加权挑选
+			node = s.pickWeightedNotIn(alive, picked)
+		}
+		if node == nil {
+			break // 理论上不会发生（len(alive) >= n）
+		}
+		picked[node.ID] = true
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// pickBestNotIn 从 candidates 中选评分最高且未被 picked 的节点。
+func (s *Selector) pickBestNotIn(candidates []*model.ProxyNode, picked map[int64]bool) *model.ProxyNode {
+	best := (*model.ProxyNode)(nil)
+	var bestWeight float64
+	for _, n := range candidates {
+		if picked[n.ID] {
+			continue
+		}
+		penalty := s.failureCount(n.ID)
+		w := effectiveScore(n, penalty)
+		// 同分数比延迟：延迟越低越优
+		if best == nil || w > bestWeight || (w == bestWeight && n.Latency < best.Latency) {
+			best = n
+			bestWeight = w
+		}
+	}
+	return best
+}
+
+// pickRandomNotIn 从 candidates 中随机选一个未被 picked 的节点。
+func (s *Selector) pickRandomNotIn(candidates []*model.ProxyNode, picked map[int64]bool) *model.ProxyNode {
+	var avail []*model.ProxyNode
+	for _, n := range candidates {
+		if !picked[n.ID] {
+			avail = append(avail, n)
+		}
+	}
+	if len(avail) == 0 {
+		return nil
+	}
+	return avail[rand.Intn(len(avail))]
+}
+
+// pickWeightedNotIn 从 candidates 中按 评分/延迟 加权随机选一个未被 picked 的节点。
+func (s *Selector) pickWeightedNotIn(candidates []*model.ProxyNode, picked map[int64]bool) *model.ProxyNode {
+	total := 0.0
+	weights := make([]float64, 0, len(candidates))
+	nodes := make([]*model.ProxyNode, 0, len(candidates))
+	for _, n := range candidates {
+		if picked[n.ID] {
+			continue
+		}
+		penalty := s.failureCount(n.ID)
+		w := effectiveScore(n, penalty)
+		if w <= 0 {
+			w = 0 // 分数无效时不参与加权（防止选择坏节点）
+		}
+		weights = append(weights, w)
+		nodes = append(nodes, n)
+		total += w
+	}
+	if total <= 0 || len(nodes) == 0 {
+		// 全部无效（无分数）：退化为随机挑选。
+		return s.pickRandomNotIn(candidates, picked)
+	}
+	r := rand.Float64() * total
+	for i, w := range weights {
+		r -= w
+		if r <= 0 {
+			return nodes[i]
+		}
+	}
+	return nodes[len(nodes)-1]
+}
+
+// failureCount 返回节点当前生效的连续失败次数（窗口外为 0）。
+func (s *Selector) failureCount(id int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.failures[id]
+	if !ok {
+		return 0
+	}
+	if time.Since(f.at) > failureWindow {
+		delete(s.failures, id)
+		return 0
+	}
+	return f.count
 }
