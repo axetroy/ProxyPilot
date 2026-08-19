@@ -42,6 +42,8 @@ type Manager struct {
 	mu              sync.RWMutex
 	direct          map[string]struct{}
 	proxy           map[string]struct{}
+	customDirect    map[string]struct{} // 手动直连名单（匹配优先级最高）
+	customProxy     map[string]struct{} // 手动代理名单（匹配优先级最高）
 	enabled         bool
 	mode            string
 	directURLs      string
@@ -65,7 +67,7 @@ func NewManager(cfg *config.Config, bus *bus.Bus, dbPath string) *Manager {
 	return m
 }
 
-// ApplyConfig 从 cfg 同步开关/模式/规则源/刷新周期。
+// ApplyConfig 从 cfg 同步开关/模式/规则源/刷新周期/手动名单。
 // api 层更新配置（/api/pac-config）后必须调用，保证匹配与同步读到最新值。
 func (m *Manager) ApplyConfig() {
 	m.mu.Lock()
@@ -75,6 +77,21 @@ func (m *Manager) ApplyConfig() {
 	m.directURLs = m.cfg.PACDirectURLs
 	m.proxyURLs = m.cfg.PACProxyURLs
 	m.refreshInterval = m.cfg.PACRefreshInterval
+	m.customDirect = parseDomainList(m.cfg.PACCustomDirect)
+	m.customProxy = parseDomainList(m.cfg.PACCustomProxy)
+}
+
+// parseDomainList 解析逗号分隔的域名名单为集合（规范化：小写、去空白）。
+func parseDomainList(list string) map[string]struct{} {
+	s := make(map[string]struct{})
+	for _, d := range strings.Split(list, ",") {
+		d = normalizeHost(d)
+		if d == "" {
+			continue
+		}
+		s[d] = struct{}{}
+	}
+	return s
 }
 
 // Enabled 返回分流开关状态。关闭时网关全部走代理（Shunt 恒返回 false）。
@@ -110,12 +127,21 @@ func (m *Manager) Match(host string) Action {
 	if isLocalDomain(host) {
 		return ActionDirect
 	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	// 手动规则优先于同步名单与 .cn/geoip：用户明确指定的域名（无论模式）
+	// 以手动代理 > 手动直连的顺序裁决，保证「强制走代理/强制直连」的意图生效。
+	if domainHit(m.customProxy, host) {
+		return ActionProxy
+	}
+	if domainHit(m.customDirect, host) {
+		return ActionDirect
+	}
 	if strings.HasSuffix(host, ".cn") {
 		return ActionDirect
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	switch m.mode {
 	case ModeBlacklist:
 		if domainHit(m.proxy, host) {
@@ -162,11 +188,18 @@ func (m *Manager) Shunt() func(host string) bool {
 	}
 }
 
-// Stats 返回规则统计与最近同步状态。
+// Stats 返回规则统计与最近同步状态（仅同步名单）。
 func (m *Manager) Stats() (directCount, proxyCount int, syncAt time.Time, syncErr string, syncing bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.direct), len(m.proxy), m.syncAt, m.syncErr, m.syncing
+}
+
+// CustomStats 返回手动规则条数（直连/代理）。
+func (m *Manager) CustomStats() (directCount, proxyCount int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.customDirect), len(m.customProxy)
 }
 
 // normalizeHost 规范化 host：小写、去首尾空白、去末尾点。

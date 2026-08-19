@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,10 @@ type pacConfig struct {
 	DirectURLs string `json:"directUrls"` // 直连规则列表 URL（逗号分隔）
 	ProxyURLs  string `json:"proxyUrls"`  // 代理规则列表 URL（逗号分隔）
 	Refresh    string `json:"refresh"`    // 自动刷新周期
+
+	// 手动规则名单（用户自定义域名，优先级高于同步名单）
+	CustomDirect []string `json:"customDirect"`
+	CustomProxy  []string `json:"customProxy"`
 
 	// 规则同步状态（仅展示，由规则管理器回填）
 	DirectCount int       `json:"directCount"` // 直连规则条数
@@ -34,6 +39,8 @@ func (s *Services) currentPAC() pacConfig {
 		ProxyURLs:  s.Cfg.PACProxyURLs,
 		Refresh:    s.Cfg.PACRefreshInterval.String(),
 	}
+	cfg.CustomDirect = splitDomains(s.Cfg.PACCustomDirect)
+	cfg.CustomProxy = splitDomains(s.Cfg.PACCustomProxy)
 	if s.Rule != nil {
 		dc, pc, syncAt, syncErr, syncing := s.Rule.Stats()
 		cfg.DirectCount = dc
@@ -45,6 +52,20 @@ func (s *Services) currentPAC() pacConfig {
 	return cfg
 }
 
+// splitDomains 把逗号分隔的域名名单拆成去空白后的切片。
+// 始终返回非 nil 切片，保证 JSON 序列化为 [] 而非 null（前端类型为 string[]）。
+func splitDomains(list string) []string {
+	out := make([]string, 0)
+	for _, d := range strings.Split(list, ",") {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // getPACConfig 返回智能分流配置与规则同步状态。
 func (s *Services) getPACConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, ok(s.currentPAC()))
@@ -52,11 +73,13 @@ func (s *Services) getPACConfig(c *gin.Context) {
 
 // updatePACReq 更新智能分流配置的请求体（字段为 nil 表示不修改）。
 type updatePACReq struct {
-	Enabled    *bool   `json:"enabled"`
-	Mode       *string `json:"mode"`
-	DirectURLs *string `json:"directUrls"`
-	ProxyURLs  *string `json:"proxyUrls"`
-	Refresh    *string `json:"refresh"`
+	Enabled      *bool     `json:"enabled"`
+	Mode         *string   `json:"mode"`
+	DirectURLs   *string   `json:"directUrls"`
+	ProxyURLs    *string   `json:"proxyUrls"`
+	Refresh      *string   `json:"refresh"`
+	CustomDirect *[]string `json:"customDirect"` // 手动直连名单（整表覆盖；nil 表示不修改）
+	CustomProxy  *[]string `json:"customProxy"`  // 手动代理名单（整表覆盖；nil 表示不修改）
 }
 
 // updatePACConfig 更新智能分流配置并持久化。
@@ -113,6 +136,26 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 		}
 		_ = s.Store.SetSetting(config.KeyPACRefresh, *req.Refresh)
 	}
+	// 手动规则名单：整表覆盖（nil 表示不修改）
+	for _, upd := range []struct {
+		key   string
+		items *[]string
+		apply func(string)
+	}{
+		{config.KeyPACCustomDirect, req.CustomDirect, func(v string) { s.Cfg.PACCustomDirect = v }},
+		{config.KeyPACCustomProxy, req.CustomProxy, func(v string) { s.Cfg.PACCustomProxy = v }},
+	} {
+		if upd.items == nil {
+			continue
+		}
+		joined := joinDomains(*upd.items)
+		if err := config.ValidateSetting(upd.key, joined); err != nil {
+			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
+			return
+		}
+		upd.apply(joined)
+		_ = s.Store.SetSetting(upd.key, joined)
+	}
 
 	// 同步开关/模式/规则源/刷新周期到规则管理器（保护其内部状态的一致性）
 	if s.Rule != nil {
@@ -138,4 +181,22 @@ func (s *Services) syncPAC(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, ok(s.currentPAC()))
+}
+
+// joinDomains 把域名列表规范化（小写、去空白、去重）后以逗号连接。
+func joinDomains(items []string) string {
+	seen := make(map[string]struct{})
+	var parts []string
+	for _, d := range items {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		parts = append(parts, d)
+	}
+	return strings.Join(parts, ",")
 }

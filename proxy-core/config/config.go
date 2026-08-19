@@ -51,6 +51,10 @@ const (
 	KeyPACDirectURLs = "pac_direct_urls"
 	KeyPACProxyURLs  = "pac_proxy_urls"
 	KeyPACRefresh    = "pac_refresh_interval"
+	// 手动规则名单（用户自定义域名，逗号分隔）：匹配优先级高于同步名单，
+	// 与规则源一同由 /api/pac-config 管理。
+	KeyPACCustomDirect = "pac_custom_direct"
+	KeyPACCustomProxy  = "pac_custom_proxy"
 )
 
 // 智能分流默认规则源：Loyalsoldier/surge-rules（每日自动更新）。
@@ -87,6 +91,8 @@ func Settings() []SettingDef {
 		{Key: KeyPACDirectURLs, Default: DefaultPACDirectURLs, Desc: "直连规则列表 URL（逗号分隔，按序尝试）", Validate: validateURLList},
 		{Key: KeyPACProxyURLs, Default: DefaultPACProxyURLs, Desc: "代理规则列表 URL（逗号分隔，按序尝试）", Validate: validateURLList},
 		{Key: KeyPACRefresh, Default: "24h", Desc: "分流规则自动刷新周期（如 12h、24h，最小 1 小时）", Validate: validatePACRefresh},
+		{Key: KeyPACCustomDirect, Default: "", Desc: "手动直连名单（域名，逗号分隔，优先级最高）", Validate: validateDomainList},
+		{Key: KeyPACCustomProxy, Default: "", Desc: "手动代理名单（域名，逗号分隔，优先级最高）", Validate: validateDomainList},
 	}
 }
 
@@ -176,6 +182,41 @@ func validatePACRefresh(v string) error {
 	return nil
 }
 
+// validateDomainList 校验逗号分隔的手动规则域名名单（允许空）。
+// 域名规则与 rule 包一致：小写字母/数字/-/.，≤255，不以点或连字符开头/结尾。
+func validateDomainList(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	for _, d := range strings.Split(v, ",") {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if !validDomain(d) {
+			return fmt.Errorf("含非法域名: %s（仅限小写字母/数字/-/.，≤255）", d)
+		}
+	}
+	return nil
+}
+
+// validDomain 域名白名单校验（与 rule 包保持一致，避免循环依赖）。
+func validDomain(d string) bool {
+	if len(d) == 0 || len(d) > 255 {
+		return false
+	}
+	if strings.HasPrefix(d, ".") || strings.HasSuffix(d, ".") {
+		return false
+	}
+	if strings.HasPrefix(d, "-") || strings.HasSuffix(d, "-") {
+		return false
+	}
+	for _, r := range d {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // validateIPOrEmpty 校验 IP 地址（空串表示未选择，允许）。
 func validateIPOrEmpty(v string) error {
 	if v == "" {
@@ -208,6 +249,8 @@ type Config struct {
 	PACDirectURLs        string // 直连规则列表 URL（逗号分隔，按序尝试）
 	PACProxyURLs         string // 代理规则列表 URL（逗号分隔，按序尝试）
 	PACRefreshInterval   time.Duration // 分流规则自动刷新周期
+	PACCustomDirect      string // 手动直连名单（域名，逗号分隔，匹配优先级最高）
+	PACCustomProxy       string // 手动代理名单（域名，逗号分隔，匹配优先级最高）
 	// 自动链路（auto-chain）策略参数：层数与每层选择策略。
 	ChainHops      int    // 自动链路层数（默认 2）
 	ChainSelection string // 每层选择策略（weighted / random / best，默认 weighted）
@@ -421,6 +464,10 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 				c.PACRefreshInterval = d
 			}
 		}, true
+	case KeyPACCustomDirect:
+		return func(v string) { c.PACCustomDirect = v }, true
+	case KeyPACCustomProxy:
+		return func(v string) { c.PACCustomProxy = v }, true
 	case KeyChainHops:
 		return func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 8 {

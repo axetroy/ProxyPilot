@@ -120,6 +120,9 @@ export interface PacConfig {
   directUrls: string
   proxyUrls: string
   refresh: string
+  /** 手动规则名单（用户自定义域名，匹配优先级最高，整表覆盖提交） */
+  customDirect: string[]
+  customProxy: string[]
   directCount: number
   proxyCount: number
   syncAt?: string

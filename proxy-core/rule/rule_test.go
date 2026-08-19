@@ -316,3 +316,78 @@ func TestLoadCacheBuiltin(t *testing.T) {
 		t.Error("google.com should be proxy from builtin list")
 	}
 }
+
+// TestMatchCustomRules 手动规则名单优先级高于同步名单与 .cn / geoip：
+// 用户明确指定的域名（无论分流模式）按手动代理 > 手动直连裁决。
+func TestMatchCustomRules(t *testing.T) {
+	m := newTestManager(t, func(c *config.Config) {
+		c.PACEnabled = true
+		c.PACMode = ModeWhitelist
+		c.PACCustomDirect = "google.com, mirror.taobao.com"
+		c.PACCustomProxy = "forced.com, forced.cn"
+	})
+	m.mu.Lock()
+	m.direct = map[string]struct{}{"taobao.com": {}, "forced.com": {}}
+	m.proxy = map[string]struct{}{"google.com": {}, "forced.cn": {}, "some-proxy.com": {}}
+	m.mu.Unlock()
+
+	cases := map[string]Action{
+		// 自定义代理：覆盖同步直连名单 / .cn
+		"forced.com":     ActionProxy, // 同步直连名单里也有，但手动代理优先
+		"forced.cn":      ActionProxy, // .cn 规则被手动代理覆盖
+		"sub.forced.com": ActionProxy, // 手动规则同样按父域后缀匹配
+		// 自定义直连：覆盖同步代理名单
+		"google.com":        ActionDirect, // 同步代理名单里也有，但手动直连优先
+		"www.google.com":    ActionDirect, // 后缀命中自定义直连
+		"mirror.taobao.com": ActionDirect, // 自定义直连（同步里无此域名，属新增）
+		// 未被手动命中的行为不变
+		"some-proxy.com": ActionProxy, // 同步代理名单
+		"taobao.com":     ActionDirect, // 同步直连名单
+		"baidu.com":      ActionProxy,  // 白名单默认走代理
+		"unknown.com":    ActionProxy,  // 默认走代理
+	}
+	for host, want := range cases {
+		if got := m.Match(host); got != want {
+			t.Errorf("Match(%q) = %s, want %s", host, got, want)
+		}
+	}
+
+	// 黑名单模式下手动代理同样生效（覆盖默认直连）
+	m2 := newTestManager(t, func(c *config.Config) {
+		c.PACEnabled = true
+		c.PACMode = ModeBlacklist
+		c.PACCustomProxy = "forced.proxy.com"
+		c.PACCustomDirect = "relaxed.com"
+	})
+	m2.mu.Lock()
+	m2.proxy = map[string]struct{}{"other-proxy.com": {}}
+	m2.mu.Unlock()
+	if got := m2.Match("forced.proxy.com"); got != ActionProxy {
+		t.Errorf("blacklist custom proxy: got %s, want proxy", got)
+	}
+	if got := m2.Match("relaxed.com"); got != ActionDirect {
+		t.Errorf("blacklist custom direct: got %s, want direct", got)
+	}
+	if got := m2.Match("other-proxy.com"); got != ActionProxy {
+		t.Errorf("blacklist synced proxy: got %s, want proxy", got)
+	}
+	if got := m2.Match("default.com"); got != ActionDirect {
+		t.Errorf("blacklist default: got %s, want direct", got)
+	}
+
+	// ApplyConfig 重新加载手动名单（对应 /api/pac-config 更新路径）
+	m2.cfg.PACCustomProxy = "new-forced.com"
+	m2.ApplyConfig()
+	if got := m2.Match("new-forced.com"); got != ActionProxy {
+		t.Errorf("after ApplyConfig custom proxy: got %s, want proxy", got)
+	}
+	if got := m2.Match("forced.proxy.com"); got != ActionDirect {
+		t.Errorf("after ApplyConfig removed custom proxy: got %s, want direct", got)
+	}
+
+	// CustomStats 返回手动名单条数
+	dc, pc := m2.CustomStats()
+	if dc != 1 || pc != 1 {
+		t.Errorf("CustomStats = (%d, %d), want (1, 1)", dc, pc)
+	}
+}
