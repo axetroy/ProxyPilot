@@ -609,11 +609,11 @@ type geoChecker struct{ proxiedIP string }
 func (c *geoChecker) Check(node *model.ProxyNode) (model.CheckResult, error) {
 	return model.CheckResult{
 		OK: true, Latency: 50,
-		Anonymity: &model.AnonymityProbe{ProxiedIP: c.proxiedIP},
+		Safety: &model.SafetyProbe{ProxiedIP: c.proxiedIP},
 	}, nil
 }
 
-// 检测完成后，节点应填充离线 GeoIP 解析的地区（优先使用匿名性探测到的出口 IP）。
+// 检测完成后，节点应填充离线 GeoIP 解析的地区（优先使用连接安全探测到的出口 IP）。
 func TestCheckNodeFillsGeoLocation(t *testing.T) {
 	m, _ := newTestManagerWithChecker(t, &geoChecker{proxiedIP: "8.8.8.8"})
 	m.AddNodes([]*model.ProxyNode{newNode("dummy.example.com", 443, model.ProtocolHTTP)})

@@ -23,7 +23,7 @@ var Version = "0.1.17"
 const (
 	KeyProxyPort         = "proxy_port"
 	KeyCheckTarget       = "check_target"
-	KeyCheckAnonymityTgt = "check_anonymity_target"
+	KeyCheckSafetyTgt = "check_safety_target"
 	KeyCheckTimeout      = "check_timeout"
 	KeyCheckConcurr      = "check_concurrency"
 	KeyRefreshPeriod     = "refresh_interval"
@@ -81,7 +81,7 @@ func Settings() []SettingDef {
 	return []SettingDef{
 		{Key: KeyProxyPort, Default: "7892", Desc: "代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用自动顺延）", Validate: validatePort},
 		{Key: KeyCheckTarget, Default: "https://www.apple.com/library/test/success.html", Desc: "节点检测目标 URL", Validate: validateURL},
-		{Key: KeyCheckAnonymityTgt, Default: "https://httpbin.org/anything", Desc: "匿名性检测回显端点（需返回 origin 与 headers 字段）", Validate: validateURL},
+		{Key: KeyCheckSafetyTgt, Default: "https://httpbin.org/anything", Desc: "连接安全检测回显端点（需返回 origin 与 headers 字段）", Validate: validateURL},
 		{Key: KeyCheckTimeout, Default: "10s", Desc: "单节点检测超时（如 5s、500ms）", Validate: validateDuration},
 		{Key: KeyCheckConcurr, Default: "32", Desc: "并发检测节点数", Validate: validatePositiveInt},
 		{Key: KeyRefreshPeriod, Default: "15m", Desc: "代理池自动检测周期（如 30m、1h）", Validate: validateDuration},
@@ -239,7 +239,7 @@ type Config struct {
 	ProxyPort            int    // 代理监听端口（HTTP 与 SOCKS5 共用）
 	SessionToken         string
 	CheckTarget          string
-	CheckAnonymityTarget string
+	CheckSafetyTarget string
 	CheckTimeout         time.Duration
 	CheckConcurrency     int
 	RefreshInterval      time.Duration
@@ -269,7 +269,7 @@ func New() *Config {
 		ProxyHost:            "127.0.0.1",
 		ProxyPort:            7892,
 		CheckTarget:          "https://www.apple.com/library/test/success.html",
-		CheckAnonymityTarget: "https://httpbin.org/anything",
+		CheckSafetyTarget: "https://httpbin.org/anything",
 		CheckTimeout:         10 * time.Second,
 		CheckConcurrency:     32,
 		RefreshInterval:      15 * time.Minute,
@@ -384,8 +384,8 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_CHECK_TARGET"); v != "" {
 		c.CheckTarget = v
 	}
-	if v := os.Getenv("PROXYPILOT_CHECK_ANONYMITY_TARGET"); v != "" {
-		c.CheckAnonymityTarget = v
+	if v := os.Getenv("PROXYPILOT_CHECK_SAFETY_TARGET"); v != "" {
+		c.CheckSafetyTarget = v
 	}
 	if v := os.Getenv("PROXYPILOT_CHECK_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -468,8 +468,8 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 		}, true
 	case KeyCheckTarget:
 		return func(v string) { c.CheckTarget = v }, true
-	case KeyCheckAnonymityTgt:
-		return func(v string) { c.CheckAnonymityTarget = v }, true
+	case KeyCheckSafetyTgt:
+		return func(v string) { c.CheckSafetyTarget = v }, true
 	case KeyCheckTimeout:
 		return func(v string) {
 			if d, err := time.ParseDuration(v); err == nil {
@@ -577,6 +577,16 @@ func (c *Config) LoadOverrides(st *storage.Store) {
 			}
 		}
 	}
+	// 兼容旧版配置 key：check_anonymity_target → check_safety_target。
+	// 老库若只存有旧 key，迁移到新 key 后删除旧记录。
+	const legacySafetyKey = "check_anonymity_target"
+	if v, err := st.GetSetting(legacySafetyKey); err == nil && v != "" {
+		if cur, err := st.GetSetting(KeyCheckSafetyTgt); err != nil || cur == "" {
+			_ = st.SetSetting(KeyCheckSafetyTgt, v)
+			c.CheckSafetyTarget = v
+		}
+		_ = st.DeleteSetting(legacySafetyKey)
+	}
 }
 
 // SettingValue 返回指定 key 的当前值（作为字符串）。
@@ -586,8 +596,8 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return strconv.Itoa(c.ProxyPort), true
 	case KeyCheckTarget:
 		return c.CheckTarget, true
-	case KeyCheckAnonymityTgt:
-		return c.CheckAnonymityTarget, true
+	case KeyCheckSafetyTgt:
+		return c.CheckSafetyTarget, true
 	case KeyCheckTimeout:
 		return c.CheckTimeout.String(), true
 	case KeyCheckConcurr:

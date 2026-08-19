@@ -1,11 +1,11 @@
 # AGENTS.md
 
-ProxyPilot 是桌面端智能代理管理与代理网关系统：自动收集代理订阅 → 检测可用性 →
-质量评分 → 维护代理池 → 为本机应用提供统一的 HTTP / HTTPS / SOCKS5 代理出口。
+ProxyPilot 是桌面端本地代理管理与代理网关系统：导入代理订阅 → 检测可用性 →
+质量评分 → 维护代理池 → 为本机应用提供统一的 HTTP / HTTPS / SOCKS5 本地代理出口。
 
 仓库由两个独立子项目组成（monorepo）：
 
-- `proxy-core/` — Golang 核心引擎（API + 订阅采集 + 检测 + 评分 + 本地代理网关）
+- `proxy-core/` — Golang 核心引擎（API + 订阅导入/同步 + 检测 + 评分 + 本地代理网关）
 - `app/` — Electron 桌面端 UI（React 19 + TypeScript + Vite + Mantine）
 
 详细架构见 [DESIGN.md](./DESIGN.md)。
@@ -112,7 +112,7 @@ proxy-core/            # Golang 核心引擎（模块 github.com/axetroy/ProxyPi
   rule/                # 智能分流规则：同步（Loyalsoldier/surge-rules）→ 域名白名单校验 → 匹配（代理名单/直连名单/.cn/geoip）
   model/               # 数据模型（ProxyNode / Subscription / CheckResult 等）
   parser/              # 订阅内容解析（Base64 / host:port / protocol://user:pass@host:port）与导出（proxy_export.go）
-  pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度）
+  pool/                # 节点池管理 + 质量评分（40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 连接安全度）
   scheduler/           # 出口选择：集中策略（fixed 固定 / best 最高评分 / random 随机 / weighted 智能加权 / round-robin 轮询 / chain 代理链路 / auto-chain 自动链路），失败惩罚窗口 30s，粘性绑定 10min，固定出口自动联动 fixed 策略
   geoip/               # 离线 IP 地区解析（ip2region xdb 数据 go:embed 内嵌，无外部 API）
   storage/             # SQLite（modernc.org/sqlite，无 CGO）：proxy_nodes/subscriptions/check_history/settings/proxy_chains
@@ -175,7 +175,7 @@ app/                   # Electron UI
   默认仅本机监听，对外暴露（`0.0.0.0:17891`）需用户显式配置，避免把管理 API 一起暴露；
   监听地址修改后需重启 proxy-core 生效（无热更新）。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：
-  `proxy_port` / `check_target` / `check_anonymity_target` / `check_timeout` / `check_concurrency` /
+  `proxy_port` / `check_target` / `check_safety_target` / `check_timeout` / `check_concurrency` /
   `refresh_interval` / `subscription_enabled` / `subscription_listen` / `history_retention_days`
   （检测历史保留天数）/ `chain_check_interval`（链路自动健康检测周期）；启动时 `config.LoadOverrides()`
   从 DB 覆盖默认值，环境变量优先级最高，其次 DB，最后默认值。`subscription_token` 不进
@@ -190,7 +190,7 @@ app/                   # Electron UI
   规则缓存写入与数据库同目录的 `pac_rules.json`。配置项
   （`pac_enabled` / `pac_mode` / `pac_direct_urls` / `pac_proxy_urls` / `pac_refresh_interval`）
   不进 `/api/settings` 通用表单，由 `/api/pac-config` 专门接口管理。设计见 DESIGN.md「智能分流设计」。
-- 匿名性评分优先使用真实探测（`check_anonymity_target` 回显端点，默认 `https://httpbin.org/anything`）：
+- 连接安全评分优先使用真实探测（`check_safety_target` 回显端点，默认 `https://httpbin.org/anything`）：
   对比直连/经代理的出口 IP 与目标收到的请求头，按 源 IP 隐藏 40% + 头泄漏 30% + 代理特征 30% 加权；
   在此基础上叠加调节项：两次经代理采样出口 IP 不同（轮换代理）+5，请求被代理改写（回显
   URL/Host 与目标不一致）每项 -10；探测失败时回退到按协议类型的启发式（SOCKS5=95 / HTTP(S)=80 / 带认证=50）。

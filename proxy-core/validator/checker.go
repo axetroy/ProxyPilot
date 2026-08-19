@@ -18,39 +18,39 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 )
 
-// DefaultAnonymityTarget 匿名性检测的回显端点默认值：
+// DefaultSafetyTarget 连接安全检测的回显端点默认值：
 // 返回请求来源 IP 与收到的请求头，用于对比“直连 vs 经代理”的差异。
-const DefaultAnonymityTarget = "https://httpbin.org/anything"
+const DefaultSafetyTarget = "https://httpbin.org/anything"
 
-// 匿名性探测关注的泄漏头（代理在转发请求时可能注入的真实客户端信息）。
+// 连接安全探测关注的泄漏头（代理在转发请求时可能注入的真实客户端信息）。
 var leakHeaders = []string{"X-Forwarded-For", "Forwarded", "X-Real-IP"}
 
-// 匿名性探测关注的代理特征头（暴露代理身份/软件）。
+// 连接安全探测关注的代理特征头（暴露代理身份/软件）。
 var proxyMarkerHeaders = []string{"Via", "X-Via", "Proxy-Agent", "X-Proxy", "X-Proxy-Id"}
 
 // Checker validates a single proxy node by connecting to a target through it.
 type Checker struct {
 	target          string
-	anonymityTarget string
+	safetyTarget string
 	timeout         time.Duration
 }
 
 func NewChecker(target string, timeout time.Duration) *Checker {
-	return NewCheckerWithAnonymity(target, DefaultAnonymityTarget, timeout)
+	return NewCheckerWithSafety(target, DefaultSafetyTarget, timeout)
 }
 
-// NewCheckerWithAnonymity 构造检测器，anonymityTarget 为空时使用默认回显端点。
-func NewCheckerWithAnonymity(target, anonymityTarget string, timeout time.Duration) *Checker {
+// NewCheckerWithSafety 构造检测器，safetyTarget 为空时使用默认回显端点。
+func NewCheckerWithSafety(target, safetyTarget string, timeout time.Duration) *Checker {
 	if target == "" {
 		target = "https://www.apple.com/library/test/success.html"
 	}
-	if anonymityTarget == "" {
-		anonymityTarget = DefaultAnonymityTarget
+	if safetyTarget == "" {
+		safetyTarget = DefaultSafetyTarget
 	}
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	return &Checker{target: target, anonymityTarget: anonymityTarget, timeout: timeout}
+	return &Checker{target: target, safetyTarget: safetyTarget, timeout: timeout}
 }
 
 func (c *Checker) TestTarget() string { return c.target }
@@ -97,19 +97,19 @@ func (c *Checker) Check(node *model.ProxyNode) (model.CheckResult, error) {
 	}
 
 	result := model.CheckResult{OK: true, Latency: latency}
-	// 连通性通过后再做匿名性探测；探测失败不影响连通性结论。
-	result.Anonymity = c.probeAnonymity(node)
+	// 连通性通过后再做连接安全探测；探测失败不影响连通性结论。
+	result.Safety = c.probeSafety(node)
 	return result, nil
 }
 
-// probeAnonymity 通过“直连 + 经代理 ×2”请求回显端点：
+// probeSafety 通过“直连 + 经代理 ×2”请求回显端点：
 //   - 对比直连/代理出口 IP 判断源 IP 是否隐藏；
 //   - 检查目标收到的请求头判断头泄漏与代理特征；
 //   - 第二次经代理采样出口 IP，识别轮换代理；
 //   - 对比回显端收到的 URL/Host 与请求目标，识别请求被改写。
 //
 // 任一环节失败（网络不通/端点格式不符）返回 nil，由上层回退到启发式评分。
-func (c *Checker) probeAnonymity(node *model.ProxyNode) *model.AnonymityProbe {
+func (c *Checker) probeSafety(node *model.ProxyNode) *model.SafetyProbe {
 	direct, err := c.fetchEcho(node, false)
 	if err != nil {
 		return nil
@@ -125,7 +125,7 @@ func (c *Checker) probeAnonymity(node *model.ProxyNode) *model.AnonymityProbe {
 	}
 	_ = direct.headers // 直连头仅用于对照，暂不参与评分
 
-	probe := &model.AnonymityProbe{
+	probe := &model.SafetyProbe{
 		DirectIP:   direct.origin,
 		ProxiedIP:  proxied.origin,
 		ProxiedIP2: proxied2,
@@ -141,7 +141,7 @@ func (c *Checker) probeAnonymity(node *model.ProxyNode) *model.AnonymityProbe {
 		}
 	}
 	// 连接信息：回显端收到的 URL/Host 与请求目标不一致 → 请求被代理改写。
-	if reqURL, err := url.Parse(c.anonymityTarget); err == nil {
+	if reqURL, err := url.Parse(c.safetyTarget); err == nil {
 		if got := proxied.receivedURL; got != "" {
 			if gotURL, err := url.Parse(got); err == nil && gotURL.Host != "" && gotURL.Host != reqURL.Host {
 				probe.ReqIssues = append(probe.ReqIssues, "回显端收到的请求 URL 与目标不一致: "+got)
@@ -179,7 +179,7 @@ func (c *Checker) fetchEcho(node *model.ProxyNode, viaProxy bool) (echoResult, e
 		transport.Proxy = func(*http.Request) (*url.URL, error) { return httpProxyURL(node) }
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.anonymityTarget, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.safetyTarget, nil)
 	if err != nil {
 		return echoResult{}, err
 	}

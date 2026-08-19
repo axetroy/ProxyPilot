@@ -62,23 +62,23 @@ function formatTime(v?: string): string {
   return d.toLocaleString()
 }
 
-// AnonymityBadge 在列表中标注节点的匿名性：优先使用真实探测明细分数，
-// 回退到评分明细中的匿名性分数（启发式）；非存活或未评分节点显示占位符。
-function AnonymityBadge({ node }: { node: ProxyNode }) {
-  const d = node.anonymityDetail
-  const score = d?.score ?? node.scoreBreakdown?.anonymity
+// SafetyBadge 在列表中标注节点的连接安全：优先使用真实探测明细分数，
+// 回退到评分明细中的连接安全分数（启发式）；非存活或未评分节点显示占位符。
+function SafetyBadge({ node }: { node: ProxyNode }) {
+  const d = node.safetyDetail
+  const score = d?.score ?? node.scoreBreakdown?.safety
   if (node.status !== 'alive' || score === undefined) {
     return <Text size="xs" c="dimmed">—</Text>
   }
   const probed = d != null
   const info =
     score >= 80
-      ? { label: '匿名', color: 'green' }
+      ? { label: '安全', color: 'green' }
       : score >= 60
-        ? { label: '半匿名', color: 'yellow' }
-        : { label: '不匿名', color: 'red' }
+        ? { label: '部分安全', color: 'yellow' }
+        : { label: '不安全', color: 'red' }
   return (
-    <Tooltip label={`匿名性 ${score} 分（${probed ? '真实探测' : '启发式估算'}）`}>
+    <Tooltip label={`连接安全 ${score} 分（${probed ? '真实探测' : '启发式估算'}）`}>
       <Badge color={info.color} variant="light">{info.label}</Badge>
     </Tooltip>
   )
@@ -432,7 +432,7 @@ export default function ProxyPool() {
               <Text size="xs">协议</Text>
               <Text size="xs">延迟</Text>
               <Text size="xs">评分</Text>
-              <Text size="xs">匿名</Text>
+              <Text size="xs">连接安全</Text>
               <Text size="xs">状态</Text>
               <Text size="xs" style={{ textAlign: 'right' }}>操作</Text>
             </Box>
@@ -482,7 +482,7 @@ export default function ProxyPool() {
                         {n.score}
                       </Button>
                     </Tooltip>
-                    <AnonymityBadge node={n} />
+                    <SafetyBadge node={n} />
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
                     <Group justify="flex-end" gap={6} wrap="nowrap">
 <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={6}>
@@ -619,12 +619,12 @@ export default function ProxyPool() {
   )
 }
 
-function anonymityHint(node: ProxyNode, value: number): string {
-  const d = node.anonymityDetail
+function safetyHint(node: ProxyNode, value: number): string {
+  const d = node.safetyDetail
   if (!d) {
     // 无探测明细：回退说明
-    if (value === 0) return '死亡节点，匿名性记 0 分'
-    return node.protocol === 'socks5' ? 'SOCKS5 默认 95 分（未探测到回显数据）' : node.username ? '带认证，匿名性较低（未探测到回显数据）' : 'HTTP/HTTPS 默认 80 分（未探测到回显数据）'
+    if (value === 0) return '死亡节点，连接安全记 0 分'
+    return node.protocol === 'socks5' ? 'SOCKS5 默认 95 分（未探测到回显数据）' : node.username ? '带认证，连接安全较低（未探测到回显数据）' : 'HTTP/HTTPS 默认 80 分（未探测到回显数据）'
   }
   const parts: string[] = []
   if (d.sourceIpHidden === undefined) {
@@ -801,12 +801,12 @@ function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
       </Stack>
     )
   }
-  const d = node.anonymityDetail
+  const d = node.safetyDetail
   const rows = [
     { label: '成功率', weight: b.weightSuccess, value: b.successRate, hint: '历史成功次数占比，权重最高' },
     { label: '延迟', weight: b.weightLatency, value: b.latencyScore, hint: `${node.latency}ms 映射为 ${b.latencyScore} 分` },
     { label: '稳定性', weight: b.weightStability, value: b.stability, hint: '失败次数越少越稳定' },
-    { label: '匿名性', weight: b.weightAnonymity, value: b.anonymity, hint: anonymityHint(node, b.anonymity) },
+    { label: '连接安全', weight: b.weightSafety, value: b.safety, hint: safetyHint(node, b.safety) },
   ]
   return (
     <Stack gap="md">
@@ -837,7 +837,7 @@ function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
 
       {d && (d.headerLeaks?.length || d.proxyMarkers?.length || d.sourceIpHidden !== undefined || d.rotatingIp || d.reqIssues?.length) && (
         <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
-          <Text size="xs" fw={600} mb={4}>匿名性探测明细</Text>
+          <Text size="xs" fw={600} mb={4}>连接安全探测明细</Text>
           {d.sourceIpHidden !== undefined && (
             <Text size="xs" c="dimmed">
               源 IP 隐藏：{d.sourceIpHidden ? '是（代理出口 ≠ 直连出口）' : '否（透明代理，出口 IP 相同）'}
@@ -870,7 +870,7 @@ function ScoreBreakdownModal({ node }: { node: ProxyNode }) {
       <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
         <Text size="xs" c="dimmed" mb={4}>计算公式（加权求和，死亡节点总分减半）</Text>
         <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-          {`${b.weightSuccess}×${b.successRate} + ${b.weightLatency}×${b.latencyScore} + ${b.weightStability}×${b.stability} + ${b.weightAnonymity}×${b.anonymity} = ${b.score}`}
+          {`${b.weightSuccess}×${b.successRate} + ${b.weightLatency}×${b.latencyScore} + ${b.weightStability}×${b.stability} + ${b.weightSafety}×${b.safety} = ${b.score}`}
         </Code>
       </Box>
     </Stack>

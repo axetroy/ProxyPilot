@@ -185,7 +185,7 @@ export default function Rules() {
         <Stack gap="md">
           <div>
             <Text fw={700}>智能分流</Text>
-            <Text size="sm" c="dimmed" mt={4}>网关入口按规则判断目标直连或走节点池：大陆 / 内网直连，被墙域名走代理。关闭后全部流量走代理</Text>
+            <Text size="sm" c="dimmed" mt={4}>网关入口按规则判断目标直连或走节点池：大陆 / 内网直连，需代理域名走代理。关闭后全部流量走代理</Text>
           </div>
 
           <Divider />

@@ -175,7 +175,7 @@ func TestPACCustomRulesWithRuleManager(t *testing.T) {
 		switch r.URL.Path {
 		case "/direct.txt":
 			_, _ = w.Write([]byte("baidu.com\nforced.cn\ntaobao.com\n"))
-		case "/gfw.txt":
+		case "/proxy.txt":
 			_, _ = w.Write([]byte("google.com\n"))
 		default:
 			http.NotFound(w, r)
@@ -185,7 +185,7 @@ func TestPACCustomRulesWithRuleManager(t *testing.T) {
 
 	m := rule.NewManager(s.Cfg, s.Bus, t.TempDir()+"/test.db")
 	s.Cfg.PACDirectURLs = srv.URL + "/direct.txt"
-	s.Cfg.PACProxyURLs = srv.URL + "/gfw.txt"
+	s.Cfg.PACProxyURLs = srv.URL + "/proxy.txt"
 	m.ApplyConfig()
 	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)
@@ -234,7 +234,7 @@ func TestPACConfigWithRuleManager(t *testing.T) {
 		switch r.URL.Path {
 		case "/direct.txt":
 			_, _ = w.Write([]byte("baidu.com\ntaobao.com\n"))
-		case "/gfw.txt":
+		case "/proxy.txt":
 			_, _ = w.Write([]byte("google.com\n"))
 		default:
 			http.NotFound(w, r)
@@ -244,7 +244,7 @@ func TestPACConfigWithRuleManager(t *testing.T) {
 
 	m := rule.NewManager(s.Cfg, s.Bus, t.TempDir()+"/test.db")
 	s.Cfg.PACDirectURLs = srv.URL + "/direct.txt"
-	s.Cfg.PACProxyURLs = srv.URL + "/gfw.txt"
+	s.Cfg.PACProxyURLs = srv.URL + "/proxy.txt"
 	m.ApplyConfig()
 	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)

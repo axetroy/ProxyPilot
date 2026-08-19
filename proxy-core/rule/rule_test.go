@@ -233,7 +233,7 @@ func TestSyncNow(t *testing.T) {
 		switch r.URL.Path {
 		case "/direct.txt":
 			_, _ = w.Write([]byte("# direct\nbaidu.com\ntaobao.com\n"))
-		case "/gfw.txt":
+		case "/proxy.txt":
 			_, _ = w.Write([]byte("# proxy\ngoogle.com\nfacebook.com\n"))
 		default:
 			http.NotFound(w, r)
@@ -244,7 +244,7 @@ func TestSyncNow(t *testing.T) {
 	m := newTestManager(t, func(c *config.Config) {
 		c.PACEnabled = true
 		c.PACDirectURLs = srv.URL + "/direct.txt"
-		c.PACProxyURLs = srv.URL + "/gfw.txt"
+		c.PACProxyURLs = srv.URL + "/proxy.txt"
 	})
 	if err := m.SyncNow(context.TODO()); err != nil {
 		t.Fatalf("SyncNow: %v", err)

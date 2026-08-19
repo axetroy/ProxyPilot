@@ -264,8 +264,8 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 	host := targetHost(target)
 
 	// 智能分流：命中直连判断的目标直接建立连接，不经节点池。
-	// 直连语义下由本机 DNS 解析（命中直连的均为大陆/内网/未墙域名，DNS 干净）；
-	// 走代理的域名原样交给上游节点解析，避开本地 DNS 污染。
+	// 直连语义下由本机 DNS 解析（命中直连的均为大陆/内网/可直连域名，DNS 干净）；
+	// 走代理的域名原样交给上游节点解析，避开本地 DNS 解析异常。
 	if g.shunt != nil && g.shunt(host) {
 		return g.dialDirect(ctx, target)
 	}

@@ -43,9 +43,9 @@ type ProxyNode struct {
 	SubscriptionID int64         `json:"subscriptionId,omitempty"`
 	// ScoreBreakdown 评分明细，仅 API 输出时填充（不持久化），用于前端展示评分计算过程。
 	ScoreBreakdown *ScoreBreakdown `json:"scoreBreakdown,omitempty"`
-	// AnonymityDetail 匿名性检测明细（探测成功时填充，不持久化），
+	// SafetyDetail 连接安全检测明细（探测成功时填充，不持久化），
 	// 供评分明细展示与 Breakdown 还原使用。
-	AnonymityDetail *AnonymityDetail `json:"anonymityDetail,omitempty"`
+	SafetyDetail *SafetyDetail `json:"safetyDetail,omitempty"`
 }
 
 // ScoreBreakdown 表示一次评分的各维度明细，与 CalculateScore 的权重口径一致。
@@ -53,11 +53,11 @@ type ScoreBreakdown struct {
 	SuccessRate     int     `json:"successRate"`     // 成功率（0-100）
 	LatencyScore    int     `json:"latencyScore"`    // 延迟分（0-100）
 	Stability       int     `json:"stability"`       // 稳定性（0-100）
-	Anonymity       int     `json:"anonymity"`       // 匿名性（0-100）
+	Safety       int     `json:"safety"`       // 连接安全（0-100）
 	WeightSuccess   float64 `json:"weightSuccess"`   // 成功率权重
 	WeightLatency   float64 `json:"weightLatency"`   // 延迟权重
 	WeightStability float64 `json:"weightStability"` // 稳定性权重
-	WeightAnonymity float64 `json:"weightAnonymity"` // 匿名性权重
+	WeightSafety float64 `json:"weightSafety"` // 连接安全权重
 	Score           int     `json:"score"`           // 加权总分（0-100）
 }
 
@@ -149,15 +149,15 @@ type CheckResult struct {
 	OK      bool   `json:"ok"`
 	Latency int64  `json:"latency"`
 	Error   string `json:"error,omitempty"`
-	// Anonymity 匿名性探测结果（探测成功时填充，失败/超时则为 nil，不影响连通性结果）。
-	Anonymity *AnonymityProbe `json:"anonymity,omitempty"`
+	// Safety 连接安全探测结果（探测成功时填充，失败/超时则为 nil，不影响连通性结果）。
+	Safety *SafetyProbe `json:"safety,omitempty"`
 }
 
-// AnonymityProbe 表示一次匿名性探测的原始数据。
+// SafetyProbe 表示一次连接安全探测的原始数据。
 // 检测流程：直连 + 经代理分别请求回显端点（如 httpbin.org/anything），
 // 对比出口 IP 与目标收到的请求头，判断源 IP 是否隐藏、头是否泄漏、是否有代理特征、
 // 出口 IP 是否轮换、请求是否被代理改写。
-type AnonymityProbe struct {
+type SafetyProbe struct {
 	DirectIP  string `json:"directIp"`  // 直连回显端点时看到的出口 IP
 	ProxiedIP string `json:"proxiedIp"` // 通过代理访问回显端点时看到的出口 IP
 	// ProxiedIP2 第二次经代理采样到的出口 IP（用于识别轮换代理，为空表示未采样）。
@@ -170,15 +170,15 @@ type AnonymityProbe struct {
 	ReqIssues []string `json:"reqIssues,omitempty"`
 }
 
-// AnonymityDetail 匿名性评分的子维度明细，供前端展示评分过程。
-type AnonymityDetail struct {
+// SafetyDetail 连接安全评分的子维度明细，供前端展示评分过程。
+type SafetyDetail struct {
 	// SourceIpHidden 源 IP 是否隐藏：true=代理出口 IP 与直连不同；false=透明；nil=无法对比。
 	SourceIpHidden *bool    `json:"sourceIpHidden,omitempty"`
 	HeaderLeaks    []string `json:"headerLeaks,omitempty"`
 	ProxyMarkers   []string `json:"proxyMarkers,omitempty"`
-	// RotatingIP 出口 IP 是否轮换（两次经代理采样结果不同，轮换代理匿名性更好）。
+	// RotatingIP 出口 IP 是否轮换（两次经代理采样结果不同，轮换代理连接安全更好）。
 	RotatingIP bool `json:"rotatingIp,omitempty"`
 	// ReqIssues 连接信息问题（请求被改写等）。
 	ReqIssues []string `json:"reqIssues,omitempty"`
-	Score     int      `json:"score"` // 匿名性子评分（0-100）
+	Score     int      `json:"score"` // 连接安全子评分（0-100）
 }

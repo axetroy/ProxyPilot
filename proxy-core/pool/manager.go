@@ -424,9 +424,9 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 	fresh.Status = status
 	fresh.Latency = result.Latency
 	fresh.Score = score.Score
-	fresh.AnonymityDetail = score.AnonymityDetail
+	fresh.SafetyDetail = score.SafetyDetail
 	fresh.LastCheck = time.Now()
-	// 离线 GeoIP 解析节点地区（优先用匿名性探测到的代理出口 IP）。
+	// 离线 GeoIP 解析节点地区（优先用连接安全探测到的代理出口 IP）。
 	fresh.Country, fresh.Province, fresh.City = resolveGeo(fresh, result)
 	if result.OK {
 		fresh.SuccessCount++
@@ -456,7 +456,7 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 		live.SuccessCount = fresh.SuccessCount
 		live.FailCount = fresh.FailCount
 		live.LastCheck = fresh.LastCheck
-		live.AnonymityDetail = fresh.AnonymityDetail
+		live.SafetyDetail = fresh.SafetyDetail
 		live.Country = fresh.Country
 		live.Province = fresh.Province
 		live.City = fresh.City
@@ -495,11 +495,11 @@ func (m *Manager) RefreshLoop(ctx context.Context) {
 
 // resolveGeo 离线解析节点的代理地区（国家/省份/城市）。
 // 优先级：
-//  1. 匿名性探测成功的节点出口 IP（ProxiedIP）——最准确，代表真实代理所在地区；
+//  1. 连接安全探测成功的节点出口 IP（ProxiedIP）——最准确，代表真实代理所在地区；
 //  2. 节点 host（若为 IP 直接查询，若为域名则本地 DNS 解析后查询）。
 // 未命中（如 IPv6 节点、保留地址之外的查找失败）时返回三位空串。
 func resolveGeo(node *model.ProxyNode, result model.CheckResult) (country, province, city string) {
-	if a := result.Anonymity; a != nil && a.ProxiedIP != "" {
+	if a := result.Safety; a != nil && a.ProxiedIP != "" {
 		if loc, ok := geoip.Lookup(a.ProxiedIP); ok {
 			return loc.Country, loc.Province, loc.City
 		}

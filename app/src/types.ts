@@ -18,22 +18,22 @@ export interface ProxyNode {
   updatedAt: string
   subscriptionId?: number
   scoreBreakdown?: ScoreBreakdown
-  anonymityDetail?: AnonymityDetail
+  safetyDetail?: SafetyDetail
 }
 
-/** 匿名性检测明细，与后端 model.AnonymityDetail 对应 */
-export interface AnonymityDetail {
+/** 连接安全检测明细，与后端 model.SafetyDetail 对应 */
+export interface SafetyDetail {
   /** 源 IP 是否隐藏：true=代理出口与直连不同；false=透明；缺省=无法对比 */
   sourceIpHidden?: boolean
   /** 泄漏的真实客户端信息头（如 X-Forwarded-For） */
   headerLeaks?: string[]
   /** 暴露代理身份的特征头（如 Via / Proxy-Agent） */
   proxyMarkers?: string[]
-  /** 出口 IP 是否轮换（两次经代理采样结果不同，轮换代理匿名性更好） */
+  /** 出口 IP 是否轮换（两次经代理采样结果不同，轮换代理连接安全更好） */
   rotatingIp?: boolean
   /** 连接信息问题（请求被代理改写，如回显 URL/Host 与目标不一致） */
   reqIssues?: string[]
-  /** 匿名性子评分（0-100） */
+  /** 连接安全子评分（0-100） */
   score: number
 }
 
@@ -42,11 +42,11 @@ export interface ScoreBreakdown {
   successRate: number
   latencyScore: number
   stability: number
-  anonymity: number
+  safety: number
   weightSuccess: number
   weightLatency: number
   weightStability: number
-  weightAnonymity: number
+  weightSafety: number
   score: number
 }
 

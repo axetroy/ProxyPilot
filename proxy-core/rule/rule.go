@@ -150,7 +150,7 @@ func (m *Manager) Match(host string) Action {
 		return ActionDirect
 	default: // ModeWhitelist
 		// 代理名单优先于直连名单：保证「该走代理的绝不被误判直连」
-		// （直连被墙域名会因 DNS 污染解析到假 IP；反之只是多耗节点流量）。
+		// （直连本应代理的域名可能因 DNS 解析异常解析到假 IP；反之只是多耗节点流量）。
 		if domainHit(m.proxy, host) {
 			return ActionProxy
 		}

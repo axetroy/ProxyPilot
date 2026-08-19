@@ -10,18 +10,18 @@ import (
 // - 成功率：反映节点历史上是否稳定可用，权重最高。
 // - 延迟：越低越好，体现节点的响应速度。
 // - 稳定性：衡量节点是否经常出现波动或间歇性失败。
-// - 匿名性：表示代理类型对匿名程度的影响。
-// 其中匿名性会根据协议类型做差异化处理：
-// - SOCKS5 通常更适合匿名场景，默认给更高分；
-// - HTTP/HTTPS 的匿名性通常更依赖是否带认证和是否透明转发，默认分数略低。
+// - 连接安全：表示代理类型对连接安全程度的影响。
+// 其中连接安全会根据协议类型做差异化处理：
+// - SOCKS5 通常更适合连接安全场景，默认给更高分；
+// - HTTP/HTTPS 的连接安全通常更依赖是否带认证和是否透明转发，默认分数略低。
 const (
 	WeightSuccess   = 0.40
 	WeightLatency   = 0.30
 	WeightStability = 0.20
-	WeightAnonymity = 0.10
+	WeightSafety = 0.10
 )
 
-// 匿名性子维度权重（归一化自 9 维度权重表中的 源IP隐藏25 / 头泄漏20 / 代理特征15）：
+// 连接安全子维度权重（归一化自 9 维度权重表中的 源IP隐藏25 / 头泄漏20 / 代理特征15）：
 // - 源 IP 隐藏：代理出口 IP 与直连出口 IP 是否不同，权重最高。
 // - 头泄漏：目标是否收到 X-Forwarded-For / Forwarded / X-Real-IP 等真实客户端信息。
 // - 代理特征：目标是否收到 Via / Proxy-Agent 等暴露代理身份的特征头。
@@ -31,7 +31,7 @@ const (
 	AnonWeightProxyMark  = 0.30
 )
 
-// 匿名性第二步增强维度（调节项，不改变三核心维度权重结构）：
+// 连接安全第二步增强维度（调节项，不改变三核心维度权重结构）：
 // - 出口 IP 轮换：两次经代理采样出口 IP 不同 → 加分（轮换代理难以关联同一用户）。
 // - 连接信息问题：请求被代理改写（回显 URL/Host 与目标不一致）→ 每项扣分。
 const (
@@ -45,8 +45,8 @@ type ScoreResult struct {
 	Stable      bool
 	Success     bool
 	SuccessRate int
-	// AnonymityDetail 匿名性检测明细（探测成功时填充），供调用方写入节点用于明细展示。
-	AnonymityDetail *model.AnonymityDetail
+	// SafetyDetail 连接安全检测明细（探测成功时填充），供调用方写入节点用于明细展示。
+	SafetyDetail *model.SafetyDetail
 }
 
 // CalculateScore 根据最新检测结果和节点历史表现，计算 0-100 的综合评分。
@@ -76,7 +76,7 @@ type ScoreResult struct {
 //   - 成功率权重 40%
 //   - 延迟权重 30%
 //   - 稳定性权重 20%
-//   - 匿名性权重 10%
+//   - 连接安全权重 10%
 //   - 最终结果会被限制在 0~100 之间，并四舍五入。
 //
 // 6. 如果本次检测失败，则把最终分数再乘以 0.5，形成明显惩罚。
@@ -115,14 +115,14 @@ func CalculateScore(node *model.ProxyNode, result model.CheckResult) ScoreResult
 		stability = 0
 	}
 
-	// 匿名性：优先使用真实探测结果（源 IP 隐藏 / 头泄漏 / 代理特征），
+	// 连接安全：优先使用真实探测结果（源 IP 隐藏 / 头泄漏 / 代理特征），
 	// 探测失败（probe 为 nil）时回退到按协议类型的启发式估算。
-	anonymity, anonDetail := calculateAnonymity(node, result.Anonymity)
+	safety, anonDetail := calculateSafety(node, result.Safety)
 
 	score := WeightSuccess*successRate*100 +
 		WeightLatency*float64(latencyScore) +
 		WeightStability*float64(stability) +
-		WeightAnonymity*float64(anonymity)
+		WeightSafety*float64(safety)
 	if !result.OK {
 		score *= 0.5
 	}
@@ -131,13 +131,13 @@ func CalculateScore(node *model.ProxyNode, result model.CheckResult) ScoreResult
 		Stable:          stable,
 		Success:         result.OK,
 		SuccessRate:     int(successRate * 100),
-		AnonymityDetail: anonDetail,
+		SafetyDetail: anonDetail,
 	}
 }
 
-// calculateAnonymity 计算匿名性子评分（0-100），并返回子维度明细。
+// calculateSafety 计算连接安全子评分（0-100），并返回子维度明细。
 // probe 为 nil（探测失败/未启用）时回退到按协议类型的启发式估算：
-//   - SOCKS5 默认 95（通常不透明转发，匿名性较好）；
+//   - SOCKS5 默认 95（通常不透明转发，连接安全较好）；
 //   - HTTP/HTTPS 默认 80；
 //   - 带认证信息时降到 50（认证信息可能暴露使用者身份）。
 //
@@ -149,16 +149,16 @@ func CalculateScore(node *model.ProxyNode, result model.CheckResult) ScoreResult
 // 在此基础之上叠加第二步增强维度（调节项，不改变三核心维度的权重结构）：
 //   - 出口 IP 轮换：两次经代理采样出口 IP 不同 → +5（轮换代理难以关联同一用户）；
 //   - 连接信息问题：请求被代理改写（回显 URL/Host 与目标不一致）每项扣 10。
-func calculateAnonymity(node *model.ProxyNode, probe *model.AnonymityProbe) (int, *model.AnonymityDetail) {
+func calculateSafety(node *model.ProxyNode, probe *model.SafetyProbe) (int, *model.SafetyDetail) {
 	if probe == nil {
-		anonymity := 80
+		safety := 80
 		if node.Protocol == model.ProtocolSOCKS5 {
-			anonymity = 95
+			safety = 95
 		}
 		if node.Username != "" {
-			anonymity = 50
+			safety = 50
 		}
-		return anonymity, nil
+		return safety, nil
 	}
 
 	// 源 IP 隐藏：所有分支都会显式赋值，避免无效的初始赋值（ineffassign）。
@@ -198,7 +198,7 @@ func calculateAnonymity(node *model.ProxyNode, probe *model.AnonymityProbe) (int
 	score -= len(probe.ReqIssues) * anonPenaltyPerReqIssue
 	score = int(math.Round(math.Min(100, math.Max(0, float64(score)))))
 
-	detail := &model.AnonymityDetail{
+	detail := &model.SafetyDetail{
 		SourceIpHidden: hidden,
 		HeaderLeaks:    probe.HeaderLeaks,
 		ProxyMarkers:   probe.ProxyMarkers,
@@ -227,19 +227,19 @@ func latencyScore(ms int64) int {
 	}
 }
 
-// Anonymity 根据节点协议和状态，给出一个 0-100 的匿名性评分。
-// 选择器场景没有探测数据，这里走 calculateAnonymity 的启发式回退分支，
+// Safety 根据节点协议和状态，给出一个 0-100 的连接安全评分。
+// 选择器场景没有探测数据，这里走 calculateSafety 的启发式回退分支，
 // 与 CalculateScore 在 probe 为 nil 时的口径保持一致。
-func Anonymity(node *model.ProxyNode) int {
+func Safety(node *model.ProxyNode) int {
 	if node.Status == model.StatusDead {
 		return 0
 	}
-	anonymity, _ := calculateAnonymity(node, nil)
-	return anonymity
+	safety, _ := calculateSafety(node, nil)
+	return safety
 }
 
 // Breakdown 根据节点当前状态，还原一次评分的各维度明细，供前端展示评分计算过程。
-// 计算口径与 CalculateScore 完全一致（成功率、延迟分、稳定性、匿名性、权重、死亡惩罚），
+// 计算口径与 CalculateScore 完全一致（成功率、延迟分、稳定性、连接安全、权重、死亡惩罚），
 // 这样前端看到的明细与列表中的总分能够对得上。
 func Breakdown(node *model.ProxyNode) *model.ScoreBreakdown {
 	total := node.SuccessCount + node.FailCount
@@ -267,24 +267,24 @@ func Breakdown(node *model.ProxyNode) *model.ScoreBreakdown {
 		stability = 0
 	}
 
-	// 匿名性：优先使用最近一次检测的探测明细（由 evalOne 写入节点），
+	// 连接安全：优先使用最近一次检测的探测明细（由 evalOne 写入节点），
 	// 无明细时回退到按协议类型的启发式估算，与 CalculateScore 口径一致。
-	anonymity := 80
-	if node.AnonymityDetail != nil {
-		anonymity = node.AnonymityDetail.Score
+	safety := 80
+	if node.SafetyDetail != nil {
+		safety = node.SafetyDetail.Score
 	} else {
 		if node.Protocol == model.ProtocolSOCKS5 {
-			anonymity = 95
+			safety = 95
 		}
 		if node.Username != "" {
-			anonymity = 50
+			safety = 50
 		}
 	}
 
 	score := WeightSuccess*successRate*100 +
 		WeightLatency*float64(latencyScore) +
 		WeightStability*float64(stability) +
-		WeightAnonymity*float64(anonymity)
+		WeightSafety*float64(safety)
 	if node.Status == model.StatusDead {
 		// 死亡节点与检测失败一致，最终分数减半。
 		score *= 0.5
@@ -294,11 +294,11 @@ func Breakdown(node *model.ProxyNode) *model.ScoreBreakdown {
 		SuccessRate:     int(successRate * 100),
 		LatencyScore:    latencyScore,
 		Stability:       stability,
-		Anonymity:       anonymity,
+		Safety:       safety,
 		WeightSuccess:   WeightSuccess,
 		WeightLatency:   WeightLatency,
 		WeightStability: WeightStability,
-		WeightAnonymity: WeightAnonymity,
+		WeightSafety: WeightSafety,
 		Score:           int(math.Round(math.Min(100, math.Max(0, score)))),
 	}
 }

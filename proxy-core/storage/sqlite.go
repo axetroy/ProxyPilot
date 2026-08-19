@@ -227,6 +227,12 @@ func (s *Store) SetSetting(key, value string) error {
 	return err
 }
 
+// DeleteSetting 删除指定配置项（用于清理迁移后遗留的旧 key）。
+func (s *Store) DeleteSetting(key string) error {
+	_, err := s.db.Exec(`DELETE FROM settings WHERE key = ?`, key)
+	return err
+}
+
 // ---------- proxy nodes ----------
 
 func (s *Store) UpsertNode(n *model.ProxyNode) error {
