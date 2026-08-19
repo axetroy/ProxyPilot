@@ -69,6 +69,8 @@ Internet Proxy Pool
 │                                      │
 │ - Dashboard                          │
 │ - Proxy Pool                         │
+│ - Egress Route                       │
+│ - Smart Shunt (Rules)                │
 │ - Subscription                       │
 │ - Logs                               │
 │ - Settings                           │

@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
-import { GitBranch, LayoutDashboard, Network, Rss, ScrollText, Settings } from 'lucide-react'
+import { GitBranch, LayoutDashboard, Network, Rss, ScrollText, Settings, Workflow } from 'lucide-react'
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useLogStore } from '@/stores/logs'
@@ -12,12 +12,14 @@ import ProxyPool from '@/views/ProxyPool'
 import Egress from '@/views/Egress'
 import Subscriptions from '@/views/Subscriptions'
 import Logs from '@/views/Logs'
+import Rules from '@/views/Rules'
 import SettingsView from '@/views/Settings'
 
 const navItems = [
   { to: '/dashboard', label: '仪表盘', icon: LayoutDashboard },
   { to: '/proxies', label: '代理池', icon: Network },
   { to: '/egress', label: '出口路由', icon: GitBranch },
+  { to: '/rules', label: '智能分流', icon: Workflow },
   { to: '/subscriptions', label: '订阅', icon: Rss },
   { to: '/logs', label: '日志', icon: ScrollText },
   { to: '/settings', label: '设置', icon: Settings },
@@ -27,6 +29,7 @@ const titles: Record<string, string> = {
   '/dashboard': '仪表盘',
   '/proxies': '代理池',
   '/egress': '出口路由',
+  '/rules': '智能分流',
   '/subscriptions': '订阅',
   '/logs': '日志',
   '/settings': '设置',
@@ -112,6 +115,7 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/proxies" element={<ProxyPool />} />
             <Route path="/egress" element={<Egress />} />
+            <Route path="/rules" element={<Rules />} />
             <Route path="/subscriptions" element={<Subscriptions />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<SettingsView />} />
