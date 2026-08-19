@@ -62,8 +62,30 @@ func (h *httpServer) forward(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
+// relay 在两个连接间双向转发，并在超时刷新两端的 idle deadline：
+// 任一端在 relayIdleTimeout 内既无读也无写时，后续读写立即失败并关闭，
+// 从而回收半开连接（对端既不发送数据也不关闭连接）占用的资源。
 func relay(a, b net.Conn) {
 	done := make(chan struct{}, 2)
+	// idle 计时器：定期把两端的 deadline 推到 now+relayIdleTimeout，
+	// 一旦某个方向长时间无活动，对应 io.Copy 的 Read/Write 就会超时返回。
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(relayIdleTimeout / 2)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				deadline := time.Now().Add(relayIdleTimeout)
+				_ = a.SetDeadline(deadline)
+				_ = b.SetDeadline(deadline)
+			}
+		}
+	}()
+	// 任一方关闭后停止 idle 刷新，避免继续给已关闭的连接设置 deadline。
+	defer close(stop)
 	go func() { _, _ = io.Copy(b, a); _ = b.Close(); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(a, b); _ = a.Close(); done <- struct{}{} }()
 	<-done

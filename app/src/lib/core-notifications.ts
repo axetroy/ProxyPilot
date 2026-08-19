@@ -11,6 +11,12 @@ let exitingNotified = false
  * - 启动/重启失败：展示错误，方便用户发现后手动处理。
  */
 export function handleCoreError(msg: string): void {
+  // core 意外退出时主进程会先发 core:exit（已提示"正在自动重启"），
+  // 随后补发一条"已退出，正在自动重启…"的 error；此时忽略它，
+  // 避免与 exit 提示叠加成两个 toast。其他错误（重启失败/超过重启次数）照常展示。
+  if (exitingNotified && msg.includes('正在自动重启')) {
+    return
+  }
   notifications.show({
     id: 'core-error',
     title: '核心引擎异常',

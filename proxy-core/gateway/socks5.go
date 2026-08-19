@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/model"
 )
@@ -67,6 +68,11 @@ func (s *socksServer) handleConnWithReader(conn net.Conn, br *bufio.Reader) {
 		s.g.bus.Debug(fmt.Sprintf("SOCKS5 connection accepted from %s", conn.RemoteAddr()))
 	}
 
+	// 握手阶段限时：客户端建立连接后迟迟不发握手数据（慢速攻击）时，
+	// 在 socksHandshakeTimeout 后超时关闭，避免连接占住 goroutine 与 fd。
+	_ = conn.SetReadDeadline(time.Now().Add(socksHandshakeTimeout))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+
 	buf := make([]byte, 256)
 	if _, err := io.ReadFull(br, buf[:2]); err != nil {
 		return
@@ -124,15 +130,9 @@ func (s *socksServer) handleConnect(conn net.Conn, br *bufio.Reader, buf []byte)
 		return
 	}
 
-	copyDone := make(chan struct{})
-	go func() {
-		defer close(copyDone)
-		_, _ = io.Copy(remote, conn)
-		_ = remote.Close()
-	}()
-	_, _ = io.Copy(conn, remote)
-	<-copyDone
-	_ = conn.Close()
+	// 握手完成：清除握手阶段的读超时，后续转发由 relay 的 idle deadline 管理。
+	_ = conn.SetDeadline(time.Time{})
+	relay(conn, remote)
 }
 
 func (s *socksServer) dialTarget(ctx context.Context, target string) (net.Conn, error) {

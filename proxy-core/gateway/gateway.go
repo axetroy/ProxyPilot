@@ -25,6 +25,16 @@ const maxPortProbe = 100
 // 避免每次请求都查询数据库。
 const chainCacheTTL = 30 * time.Second
 
+// socksHandshakeTimeout 是 SOCKS5 握手的读超时：客户端建立连接后若迟迟
+// 不发握手数据（慢速攻击），超时后直接关闭连接，避免占用 goroutine 与 fd。
+const socksHandshakeTimeout = 10 * time.Second
+
+// relayIdleTimeout 是双向隧道（CONNECT / SOCKS5）的空闲超时：
+// 两个方向都长时间没有数据时关闭连接，避免半开连接（对端既不读写也不关闭）
+// 永久悬挂。注意 relay 中两个 io.Copy 各自阻塞在一个方向，
+// 仅靠对端关闭无法探测半开连接，必须主动设置 deadline。
+const relayIdleTimeout = 2 * time.Minute
+
 // Gateway exposes the local proxy port and routes traffic through the node pool.
 // HTTP 与 SOCKS5 始终共用同一端口（按连接首字节自动识别协议）。
 type Gateway struct {

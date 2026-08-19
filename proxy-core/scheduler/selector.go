@@ -275,8 +275,8 @@ func (s *Selector) pinnedNode() *model.ProxyNode {
 	return nil
 }
 
-// pruneSticky 清理粘性绑定：先清过期条目；仍超上限时淘汰最接近过期的条目，
-// 防止恶意随机域名在窗口内无限增长。
+// pruneSticky 清理粘性绑定：先清过期条目；仍超上限时一次性找出最接近过期的
+// 条目批量淘汰（避免循环内重复全表扫描的 O(n²)），防止恶意随机域名在窗口内无限增长。
 // 必须在持有 s.mu 时调用。
 func (s *Selector) pruneSticky() {
 	now := time.Now()
@@ -288,20 +288,20 @@ func (s *Selector) pruneSticky() {
 	if len(s.sticky) <= stickyMaxEntries {
 		return
 	}
-	// 仍超上限：循环淘汰最早过期的条目（每轮最多淘汰一次，直至回到上限内）。
-	for len(s.sticky) > stickyMaxEntries {
-		oldestKey := ""
-		var oldestAt time.Time
-		for key, e := range s.sticky {
-			if oldestKey == "" || e.expiresAt.Before(oldestAt) {
-				oldestKey = key
-				oldestAt = e.expiresAt
-			}
-		}
-		if oldestKey == "" {
-			return
-		}
-		delete(s.sticky, oldestKey)
+	// 仍超上限：一次遍历选出最早过期的条目，批量删除到上限内。
+	// sticky 与 stickyMaxEntries 规模通常很小（4096），排序开销可控。
+	type entry struct {
+		key  string
+		at   time.Time
+	}
+	all := make([]entry, 0, len(s.sticky))
+	for key, e := range s.sticky {
+		all = append(all, entry{key: key, at: e.expiresAt})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	excess := len(all) - stickyMaxEntries
+	for i := 0; i < excess; i++ {
+		delete(s.sticky, all[i].key)
 	}
 }
 

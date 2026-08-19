@@ -11,6 +11,10 @@ interface LogState {
   clear: () => void
 }
 
+// seqCounter 单调递增的日志序号（push 时分配），
+// 避免每次 push 依赖数组末元素计算 seq。
+let seqCounter = 0
+
 export const useLogStore = create<LogState>((set, get) => ({
   events: [],
   max: 500,
@@ -21,11 +25,13 @@ export const useLogStore = create<LogState>((set, get) => ({
     return close
   },
   push: (e: LogEvent) => {
-    const events = [...get().events, { ...e, receivedAt: Date.now(), seq: (get().events.at(-1)?.seq ?? 0) + 1 }]
-    if (events.length > get().max) {
-      events.splice(0, events.length - get().max)
+    seqCounter += 1
+    const { events, max } = get()
+    const next = [...events, { ...e, receivedAt: Date.now(), seq: seqCounter }]
+    if (next.length > max) {
+      next.splice(0, next.length - max)
     }
-    set({ events })
+    set({ events: next })
   },
   clear: () => set({ events: [] }),
 }))

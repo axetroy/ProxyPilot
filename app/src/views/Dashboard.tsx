@@ -96,32 +96,22 @@ export default function Dashboard() {
       .catch(() => setPlatform('linux'))
   }, [])
 
-  // 加载并轮询出口策略，保持与「出口路由」页展示一致（策略可能从其他入口变更）。
+  // 轮询出口策略与网关流量统计（5s）：两个数据源共用同一定时器，
+  // 避免多个 setInterval 各自独立触发造成请求冗余。
   useEffect(() => {
     let active = true
-    const load = () =>
+    const load = () => {
       getEgressConfig()
         .then((res) => {
           if (active && res.code === 0 && res.data) setEgress(res.data)
         })
         .catch(() => {})
-    load()
-    const timer = window.setInterval(load, 5000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  // 轮询网关流量统计（本次启动累计）。
-  useEffect(() => {
-    let active = true
-    const load = () =>
       getTraffic()
         .then((res) => {
           if (active && res.code === 0 && res.data) setTraffic(res.data)
         })
         .catch(() => {})
+    }
     load()
     const timer = window.setInterval(load, 5000)
     return () => {

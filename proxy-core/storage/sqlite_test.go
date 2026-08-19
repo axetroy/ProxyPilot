@@ -403,6 +403,50 @@ func TestListSubscriptionsProxyCount(t *testing.T) {
 	}
 }
 
+func TestGetSubscription(t *testing.T) {
+	st := newTestStore(t)
+	sub := &model.Subscription{Name: "sub", URL: "https://example.com", Interval: 3600, Enabled: true}
+	if err := st.UpsertSubscription(sub); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if sub.ID == 0 {
+		t.Fatal("expected subscription ID assigned")
+	}
+
+	// 关联 1 个节点，验证 proxy_count 与 ListSubscriptions 一致
+	n := baseNode("1.1.1.1", 8080, model.ProtocolHTTP)
+	_, _ = st.SaveNode(n)
+	if err := st.AttachNodeToSubscription(n.ID, sub.ID); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	got, err := st.GetSubscription(sub.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected subscription, got nil")
+	}
+	if got.ID != sub.ID || got.Name != "sub" || got.URL != "https://example.com" {
+		t.Fatalf("subscription mismatch: %+v", got)
+	}
+	if got.Interval != 3600 || !got.Enabled {
+		t.Fatalf("fields mismatch: %+v", got)
+	}
+	if got.ProxyCount != 1 {
+		t.Fatalf("proxyCount = %d, want 1", got.ProxyCount)
+	}
+
+	// 不存在的 ID 返回 nil（而非报错）
+	missing, err := st.GetSubscription(999999)
+	if err != nil {
+		t.Fatalf("get missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing subscription, got %+v", missing)
+	}
+}
+
 func TestUpdateSubscriptionFetch(t *testing.T) {
 	st := newTestStore(t)
 	sub := &model.Subscription{Name: "sub", URL: "https://example.com", Enabled: true}
