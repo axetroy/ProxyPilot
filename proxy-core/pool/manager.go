@@ -323,7 +323,44 @@ func (m *Manager) CheckNow(ctx context.Context) error {
 		checkCtx = context.Background()
 	}
 
-	nodes := m.List()
+	return m.runChecks(checkCtx, m.List())
+}
+
+// CheckNodes 并发检测选中的节点子集（批量检测场景），支持进度广播；
+// 与 CheckNow 共用 checking 互斥标志，避免同时运行两轮检测。
+// ids 中不存在的节点会被跳过。
+func (m *Manager) CheckNodes(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if m.checking.Swap(true) {
+		m.bus.Debug("check already running, skip")
+		return nil
+	}
+	defer m.checking.Store(false)
+
+	checkCtx := ctx
+	if checkCtx == nil {
+		checkCtx = context.Background()
+	} else if err := checkCtx.Err(); err != nil {
+		m.bus.Debug("check context already canceled, continuing with background context")
+		checkCtx = context.Background()
+	}
+
+	// 从存储取节点副本，避免长时间持有池锁；不存在的 id 跳过。
+	nodes := make([]*model.ProxyNode, 0, len(ids))
+	for _, id := range ids {
+		n, err := m.store.GetNode(id)
+		if err != nil {
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+	return m.runChecks(checkCtx, nodes)
+}
+
+// runChecks 并发检测节点列表：sem 限流 + 进度广播 + 失败收敛。
+func (m *Manager) runChecks(ctx context.Context, nodes []*model.ProxyNode) error {
 	if len(nodes) == 0 {
 		m.bus.Info("no nodes to check")
 		return nil
@@ -344,8 +381,8 @@ func (m *Manager) CheckNow(ctx context.Context) error {
 
 	for _, n := range nodes {
 		select {
-		case <-checkCtx.Done():
-			return checkCtx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case sem <- struct{}{}:
 		}
 		wg.Add(1)

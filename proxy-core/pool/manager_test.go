@@ -515,6 +515,40 @@ func TestCheckNowConcurrentGuard(t *testing.T) {
 	}
 }
 
+func TestCheckNodesSubset(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	for i := 0; i < 5; i++ {
+		n := newNode("1.1.1.1", 8080+i, model.ProtocolHTTP)
+		m.AddNodes([]*model.ProxyNode{n})
+	}
+	nodes := m.List()
+	targets := []int64{nodes[0].ID, nodes[1].ID, 99999}
+
+	if err := m.CheckNodes(context.Background(), targets); err != nil {
+		t.Fatalf("checkNodes: %v", err)
+	}
+	// 不存在的 id 被跳过，选中的节点应全部存活
+	aliveCount := 0
+	for _, n := range m.List() {
+		if n.ID == nodes[0].ID || n.ID == nodes[1].ID {
+			if n.Status != model.StatusAlive {
+				t.Errorf("node %d status = %s, want alive", n.ID, n.Status)
+			}
+			aliveCount++
+		}
+	}
+	if aliveCount != 2 {
+		t.Errorf("checked nodes = %d, want 2", aliveCount)
+	}
+}
+
+func TestCheckNodesEmptyIDs(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	if err := m.CheckNodes(context.Background(), nil); err != nil {
+		t.Fatalf("checkNodes with empty ids: %v", err)
+	}
+}
+
 func TestRefreshLoopStopsOnCancel(t *testing.T) {
 	m, _ := newTestManagerWithChecker(t, &mockChecker{})
 	m.SetRefreshInterval(time.Millisecond)

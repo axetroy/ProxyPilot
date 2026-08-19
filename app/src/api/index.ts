@@ -150,6 +150,13 @@ export async function deleteProxy(id: number): Promise<ApiResponse<void>> {
   return data
 }
 
+/** 批量删除节点 */
+export async function deleteProxies(ids: number[]): Promise<ApiResponse<{ deleted: number }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ deleted: number }>>('/api/proxy/batch-delete', { ids })
+  return data
+}
+
 /** 指定某个节点为固定出口（不再按评分自动选择） */
 export async function pinProxy(id: number): Promise<ApiResponse<ProxyNode>> {
   await ensureApiReady()
@@ -170,6 +177,13 @@ export async function checkProxy(id?: number): Promise<ApiResponse<CheckResult |
     '/api/proxy/check',
     id ? { id } : {},
   )
+  return data
+}
+
+/** 批量检测选中的节点（异步发起） */
+export async function checkProxies(ids: number[]): Promise<ApiResponse<{ started: boolean }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ started: boolean }>>('/api/proxy/check', { ids })
   return data
 }
 

@@ -81,6 +81,7 @@ func NewRouter(s *Services) *gin.Engine {
 	r.POST("/api/db/compact", s.compactDb)
 	r.GET("/api/proxies", s.listProxies)
 	r.DELETE("/api/proxy/:id", s.deleteProxy)
+	r.POST("/api/proxy/batch-delete", s.batchDeleteProxy)
 	r.PUT("/api/proxy/pin", s.pinProxy)
 	r.DELETE("/api/proxy/pin", s.unpinProxy)
 	r.GET("/api/egress", s.getEgress)
@@ -271,6 +272,42 @@ func (s *Services) deleteProxy(c *gin.Context) {
 	c.JSON(http.StatusOK, ok(nil))
 }
 
+// batchDeletePayload 批量删除节点的请求体。
+type batchDeletePayload struct {
+	IDs []int64 `json:"ids" binding:"required"`
+}
+
+// batchDeleteProxy 批量删除节点（订阅导入大量节点时的清理场景）。
+// 若删除的包含固定出口节点，自动取消指定，避免留下悬空引用（策略处理与单个删除一致）。
+func (s *Services) batchDeleteProxy(c *gin.Context) {
+	var payload batchDeletePayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, err.Error()))
+		return
+	}
+	if len(payload.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, fail(400, "ids 不能为空"))
+		return
+	}
+	s.Pool.RemoveNodes(payload.IDs)
+	if s.Selector != nil {
+		for _, id := range payload.IDs {
+			if s.Selector.PinnedID() == id {
+				if s.Selector.Strategy() == scheduler.StrategyFixed {
+					s.Selector.Unpin()
+				} else {
+					s.Selector.Pin(0)
+				}
+				_ = s.Store.SetSetting(config.KeyPinnedProxy, "")
+				s.Bus.Info("deleted node was pinned, cleared exit pin")
+				break
+			}
+		}
+	}
+	s.Bus.Info(fmt.Sprintf("batch deleted %d proxies", len(payload.IDs)))
+	c.JSON(http.StatusOK, ok(gin.H{"deleted": len(payload.IDs)}))
+}
+
 // pinPayload 指定固定出口节点的请求体。
 type pinPayload struct {
 	ID int64 `json:"id" binding:"required"`
@@ -319,7 +356,8 @@ func (s *Services) unpinProxy(c *gin.Context) {
 }
 
 type checkPayload struct {
-	ID *int64 `json:"id,omitempty"`
+	ID  *int64  `json:"id,omitempty"`
+	IDs []int64 `json:"ids,omitempty"`
 }
 
 func (s *Services) checkProxies(c *gin.Context) {
@@ -336,6 +374,15 @@ func (s *Services) checkProxies(c *gin.Context) {
 		}
 		result := s.Pool.CheckNode(node)
 		c.JSON(http.StatusOK, ok(result))
+		return
+	}
+	if len(payload.IDs) > 0 {
+		// 批量检测选中的节点：并发执行（sem 限流）+ 进度广播，异步避免阻塞请求。
+		// 使用 Background 而非请求 context：handler 返回后请求 context 会被取消，导致检测中断。
+		go func() {
+			_ = s.Pool.CheckNodes(context.Background(), payload.IDs)
+		}()
+		c.JSON(http.StatusAccepted, ok(gin.H{"started": true, "total": len(payload.IDs)}))
 		return
 	}
 	go func() {

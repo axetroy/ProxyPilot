@@ -639,6 +639,113 @@ func TestDeleteProxyClearsPin(t *testing.T) {
 	}
 }
 
+func TestBatchDeleteProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+		{Host: "5.6.7.8", Port: 8081, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+		{Host: "9.10.11.12", Port: 8082, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	nodes := s.Pool.List()
+	keepID := nodes[0].ID
+
+	w := doRequest(t, r, http.MethodPost, "/api/proxy/batch-delete",
+		map[string]any{"ids": []int64{nodes[1].ID, nodes[2].ID}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("batch delete status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	if s.Pool.Count() != 1 {
+		t.Errorf("pool count = %d, want 1", s.Pool.Count())
+	}
+	remain := s.Pool.List()
+	if len(remain) != 1 || remain[0].ID != keepID {
+		t.Errorf("remaining node = %+v, want id %d", remain, keepID)
+	}
+
+	// 空 ids 应 400
+	w2 := doRequest(t, r, http.MethodPost, "/api/proxy/batch-delete", map[string]any{"ids": []int64{}})
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("empty ids status = %d, want 400", w2.Code)
+	}
+}
+
+func TestBatchDeleteClearsPin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+		{Host: "5.6.7.8", Port: 8081, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	pinID := s.Pool.List()[0].ID
+
+	doRequest(t, r, http.MethodPut, "/api/proxy/pin", map[string]any{"id": pinID})
+	if s.Selector.PinnedID() != pinID {
+		t.Fatalf("setup: PinnedID() = %d, want %d", s.Selector.PinnedID(), pinID)
+	}
+
+	// 批量删除同时删除固定节点时，应自动取消指定
+	w := doRequest(t, r, http.MethodPost, "/api/proxy/batch-delete",
+		map[string]any{"ids": []int64{pinID, 99999}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("batch delete status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	if s.Selector.PinnedID() != 0 {
+		t.Errorf("PinnedID() = %d after deleting pinned node, want 0", s.Selector.PinnedID())
+	}
+	if v, _ := s.Store.GetSetting(config.KeyPinnedProxy); v != "" {
+		t.Errorf("persisted pinned setting = %q after batch delete, want empty", v)
+	}
+}
+
+func TestCheckProxyIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+		{Host: "5.6.7.8", Port: 8081, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	nodes := s.Pool.List()
+
+	w := doRequest(t, r, http.MethodPost, "/api/proxy/check",
+		map[string]any{"ids": []int64{nodes[0].ID, nodes[1].ID}})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("batch check status = %d, want 202 (body=%s)", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	if data["started"] != true || int(data["total"].(float64)) != 2 {
+		t.Errorf("started/total = %v/%v, want true/2", data["started"], data["total"])
+	}
+
+	// 异步检测结束后节点应全部更新为存活（mock 检测恒成功）
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ns := s.Pool.List()
+		alive := true
+		for _, n := range ns {
+			if n.Status != model.StatusAlive {
+				alive = false
+				break
+			}
+		}
+		if alive {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("nodes not marked alive after batch check within deadline")
+}
+
 // ---------- gateway ----------
 
 func TestGatewayStartStop(t *testing.T) {

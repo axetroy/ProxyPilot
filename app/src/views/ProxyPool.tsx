@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Code, Grid, Group, Menu, Modal, Progress, Select, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Select, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
 import { useSubsStore } from '@/stores/subscriptions'
@@ -92,7 +92,9 @@ export default function ProxyPool() {
   const notice = usePoolStore((s) => s.notice)
   const refresh = usePoolStore((s) => s.refresh)
   const remove = usePoolStore((s) => s.remove)
+  const removeMany = usePoolStore((s) => s.removeMany)
   const check = usePoolStore((s) => s.check)
+  const checkMany = usePoolStore((s) => s.checkMany)
   const clearNotice = usePoolStore((s) => s.clearNotice)
   const pin = usePoolStore((s) => s.pin)
   const unpin = usePoolStore((s) => s.unpin)
@@ -110,6 +112,10 @@ export default function ProxyPool() {
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
   const [scoreTarget, setScoreTarget] = useState<ProxyNode | null>(null)
   const [detailTarget, setDetailTarget] = useState<ProxyNode | null>(null)
+  // 批量操作：勾选的节点 id 集合
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
   const [activeTab, setActiveTab] = useState<string | null>('darwin')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
@@ -121,9 +127,9 @@ export default function ProxyPool() {
   const [viewportHeight, setViewportHeight] = useState(0)
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
   // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度（确保操作列无需横向滚动即可见）：
-  // 60+180+72+70+64+68+62+92 = 668，+7×8 gap +24 padding = 748。
-  const GRID_COLUMNS = '60px minmax(180px, 2.2fr) 72px 70px 64px 68px 62px 92px'
-  const GRID_MIN_WIDTH = 748
+  // 40+60+180+72+70+64+68+62+92 = 708，+8×8 gap +24 padding = 788。
+  const GRID_COLUMNS = '40px 60px minmax(180px, 2.2fr) 72px 70px 64px 68px 62px 92px'
+  const GRID_MIN_WIDTH = 788
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -205,6 +211,48 @@ export default function ProxyPool() {
   async function onCheckAll() {
     await check()
     window.setTimeout(() => refresh(), 1500)
+  }
+
+  // 当前过滤结果是否全部被选中（用于表头全选/半选状态）
+  const allVisibleSelected = list.length > 0 && list.every((n) => selected.has(n.id))
+  const checkingSelected = [...selected].some((id) => checkingIds.includes(id))
+
+  function toggleAll() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        list.forEach((n) => next.delete(n.id))
+      } else {
+        list.forEach((n) => next.add(n.id))
+      }
+      return next
+    })
+  }
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelected(new Set())
+  }
+
+  async function onCheckSelected() {
+    await checkMany([...selected])
+    window.setTimeout(() => refresh(), 1500)
+  }
+
+  async function onDeleteSelected() {
+    setBatchDeleting(true)
+    const ok = await removeMany([...selected])
+    setBatchDeleting(false)
+    setBatchDeleteOpen(false)
+    if (ok) clearSelection()
   }
 
   async function onPin(n: ProxyNode) {
@@ -297,7 +345,22 @@ export default function ProxyPool() {
 
       <Card padding="md" radius="md" withBorder style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Group justify="space-between" mb="sm">
-          <Text size="sm" c="dimmed">共 {list.length} 个节点 · 当前仅渲染可见区域</Text>
+          {selected.size > 0 ? (
+            <Group gap="sm">
+              <Text size="sm" c="dimmed">已选 <Text span fw={700}>{selected.size}</Text> 个节点</Text>
+              <Button size="xs" variant="light" leftSection={<Zap size={14} />} disabled={checkingSelected} onClick={onCheckSelected}>
+                {checkingSelected ? '检测中...' : '批量检测'}
+              </Button>
+              <Button size="xs" color="red" variant="light" leftSection={<Trash2 size={14} />} onClick={() => setBatchDeleteOpen(true)}>
+                批量删除
+              </Button>
+              <Button size="xs" variant="subtle" onClick={clearSelection}>
+                清除选择
+              </Button>
+            </Group>
+          ) : (
+            <Text size="sm" c="dimmed">共 {list.length} 个节点 · 当前仅渲染可见区域</Text>
+          )}
         </Group>
         <Box
           ref={viewportRef}
@@ -326,6 +389,13 @@ export default function ProxyPool() {
                 borderBottom: '1px solid var(--mantine-color-default-border)',
               }}
             >
+              <Checkbox
+                size="xs"
+                checked={allVisibleSelected}
+                indeterminate={selected.size > 0 && !allVisibleSelected}
+                onChange={toggleAll}
+                aria-label="全选当前列表"
+              />
               <Text size="xs">ID</Text>
               <Text size="xs">主机 · 地区</Text>
               <Text size="xs">协议</Text>
@@ -356,6 +426,12 @@ export default function ProxyPool() {
                       borderBottom: '1px solid var(--mantine-color-default-border)',
                     }}
                   >
+                    <Checkbox
+                      size="xs"
+                      checked={selected.has(n.id)}
+                      onChange={() => toggleOne(n.id)}
+                      aria-label={`选择节点 ${n.id}`}
+                    />
                     <Text size="sm">{n.id}</Text>
                     <Box
                       style={{ cursor: 'pointer', minWidth: 0 }}
@@ -428,6 +504,26 @@ export default function ProxyPool() {
               取消
             </Button>
             <Button color="red" onClick={async () => { if (pending) await remove(pending.id); setPending(null) }}>
+              删除
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal opened={batchDeleteOpen} onClose={() => setBatchDeleteOpen(false)} title="批量删除节点">
+        <Stack gap="md">
+          <Text>确定删除选中的 {selected.size} 个节点？此操作不可撤销。</Text>
+          {selected.size > 0 && (
+            <Text size="sm" c="dimmed">
+              {[...selected].slice(0, 5).map((id) => nodes.find((n) => n.id === id)).filter(Boolean).map((n) => `${n!.host}:${n!.port}`).join('、')}
+              {selected.size > 5 ? ` 等 ${selected.size} 个` : ''}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button variant="default" disabled={batchDeleting} onClick={() => setBatchDeleteOpen(false)}>
+              取消
+            </Button>
+            <Button color="red" loading={batchDeleting} onClick={onDeleteSelected}>
               删除
             </Button>
           </Group>

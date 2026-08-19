@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { getErrorMessage, listProxies, deleteProxy, checkProxy, pinProxy, unpinProxy } from '@/api'
+import { getErrorMessage, listProxies, deleteProxy, deleteProxies, checkProxy, checkProxies, pinProxy, unpinProxy } from '@/api'
 import { useStatusStore } from '@/stores/status'
 import type { ProxyNode } from '@/types'
 
@@ -13,7 +13,9 @@ interface PoolState {
   notice: NoticeData | null
   refresh: (status?: string, silent?: boolean) => Promise<void>
   remove: (id: number) => Promise<boolean>
+  removeMany: (ids: number[]) => Promise<boolean>
   check: (id?: number) => Promise<void>
+  checkMany: (ids: number[]) => Promise<void>
   /** 指定某个节点为固定出口 */
   pin: (id: number) => Promise<boolean>
   /** 取消固定出口指定 */
@@ -58,6 +60,27 @@ export const usePoolStore = create<PoolState>((set, get) => ({
       return false
     }
   },
+  removeMany: async (ids: number[]) => {
+    if (ids.length === 0) return true
+    try {
+      const res = await deleteProxies(ids)
+      if (res.code !== 0) {
+        set({ notice: { type: 'error', text: res.msg || '批量删除失败' } })
+        return false
+      }
+      const removed = new Set(ids)
+      set({
+        nodes: get().nodes.filter((n) => !removed.has(n.id)),
+        notice: { type: 'success', text: `已删除 ${res.data?.deleted ?? ids.length} 个节点` },
+      })
+      // 若删除的含固定出口节点，后端会自动取消指定，这里同步刷新状态
+      await useStatusStore.getState().refresh()
+      return true
+    } catch (e) {
+      set({ notice: { type: 'error', text: `批量删除失败：${getErrorMessage(e)}` } })
+      return false
+    }
+  },
   check: async (id?: number) => {
     if (id) {
       set((s) => ({ checkingIds: [...s.checkingIds, id], notice: null }))
@@ -83,6 +106,23 @@ export const usePoolStore = create<PoolState>((set, get) => ({
       } else {
         set({ checkingAll: false })
       }
+    }
+  },
+  checkMany: async (ids: number[]) => {
+    if (ids.length === 0) return
+    set((s) => ({ checkingIds: [...s.checkingIds, ...ids], notice: null }))
+    try {
+      const res = await checkProxies(ids)
+      if (res.code === 0) {
+        set({ notice: { type: 'success', text: `已发起 ${ids.length} 个节点检测` } })
+      } else {
+        set({ notice: { type: 'error', text: res.msg || '批量检测失败' } })
+      }
+    } catch (e) {
+      set({ notice: { type: 'error', text: `批量检测失败：${getErrorMessage(e)}` } })
+    } finally {
+      const idSet = new Set(ids)
+      set((s) => ({ checkingIds: s.checkingIds.filter((x) => !idSet.has(x)) }))
     }
   },
   clearNotice: () => set({ notice: null }),
