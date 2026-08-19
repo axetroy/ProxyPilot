@@ -189,7 +189,7 @@ export default function Logs() {
                 <Text size="sm" c="dimmed">等待事件...</Text>
               ) : (
                 visibleEvents.map((e, i) => (
-                  <Group key={i} align="flex-start" gap="sm">
+                  <Group key={e.seq ?? i} align="flex-start" gap="sm">
                     {e.type === 'progress' ? (
                       <Badge color="blue" variant="light" size="sm">
                         {e.current}/{e.total}

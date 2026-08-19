@@ -42,4 +42,7 @@ contextBridge.exposeInMainWorld('proxypilot', {
   onCoreError: (cb: (msg: string) => void): void => {
     ipcRenderer.on('core:error', (_e, msg: string) => cb(msg))
   },
+  onCoreRestarted: (cb: () => void): void => {
+    ipcRenderer.on('core:restarted', () => cb())
+  },
 })

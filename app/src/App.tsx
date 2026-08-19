@@ -7,6 +7,7 @@ import { useLogStore } from '@/stores/logs'
 import { useUpdaterStore } from '@/stores/updater'
 import { useSystemProxyStore } from '@/stores/system-proxy'
 import { handleUpdaterEvent } from '@/lib/updater-notifications'
+import { handleCoreError, handleCoreExit, handleCoreRestarted } from '@/lib/core-notifications'
 import Dashboard from '@/views/Dashboard'
 import ProxyPool from '@/views/ProxyPool'
 import Egress from '@/views/Egress'
@@ -58,6 +59,10 @@ function App() {
     void useUpdaterStore.getState().init()
     void useSystemProxyStore.getState().init()
     const off = window.proxypilot?.onUpdaterEvent(handleUpdaterEvent)
+    // core 生命周期：意外退出/错误提示 + 重启成功后恢复 API 与状态
+    window.proxypilot?.onCoreExit(handleCoreExit)
+    window.proxypilot?.onCoreError(handleCoreError)
+    window.proxypilot?.onCoreRestarted(handleCoreRestarted)
     return () => {
       off?.()
     }

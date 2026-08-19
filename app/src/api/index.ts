@@ -1,4 +1,4 @@
-import axios, { type AxiosInstance } from 'axios'
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckHistory, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, FetchSummary, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
@@ -33,6 +33,7 @@ declare global {
       onSystemProxyEvent: (cb: (state: SystemProxyState) => void) => () => void
       onCoreExit: (cb: () => void) => void
       onCoreError: (cb: (msg: string) => void) => void
+      onCoreRestarted: (cb: () => void) => void
     }
   }
 }
@@ -56,6 +57,14 @@ export async function initApi(): Promise<void> {
   resolveApiReady = null
 }
 
+// resetApiReady 在 core 重启后调用：清除已完成的就绪状态，
+// 让后续请求重新获取 token / API 地址（core 重启后 token 与端口都可能变化）。
+export function resetApiReady(): void {
+  token = ''
+  apiReadyPromise = null
+  resolveApiReady = null
+}
+
 async function refreshToken(): Promise<void> {
   if (window.proxypilot) {
     token = await window.proxypilot.getToken()
@@ -68,7 +77,6 @@ export async function ensureApiReady(): Promise<void> {
     return
   }
   await apiReadyPromise
-  await refreshToken()
 }
 
 export function getToken(): string {
@@ -122,6 +130,28 @@ http.interceptors.request.use(async (config) => {
   config.headers['X-Token'] = token
   return config
 })
+
+// 401 表示 token 失效（core 重启后旧 token 作废）。重置 API 就绪状态后重试一次；
+// 若重试仍失败则原样返回错误（由各调用方通过 getErrorMessage 展示）。
+http.interceptors.response.use(
+  (resp) => resp,
+  async (error) => {
+    const config = error.config as (AxiosRequestConfig & { _ppRetried?: boolean }) | undefined
+    if (
+      config &&
+      error.response?.status === 401 &&
+      !config._ppRetried &&
+      window.proxypilot
+    ) {
+      config._ppRetried = true
+      resetApiReady()
+      await ensureApiReady()
+      config.headers = { ...config.headers, 'X-Token': token }
+      return http.request(config)
+    }
+    return Promise.reject(error)
+  },
+)
 
 export async function getStatus(): Promise<ApiResponse<SystemStatus>> {
   await ensureApiReady()
@@ -367,17 +397,19 @@ export async function testChain(id: number): Promise<ApiResponse<ChainTestResult
 }
 
 /** 导出存活节点：format 为 json（默认）/ base64 / plain，文本格式直接返回内容 */
-export async function exportProxies(format: 'json' | 'base64' | 'plain' = 'json'): Promise<ApiResponse<unknown>> {
+export async function exportProxies(
+  format: 'json' | 'base64' | 'plain' = 'json',
+): Promise<ApiResponse<unknown>> {
   await ensureApiReady()
   if (format === 'json') {
-    const { data } = await http.get<ApiResponse<unknown>>('/api/export')
+    const { data } = await http.get<ApiResponse<{ total: number; nodes: ProxyNode[] }>>('/api/export')
     return data
   }
-  const { data } = await http.get<{ code: number; msg: string; data?: unknown }>(`/api/export?format=${format}`, {
+  // 文本格式：后端直接返回订阅文本（非 JSON 包装），这里包一层统一调用方处理
+  const { data } = await http.get<string>(`/api/export?format=${format}`, {
     responseType: 'text',
   })
-  // 文本格式的响应体即订阅内容，这里包一层以便调用方统一处理
-  return { code: data.code ?? 0, msg: data.msg ?? 'ok', data: typeof data === 'string' ? data : (data as unknown as { data?: unknown })?.data }
+  return { code: 0, msg: 'ok', data }
 }
 
 export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {

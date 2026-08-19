@@ -309,4 +309,6 @@ export interface LogEvent {
   total?: number
   /** 前端收到该事件的时间（导出日志时用于生成时间戳） */
   receivedAt?: number
+  /** 前端自增序号（用于列表渲染 key，保证唯一稳定） */
+  seq?: number
 }

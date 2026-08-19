@@ -53,6 +53,7 @@ let isQuitting = false
 let shutdownStarted = false
 let tokenReadyPromise: Promise<void> | null = null
 let resolveTokenReady: (() => void) | null = null
+let rejectTokenReady: ((e: Error) => void) | null = null
 let tokenReady = false
 
 function resolveCorePath(): string {
@@ -82,8 +83,9 @@ async function startCore(): Promise<void> {
     resolveApiBaseReady = resolve
   })
   tokenReady = false
-  tokenReadyPromise = new Promise<void>((resolve) => {
+  tokenReadyPromise = new Promise<void>((resolve, reject) => {
     resolveTokenReady = resolve
+    rejectTokenReady = reject
   })
   const exe = resolveCorePath()
   if (!existsSync(exe)) {
@@ -145,12 +147,73 @@ async function startCore(): Promise<void> {
     core = null
     sessionToken = ''
     tokenReady = false
+    // 若仍有等待 token 的调用方（get-token IPC / waitForCore），
+    // 立即 reject 而不是永久挂起。
+    rejectTokenReady?.(new Error('proxy-core 进程已退出'))
+    rejectTokenReady = null
     tokenReadyPromise = null
     resolveTokenReady = null
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('core:exit')
     }
+    // core 意外退出（非应用退出流程）时自动重启，避免网关静默失效。
+    if (!isQuitting && !shutdownStarted) {
+      scheduleCoreRestart()
+    }
   })
+
+  return core
+}
+
+// coreRestartAttempts 连续意外退出的重启计数：防止 core 存在启动即崩溃的
+// 系统性故障时无限重启消耗资源，超过上限后停止自动重启并通知用户。
+let coreRestartAttempts = 0
+// coreRestartTimer 待执行的自动重启定时器（取消用）。
+let coreRestartTimer: ReturnType<typeof setTimeout> | null = null
+
+// scheduleCoreRestart 在 core 意外退出后延迟自动重启（短暂退避，等待端口释放）。
+function scheduleCoreRestart(): void {
+  coreRestartAttempts++
+  if (coreRestartAttempts > maxCoreRestarts) {
+    console.error(`[core] proxy-core exited ${coreRestartAttempts} times, giving up auto-restart`)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(
+        'core:error',
+        `proxy-core 连续崩溃 ${coreRestartAttempts} 次，已停止自动重启。请检查 proxy-core 日志后手动重启应用。`,
+      )
+    }
+    return
+  }
+  console.warn(`[core] proxy-core exited unexpectedly, restarting (attempt ${coreRestartAttempts})…`)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('core:error', `proxy-core 已退出，正在自动重启…`)
+  }
+  if (coreRestartTimer) clearTimeout(coreRestartTimer)
+  coreRestartTimer = setTimeout(() => {
+    coreRestartTimer = null
+    void (async () => {
+      try {
+        await startCore()
+        await waitForCore()
+        coreRestartAttempts = 0
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('core:restarted')
+        }
+      } catch (err) {
+        console.error('[core] auto-restart failed:', err)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(
+            'core:error',
+            `proxy-core 自动重启失败：${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+    })()
+  }, 800)
+}
+
+// maxCoreRestarts 是 core 意外退出后自动重启的最大次数。
+const maxCoreRestarts = 5
 }
 
 function stopCore(): void {
@@ -315,6 +378,9 @@ function buildTrayMenu(): void {
   if (process.platform === 'darwin') {
     app.dock?.hide()
   } else {
+    // buildTrayMenu 可能被多次调用（系统代理状态变化即重建菜单），
+    // 先移除旧监听避免累积重复的 click 处理器（每次重建只注册一个）。
+    tray.removeAllListeners('click')
     tray.on('click', () => {
       tray?.popUpContextMenu()
     })

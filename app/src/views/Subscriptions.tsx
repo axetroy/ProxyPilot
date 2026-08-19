@@ -69,7 +69,7 @@ export default function Subscriptions() {
             <Text size="sm" c="dimmed" mt={4}>集中管理代理订阅源和抓取任务</Text>
           </div>
           <Group gap="sm" wrap="wrap">
-            <Button leftSection={<Plus size={16} />} loading={submitting} onClick={() => setOpen(true)}>
+            <Button leftSection={<Plus size={16} />} loading={submitting} onClick={() => { resetForm(); setOpen(true); }}>
               {submitting ? '处理中...' : '添加订阅'}
             </Button>
             <Button variant="default" leftSection={<RefreshCw size={16} />} loading={refreshing} onClick={() => refresh()}>
