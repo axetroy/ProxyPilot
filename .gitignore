@@ -26,3 +26,4 @@ proxy-core/proxy-core.exe~
 
 # Mac
 .DS_Store
+pac_rules.json
