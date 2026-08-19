@@ -341,8 +341,11 @@ POST /api/subscription
 "url":"https://xxx.com/list",
 "interval":3600
 }
-
 ```
+
+url 支持 http(s) 订阅地址与 `file://` 本地文件（如 `file:///C:/path/list.txt`），
+
+由 Fetcher 按 scheme 分发：http/https 走 HTTP 下载，file 读取本地文件。
 
 ---
 

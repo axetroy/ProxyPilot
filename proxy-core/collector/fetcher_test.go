@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -75,5 +77,61 @@ func TestFetchLargeBodyLimited(t *testing.T) {
 	}
 	if len(body) > 8<<20 {
 		t.Fatalf("body too large: %d bytes", len(body))
+	}
+}
+
+// TestFetchLocalFile 从本地文件读取订阅内容（file:// URL）。
+func TestFetchLocalFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "list.txt")
+	content := "1.1.1.1:80\n2.2.2.2:443\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	f := NewFetcher(5 * time.Second)
+	// file:// 形式：跨平台用 filepath.ToSlash 拼路径
+	fileURL := "file://" + filepath.ToSlash(path)
+	body, err := f.Fetch(context.Background(), fileURL)
+	if err != nil {
+		t.Fatalf("fetch local file: %v", err)
+	}
+	if string(body) != content {
+		t.Fatalf("body = %q, want %q", body, content)
+	}
+}
+
+// TestFetchLocalFileMissing 文件不存在时返回错误（不 panic）。
+func TestFetchLocalFileMissing(t *testing.T) {
+	f := NewFetcher(5 * time.Second)
+	_, err := f.Fetch(context.Background(), "file://"+filepath.ToSlash(filepath.Join(t.TempDir(), "nope.txt")))
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+// TestFetchLocalFileCanceled 取消的 context 应中断本地文件读取。
+func TestFetchLocalFileCanceled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := NewFetcher(5 * time.Second)
+	_, err := f.Fetch(ctx, "file://"+filepath.ToSlash(path))
+	if err == nil {
+		t.Fatal("expected error for canceled context")
+	}
+}
+
+// TestFetchUnsupportedScheme 非 http/https/file 的 scheme 返回错误。
+func TestFetchUnsupportedScheme(t *testing.T) {
+	f := NewFetcher(5 * time.Second)
+	_, err := f.Fetch(context.Background(), "ftp://example.com/list")
+	if err == nil {
+		t.Fatal("expected error for unsupported scheme")
 	}
 }

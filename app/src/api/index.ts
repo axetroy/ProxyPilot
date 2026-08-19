@@ -18,6 +18,7 @@ declare global {
       getToken: () => Promise<string>
       getApiBase: () => Promise<string>
       getPlatform: () => Promise<string>
+      pickSubscriptionFile: () => Promise<string | null>
       getAppSettings: () => Promise<AppSettings>
       setAppSettings: (settings: AppSettings) => Promise<AppSettings>
       // ---- 更新机制 ----

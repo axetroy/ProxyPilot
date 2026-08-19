@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, Notification, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, Tray, nativeImage } from 'electron'
 import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import * as path from 'node:path'
@@ -392,6 +392,25 @@ ipcMain.handle('get-token', async () => {
 })
 ipcMain.handle('get-api-base', () => apiBase)
 ipcMain.handle('get-platform', () => process.platform)
+// 选择本地订阅文件：返回 file:// 形式的 URL（供订阅 URL 字段使用）。
+ipcMain.handle('pick-subscription-file', async (): Promise<string | null> => {
+  const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (!win) return null
+  const result = await dialog.showOpenDialog(win, {
+    title: '选择订阅文件',
+    properties: ['openFile'],
+    filters: [
+      { name: '订阅文件', extensions: ['txt', 'list', 'sub', 'conf', 'json', 'yaml', 'yml'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const p = result.filePaths[0]
+  // file:// 形式：Windows 下反斜杠转正斜杠（file:///C:/path）。
+  const normalized = p.replace(/\\/g, '/')
+  const prefix = normalized.startsWith('/') ? 'file://' : 'file:///'
+  return `${prefix}${normalized}`
+})
 // 开机自启：通过系统登录项实现（Windows 注册表 Run 键 / macOS LaunchAgents / Linux autostart）。
 // 仅在保存设置变化时写入，避免每次启动都重置用户手动在系统层的改动。
 function applyAutoLaunch(enabled: boolean): void {

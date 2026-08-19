@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('proxypilot', {
   getToken: (): Promise<string> => ipcRenderer.invoke('get-token'),
   getApiBase: (): Promise<string> => ipcRenderer.invoke('get-api-base'),
   getPlatform: (): Promise<string> => ipcRenderer.invoke('get-platform'),
+  pickSubscriptionFile: (): Promise<string | null> => ipcRenderer.invoke('pick-subscription-file'),
   getAppSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-app-settings'),
   setAppSettings: (settings: AppSettings): Promise<AppSettings> => ipcRenderer.invoke('set-app-settings', settings),
 

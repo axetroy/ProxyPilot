@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { FileUp, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Alert, Button, Card, Group, Modal, NumberInput, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useSubsStore } from '@/stores/subscriptions'
 import type { Subscription } from '@/types'
-
-type NoticeData = { type: 'success' | 'error'; text: string }
 
 export default function Subscriptions() {
   const subs = useSubsStore((s) => s.subs)
@@ -37,6 +35,15 @@ export default function Subscriptions() {
 
   function resetForm() {
     setForm({ name: '', url: '', interval: 3600 })
+  }
+
+  // 从本地文件选择订阅源：file:// URL 由主进程（dialog）生成，
+  // 未选文件或主进程不支持时不改动现有输入。
+  async function pickLocalFile() {
+    const fileUrl = await window.proxypilot?.pickSubscriptionFile?.()
+    if (fileUrl) {
+      setForm((f) => ({ ...f, url: fileUrl }))
+    }
   }
 
   async function onSubmit() {
@@ -137,7 +144,10 @@ export default function Subscriptions() {
       <Modal opened={openEdit} onClose={() => setOpenEdit(false)} title="编辑订阅">
         <Stack gap="md">
           <TextInput label="名称" placeholder="proxy-source" value={form.name} onChange={(e) => setForm({ ...form, name: e.currentTarget.value })} />
-          <TextInput label="URL" placeholder="https://example.com/list" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} />
+          <TextInput label="URL" placeholder="https://example.com/list 或 file:///C:/path/list.txt" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} />
+          <Button size="xs" variant="light" leftSection={<FileUp size={14} />} onClick={() => void pickLocalFile()}>
+            选择本地文件
+          </Button>
           <NumberInput label="刷新间隔（秒）" min={60} step={300} value={form.interval} onChange={(value) => setForm({ ...form, interval: Number(value ?? 3600) })} />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setOpenEdit(false)}>
@@ -157,7 +167,10 @@ export default function Subscriptions() {
       <Modal opened={open} onClose={() => setOpen(false)} title="添加订阅">
         <Stack gap="md">
           <TextInput label="名称" placeholder="proxy-source" value={form.name} onChange={(e) => setForm({ ...form, name: e.currentTarget.value })} />
-          <TextInput label="URL" placeholder="https://example.com/list" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} />
+          <TextInput label="URL" placeholder="https://example.com/list 或 file:///C:/path/list.txt" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} />
+          <Button size="xs" variant="light" leftSection={<FileUp size={14} />} onClick={() => void pickLocalFile()}>
+            选择本地文件
+          </Button>
           <NumberInput label="刷新间隔（秒）" min={60} step={300} value={form.interval} onChange={(value) => setForm({ ...form, interval: Number(value ?? 3600) })} />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setOpen(false)}>
