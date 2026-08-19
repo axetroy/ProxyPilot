@@ -5,9 +5,9 @@ import { Alert, Badge, Button, Card, Code, Divider, Group, Modal, SimpleGrid, St
 import './dashboard.css'
 import { useStatusStore } from '@/stores/status'
 import { usePoolStore } from '@/stores/pool'
-import { getEgressConfig, getPlatform, type Platform } from '@/api'
+import { getEgressConfig, getPlatform, getTraffic, type Platform } from '@/api'
 import { buildGatewayCommands, type GatewayCommandSet } from '@/lib/proxy-commands'
-import type { EgressConfig, ProxyNode } from '@/types'
+import type { EgressConfig, ProxyNode, TrafficSnapshot } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -17,9 +17,11 @@ export default function Dashboard() {
   const stop = useStatusStore((s) => s.stop)
   const checkAll = usePoolStore((s) => s.check)
   const refreshPool = usePoolStore((s) => s.refresh)
+  const nodes = usePoolStore((s) => s.nodes)
   const [notice, setNotice] = useState<NoticeData | null>(null)
   const [loading, setLoading] = useState<'check' | 'start' | 'stop' | null>(null)
   const [egress, setEgress] = useState<EgressConfig | null>(null)
+  const [traffic, setTraffic] = useState<TrafficSnapshot | null>(null)
   const [copiedKey, setCopiedKey] = useState<'http' | 'socks5' | null>(null)
   const [gatewayModalOpen, setGatewayModalOpen] = useState(false)
   const [platform, setPlatform] = useState<Platform>('linux')
@@ -53,6 +55,28 @@ export default function Dashboard() {
     return node?.latency ? `${node.latency}ms` : '—'
   }
 
+  // 字节数格式化为可读单位（B/KB/MB/GB/TB）。
+  function formatBytes(v?: number) {
+    if (!v || v <= 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.min(Math.floor(Math.log(v) / Math.log(1024)), units.length - 1)
+    const n = v / 1024 ** i
+    return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`
+  }
+
+  // 按节点流量降序取 Top5，观察谁在扛主要流量。
+  const topNodes = useMemo(() => {
+    if (!traffic) return []
+    return [...(traffic.byNode ?? [])]
+      .sort((a, b) => b.download + b.upload - (a.download + a.upload))
+      .slice(0, 5)
+  }, [traffic])
+
+  function nodeLabel(id: number) {
+    const n = nodes.find((x) => x.id === id)
+    return n ? `${n.host}:${n.port}` : `节点#${id}`
+  }
+
   const stats = [
     { label: '节点总数', value: status.proxyCount },
     { label: '存活节点', value: status.aliveCount },
@@ -79,6 +103,23 @@ export default function Dashboard() {
       getEgressConfig()
         .then((res) => {
           if (active && res.code === 0 && res.data) setEgress(res.data)
+        })
+        .catch(() => {})
+    load()
+    const timer = window.setInterval(load, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  // 轮询网关流量统计（本次启动累计）。
+  useEffect(() => {
+    let active = true
+    const load = () =>
+      getTraffic()
+        .then((res) => {
+          if (active && res.code === 0 && res.data) setTraffic(res.data)
         })
         .catch(() => {})
     load()
@@ -342,6 +383,74 @@ export default function Dashboard() {
             <Text size="xs" c="dimmed" mt="xs">HTTP 与 SOCKS5 共用同一端口，按连接首字节自动识别分流；浏览器/系统代理用 HTTP，Clash、Telegram 等用 SOCKS5</Text>
           </Card>
         </SimpleGrid>
+      </Card>
+
+      <Card padding="lg" radius="md" withBorder>
+        <Group justify="space-between" align="flex-start" wrap="wrap">
+          <div>
+            <Text fw={600}>流量统计</Text>
+            <Text size="sm" c="dimmed" mt={4}>本次启动累计的代理转发流量（UDP 中继暂不统计）</Text>
+          </div>
+          <Badge variant="light" color={traffic && traffic.total.connections > 0 ? 'green' : 'gray'}>
+            {traffic && traffic.total.connections > 0 ? '累计中' : '暂无流量'}
+          </Badge>
+        </Group>
+
+        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mt="md">
+          <Card padding="md" radius="md" withBorder>
+            <Text size="sm" c="dimmed">上传</Text>
+            <Text fw={700} size="lg" mt={4}>{formatBytes(traffic?.total.upload)}</Text>
+          </Card>
+          <Card padding="md" radius="md" withBorder>
+            <Text size="sm" c="dimmed">下载</Text>
+            <Text fw={700} size="lg" mt={4}>{formatBytes(traffic?.total.download)}</Text>
+          </Card>
+          <Card padding="md" radius="md" withBorder>
+            <Text size="sm" c="dimmed">连接数</Text>
+            <Text fw={700} size="lg" mt={4}>{traffic?.total.connections ?? 0}</Text>
+          </Card>
+        </SimpleGrid>
+
+        {topNodes.length > 0 || (traffic && (traffic.byChain ?? []).length > 0) ? (
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" mt="md">
+            {topNodes.length > 0 && (
+              <Card padding="md" radius="md" withBorder>
+                <Text size="sm" c="dimmed" mb="xs">节点流量 Top {topNodes.length}</Text>
+                <Stack gap="xs">
+                  {topNodes.map((n) => (
+                    <Group key={n.id} justify="space-between" wrap="nowrap">
+                      <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>{nodeLabel(n.id)}</Text>
+                      <Group gap="xs" wrap="nowrap">
+                        <Text size="xs" c="dimmed">↑{formatBytes(n.upload)}</Text>
+                        <Text size="xs" c="dimmed">↓{formatBytes(n.download)}</Text>
+                        <Text size="xs" c="dimmed">{n.connections} 连接</Text>
+                      </Group>
+                    </Group>
+                  ))}
+                </Stack>
+              </Card>
+            )}
+            {traffic && (traffic.byChain ?? []).length > 0 && (
+              <Card padding="md" radius="md" withBorder>
+                <Text size="sm" c="dimmed" mb="xs">链路流量</Text>
+                <Stack gap="xs">
+                  {(traffic.byChain ?? []).map((c) => (
+                    <Group key={c.name} justify="space-between" wrap="nowrap">
+                      <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
+                        {c.name === 'auto-chain' ? '自动链路' : c.name}
+                      </Text>
+                      <Group gap="xs" wrap="nowrap">
+                        <Text size="xs" c="dimmed">↑{formatBytes(c.upload)}</Text>
+                        <Text size="xs" c="dimmed">↓{formatBytes(c.download)}</Text>
+                        <Text size="xs" c="dimmed">{c.connections} 连接</Text>
+                      </Group>
+                    </Group>
+                  ))}
+                </Stack>
+              </Card>
+            )}
+          </SimpleGrid>
+        ) : null}
       </Card>
 
       <Modal

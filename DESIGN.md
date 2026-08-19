@@ -880,6 +880,28 @@ SOCKS5 节点同样支持 UDP ASSOCIATE。会话随 TCP 控制连接关闭而结
 
 ---
 
+## 流量统计
+
+网关在建立每条出站连接时包装连接对象（`countedConn`），对 `Read`/`Write`
+按字节实时累计上传/下载，并按出口维度分桶：
+
+* **节点**：单跳策略（fixed/best/random/weighted/round-robin）命中的节点。
+* **链路**：chain 按链路名分桶；auto-chain 每次现选节点、无固定名称，统一记
+  为 `auto-chain`。
+* **直连**：智能分流命中「直连」的目标（不经节点池）。
+
+统计仅存于内存（本次启动累计，进程重启清零，不落盘）。通过
+`GET /api/traffic` 读取快照（`total` / `byNode` / `byChain` / `direct`，
+`byNode` 只含节点 ID，前端用节点池映射为地址）。
+
+限制：
+
+* UDP 中继按数据报转发，不走连接对象，暂不统计。
+* 普通 HTTP 转发的请求体上行与响应体下行都经包装连接计数（走 `http.Transport`
+  的 `DialContext`），无需在各转发路径单独埋点。
+
+---
+
 # 13. 数据库设计
 
 SQLite：

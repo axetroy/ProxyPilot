@@ -68,6 +68,9 @@ type Gateway struct {
 	// 避免每次 SOCKS5 请求都阻塞在 DNS 反查上。
 	ipv6Mu    sync.Mutex
 	ipv6Cache map[string]ipv6CacheEntry
+
+	// traffic 统计网关转发的流量与连接数（本次启动累计）。
+	traffic *trafficCounter
 }
 
 // ipv6CacheEntry 记录某个 IPv6 地址的 PTR 反查结果与缓存时间。
@@ -87,6 +90,7 @@ func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, 
 		addr:      addr,
 		limitCtx:  4,
 		ipv6Cache: make(map[string]ipv6CacheEntry),
+		traffic:   newTrafficCounter(),
 	}
 	g.forwardTransport = &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -237,7 +241,7 @@ func (g *Gateway) dialDirect(ctx context.Context, target string) (net.Conn, erro
 	if err != nil {
 		return nil, fmt.Errorf("direct dial failed for %s: %w", target, err)
 	}
-	return conn, nil
+	return g.TrackConn(conn, trafficDirect, 0, ""), nil
 }
 
 // Upstream dials `target` through the best live node, retrying alternatives
@@ -325,7 +329,7 @@ func (g *Gateway) UpstreamWithProtocol(ctx context.Context, target string, proto
 			continue
 		}
 		g.selector.Success(node.ID)
-		return conn, nil
+		return g.TrackConn(conn, trafficNode, node.ID, ""), nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no usable proxy in pool")
@@ -436,7 +440,7 @@ func (g *Gateway) upstreamViaChain(ctx context.Context, target string) (net.Conn
 			}
 			g.bus.Debug(fmt.Sprintf("chain %q established via [%s] -> %s", chain.Name, strings.Join(names, " -> "), target))
 		}
-		return conn, nil
+		return g.TrackConn(conn, trafficChain, 0, chain.Name), nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no usable chain (all chains have dead nodes)")
@@ -479,7 +483,7 @@ func (g *Gateway) upstreamViaAutoChain(ctx context.Context, target string) (net.
 		}
 		g.bus.Debug(fmt.Sprintf("auto-chain established via [%s] -> %s", strings.Join(names, " -> "), target))
 	}
-	return conn, nil
+	return g.TrackConn(conn, trafficChain, 0, autoChainTrafficName), nil
 }
 
 // ipv6Domain 对 IPv6 字面量地址做 PTR 反查，返回对应的域名（去掉末尾点）。

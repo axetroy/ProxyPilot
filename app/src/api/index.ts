@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -126,6 +126,13 @@ http.interceptors.request.use(async (config) => {
 export async function getStatus(): Promise<ApiResponse<SystemStatus>> {
   await ensureApiReady()
   const { data } = await http.get<ApiResponse<SystemStatus>>('/api/status')
+  return data
+}
+
+/** 网关流量统计（本次启动累计）：总量 + 按节点/链路/直连分桶 */
+export async function getTraffic(): Promise<ApiResponse<TrafficSnapshot>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<TrafficSnapshot>>('/api/traffic')
   return data
 }
 

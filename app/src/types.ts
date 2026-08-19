@@ -151,6 +151,31 @@ export interface EgressConfig {
   chainSelection: ChainSelection
 }
 
+/** 某个出口（节点/链路/直连/总量）的累计流量统计（本次启动至今） */
+export interface TrafficEntry {
+  upload: number
+  download: number
+  connections: number
+}
+
+/** 按节点分桶的流量统计 */
+export interface NodeTrafficItem extends TrafficEntry {
+  id: number
+}
+
+/** 按链路分桶的流量统计（auto-chain 统一记为该名） */
+export interface ChainTrafficItem extends TrafficEntry {
+  name: string
+}
+
+/** 网关流量统计快照（GET /api/traffic） */
+export interface TrafficSnapshot {
+  total: TrafficEntry
+  direct: TrafficEntry
+  byNode: NodeTrafficItem[]
+  byChain: ChainTrafficItem[]
+}
+
 /** 代理链路（客户端按序经过多个节点到达目标） */
 export interface ProxyChain {
   id: number
