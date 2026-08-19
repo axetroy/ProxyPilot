@@ -21,7 +21,7 @@ export const useLogStore = create<LogState>((set, get) => ({
     return close
   },
   push: (e: LogEvent) => {
-    const events = [...get().events, e]
+    const events = [...get().events, { ...e, receivedAt: Date.now() }]
     if (events.length > get().max) {
       events.splice(0, events.length - get().max)
     }

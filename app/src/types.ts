@@ -277,4 +277,6 @@ export interface LogEvent {
   message?: string
   current?: number
   total?: number
+  /** 前端收到该事件的时间（导出日志时用于生成时间戳） */
+  receivedAt?: number
 }

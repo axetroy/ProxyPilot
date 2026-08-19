@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Search, Trash2 } from 'lucide-react'
+import { ArrowDown, Download, Search, Trash2 } from 'lucide-react'
 import {
   ActionIcon,
   Badge,
@@ -15,6 +15,7 @@ import {
   TextInput,
 } from '@mantine/core'
 import { useLogStore } from '@/stores/logs'
+import type { LogEvent } from '@/types'
 
 function levelColor(level?: string) {
   switch (level) {
@@ -57,11 +58,12 @@ export default function Logs() {
   const [keyword, setKeyword] = useState('')
   const [showProgress, setShowProgress] = useState(true)
 
-  // 先按过滤条件筛选；无关键词时只截取最近 200 条渲染，避免日志过多时全量渲染导致界面卡顿，
+  // 先按过滤条件筛选（完整结果，供渲染与导出共用）；
+  // 无关键词时只截取最近 200 条渲染，避免日志过多时全量渲染导致界面卡顿，
   // 搜索时显示全部匹配结果（避免 slice 截断把命中的日志藏掉）。
-  const visibleEvents = useMemo(() => {
+  const filteredEvents = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
-    const filtered = events.filter((e) => {
+    return events.filter((e) => {
       if (e.type === 'progress') {
         // 进度事件无级别，仅受「进度」开关与关键词共同控制
         if (!showProgress) return false
@@ -72,8 +74,29 @@ export default function Logs() {
       if (kw && !(e.message ?? '').toLowerCase().includes(kw)) return false
       return true
     })
-    return kw ? filtered : filtered.slice(-200)
   }, [events, levels, keyword, showProgress])
+
+  const visibleEvents = useMemo(() => {
+    return keyword.trim() ? filteredEvents : filteredEvents.slice(-200)
+  }, [filteredEvents, keyword])
+
+  // 导出当前过滤结果（不截断）为文本文件
+  function downloadLogs(evs: LogEvent[]) {
+    const lines = evs.map((e) => {
+      const ts = e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'
+      if (e.type === 'progress') {
+        return `[${ts}] [进度] ${e.current}/${e.total}`
+      }
+      return `[${ts}] [${levelLabel(e.level)}] ${e.message ?? ''}`
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `proxypilot-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.log`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   // 新日志到来时：若用户停留在底部则自动跟随滚动；否则停留在当前位置，并显示"回到最新"悬浮按钮
   useEffect(() => {
@@ -118,6 +141,9 @@ export default function Logs() {
           </div>
           <Group gap="sm">
             <Badge color="green" variant="light">在线</Badge>
+            <Button variant="default" leftSection={<Download size={16} />} disabled={filteredEvents.length === 0} onClick={() => downloadLogs(filteredEvents)}>
+              下载日志
+            </Button>
             <Button variant="default" leftSection={<Trash2 size={16} />} onClick={clear}>
               清空
             </Button>
