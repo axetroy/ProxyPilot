@@ -81,6 +81,7 @@ func NewRouter(s *Services) *gin.Engine {
 	r.POST("/api/db/compact", s.compactDb)
 	r.GET("/api/proxies", s.listProxies)
 	r.DELETE("/api/proxy/:id", s.deleteProxy)
+	r.GET("/api/proxy/:id/history", s.proxyHistory)
 	r.POST("/api/proxy/batch-delete", s.batchDeleteProxy)
 	r.PUT("/api/proxy/pin", s.pinProxy)
 	r.DELETE("/api/proxy/pin", s.unpinProxy)
@@ -270,6 +271,33 @@ func (s *Services) deleteProxy(c *gin.Context) {
 		s.Bus.Info("deleted node was pinned, cleared exit pin")
 	}
 	c.JSON(http.StatusOK, ok(nil))
+}
+
+// proxyHistory 返回单个节点的检测历史（按时间正序，旧→新），供前端绘制延迟趋势曲线。
+// limit 默认 60，上限 500，防止一次拉取过多。
+func (s *Services) proxyHistory(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, "bad id"))
+		return
+	}
+	limit := 60
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	hist, err := s.Store.RecentHistory(id, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
+		return
+	}
+	// RecentHistory 按 id 倒序（新→旧），翻转为正序便于前端按时间顺序绘制。
+	for i, j := 0, len(hist)-1; i < j; i, j = i+1, j-1 {
+		hist[i], hist[j] = hist[j], hist[i]
+	}
+	c.JSON(http.StatusOK, ok(hist))
 }
 
 // batchDeletePayload 批量删除节点的请求体。

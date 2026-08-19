@@ -639,6 +639,59 @@ func TestDeleteProxyClearsPin(t *testing.T) {
 	}
 }
 
+func TestProxyHistoryEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	s.Pool.AddNodes([]*model.ProxyNode{
+		{Host: "1.2.3.4", Port: 8080, Protocol: model.ProtocolHTTP, Status: model.StatusAlive},
+	})
+	id := s.Pool.List()[0].ID
+	// 写入 3 条历史：成功/失败/成功，延迟递增
+	for i, h := range []struct {
+		ok      bool
+		latency int64
+	}{
+		{true, 50}, {false, 0}, {true, 80},
+	} {
+		if err := s.Store.AddCheckHistory(model.CheckHistory{ProxyID: id, Success: h.ok, Latency: h.latency}); err != nil {
+			t.Fatalf("add history %d: %v", i, err)
+		}
+	}
+
+	w := doRequest(t, r, http.MethodGet, fmt.Sprintf("/api/proxy/%d/history", id), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	resp := decodeResponse(t, w)
+	arr, ok := resp.Data.([]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	if len(arr) != 3 {
+		t.Fatalf("history len = %d, want 3", len(arr))
+	}
+	// 应按时间正序返回（插入顺序），第一条成功、第二条失败
+	first := arr[0].(map[string]any)
+	second := arr[1].(map[string]any)
+	if first["success"] != true || first["latency"].(float64) != 50 {
+		t.Errorf("first entry = %v, want {success:true latency:50}", first)
+	}
+	if second["success"] != false {
+		t.Errorf("second entry success = %v, want false", second["success"])
+	}
+	if arr[2].(map[string]any)["latency"].(float64) != 80 {
+		t.Errorf("third entry latency = %v, want 80", arr[2].(map[string]any)["latency"])
+	}
+
+	// 非法 id 应 400
+	w2 := doRequest(t, r, http.MethodGet, "/api/proxy/abc/history", nil)
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("bad id status = %d, want 400", w2.Code)
+	}
+}
+
 func TestBatchDeleteProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := newTestServices(t)

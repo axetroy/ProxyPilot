@@ -4,9 +4,9 @@ import { Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Mod
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
 import { useSubsStore } from '@/stores/subscriptions'
-import { getPlatform, type Platform } from '@/api'
+import { getPlatform, getProxyHistory, type Platform } from '@/api'
 import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
-import type { ProxyNode, Subscription } from '@/types'
+import type { CheckHistory, ProxyNode, Subscription } from '@/types'
 
 type NoticeData = { type: 'success' | 'error'; text: string }
 
@@ -614,9 +614,92 @@ function anonymityHint(node: ProxyNode, value: number): string {
   return parts.join(' · ')
 }
 
+// LatencySparkline 用纯 SVG 绘制最近 N 次检测的延迟趋势：成功点连线，
+// 检测失败（success=false 或 latency<=0）点不连线，在底部显示红点。
+function LatencySparkline({ history }: { history: CheckHistory[] }) {
+  const W = 480
+  const H = 80
+  const PAD = 5
+
+  const valid = history.filter((h) => h.success && h.latency > 0)
+  const maxLat = valid.length ? Math.max(...valid.map((h) => h.latency)) : 1
+  const avgLat = valid.length ? Math.round(valid.reduce((sum, h) => sum + h.latency, 0) / valid.length) : 0
+  const last = history[history.length - 1]
+
+  const x = (i: number) => PAD + (i * (W - PAD * 2)) / Math.max(history.length - 1, 1)
+  const y = (h: CheckHistory) =>
+    h.success && h.latency > 0 ? H - PAD - (h.latency / maxLat) * (H - PAD * 2) : H - PAD
+
+  // 失败点打断路径，避免在底部拉出误导性的竖线
+  let d = ''
+  let penDown = false
+  history.forEach((h, i) => {
+    if (h.success && h.latency > 0) {
+      d += `${penDown ? 'L' : 'M'}${x(i).toFixed(1)},${y(h).toFixed(1)} `
+      penDown = true
+    } else {
+      penDown = false
+    }
+  })
+
+  return (
+    <Box p="sm" style={{ borderRadius: 8, background: 'var(--mantine-color-default-hover)' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+        {d && (
+          <path
+            d={d}
+            fill="none"
+            stroke="var(--mantine-color-blue-6)"
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        )}
+        {history.map((h, i) =>
+          !h.success || h.latency <= 0 ? (
+            <circle key={i} cx={x(i)} cy={y(h)} r={2.5} fill="var(--mantine-color-red-6)" />
+          ) : null,
+        )}
+        {last.success && last.latency > 0 && (
+          <circle
+            cx={x(history.length - 1)}
+            cy={y(last)}
+            r={3}
+            fill="var(--mantine-color-blue-6)"
+            stroke="var(--mantine-color-body)"
+            strokeWidth={1.5}
+          />
+        )}
+      </svg>
+      <Group justify="space-between" mt={4}>
+        <Text size="xs" c="dimmed">红点 = 检测失败</Text>
+        <Text size="xs" c="dimmed">平均 {avgLat}ms · 峰值 {maxLat}ms</Text>
+      </Group>
+    </Box>
+  )
+}
+
 function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[] }) {
   const subName = subscriptionName(subs, node.subscriptionId)
   const geo = geoText(node)
+  const [history, setHistory] = useState<CheckHistory[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    getProxyHistory(node.id, 60)
+      .then((res) => {
+        if (!cancelled && res.code === 0) setHistory((res.data as CheckHistory[]) ?? [])
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [node.id])
+
   return (
     <Stack gap="md">
       <Group justify="space-between" align="flex-start" wrap="wrap">
@@ -661,6 +744,15 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
           </Grid.Col>
         </Grid>
       </Box>
+
+      <Text size="xs" c="dimmed">延迟趋势（最近 {history.length} 次检测）</Text>
+      {historyLoading ? (
+        <Text size="xs" c="dimmed">加载中...</Text>
+      ) : history.length === 0 ? (
+        <Text size="xs" c="dimmed">暂无检测历史</Text>
+      ) : (
+        <LatencySparkline history={history} />
+      )}
 
       <Text size="xs" c="dimmed">评分明细</Text>
       <ScoreBreakdownModal node={node} />

@@ -413,6 +413,21 @@ POST
 
 ---
 
+# 6.4.2 节点检测历史（延迟趋势曲线）
+
+GET
+
+```
+/api/proxy/:id/history?limit=60
+```
+
+返回单个节点最近的检测历史，按时间正序（旧→新），供前端绘制延迟趋势曲线：
+`check_history` 表每条记录含 success / latency / createdAt；检测失败记录
+latency 为 0。limit 默认 60、上限 500。节点详情弹窗用纯 SVG 手绘 Sparkline：
+成功点连线、失败点断开并在底部以红点标注。
+
+---
+
 # 6.5 启动代理服务
 
 POST

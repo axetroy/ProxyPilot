@@ -271,6 +271,15 @@ export interface ApiResponse<T = unknown> {
   data: T
 }
 
+export interface CheckHistory {
+  id: number
+  proxyId: number
+  success: boolean
+  latency: number
+  error?: string
+  createdAt: string
+}
+
 export interface LogEvent {
   type: 'log' | 'progress'
   level?: 'debug' | 'info' | 'warn' | 'error'

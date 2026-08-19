@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckHistory, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -147,6 +147,15 @@ export async function listProxies(status?: string): Promise<ApiResponse<ProxyNod
 export async function deleteProxy(id: number): Promise<ApiResponse<void>> {
   await ensureApiReady()
   const { data } = await http.delete<ApiResponse<void>>(`/api/proxy/${id}`)
+  return data
+}
+
+/** 获取节点检测历史（时间正序，用于延迟趋势图） */
+export async function getProxyHistory(id: number, limit = 60): Promise<ApiResponse<CheckHistory[]>> {
+  await ensureApiReady()
+  const { data } = await http.get<ApiResponse<CheckHistory[]>>(`/api/proxy/${id}/history`, {
+    params: { limit },
+  })
   return data
 }
 
