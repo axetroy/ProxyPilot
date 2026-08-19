@@ -125,8 +125,12 @@ func TestFetchNowParsesNodes(t *testing.T) {
 	m, st, sink := newTestManager(t)
 	sub, _ := m.AddSubscription("sub", srv.URL, 3600)
 
-	if err := m.FetchNow(context.Background(), sub); err != nil {
+	result, err := m.FetchNow(context.Background(), sub)
+	if err != nil {
 		t.Fatalf("fetchNow: %v", err)
+	}
+	if result.Total != 2 || result.Added != 2 {
+		t.Fatalf("fetch result total/added = %d/%d, want 2/2", result.Total, result.Added)
 	}
 	if sink.added != 2 {
 		t.Fatalf("added = %d, want 2", sink.added)
@@ -141,7 +145,7 @@ func TestFetchNowParsesNodes(t *testing.T) {
 func TestFetchNowError(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	sub, _ := m.AddSubscription("sub", "http://127.0.0.1:1", 3600)
-	if err := m.FetchNow(context.Background(), sub); err == nil {
+	if _, err := m.FetchNow(context.Background(), sub); err == nil {
 		t.Fatal("expected error fetching unreachable subscription")
 	}
 }
@@ -158,7 +162,7 @@ func TestFetchNowRemovesStaleNodes(t *testing.T) {
 	m, st, sink := newTestManager(t)
 	sub, _ := m.AddSubscription("sub", srv.URL, 3600)
 
-	if err := m.FetchNow(context.Background(), sub); err != nil {
+	if _, err := m.FetchNow(context.Background(), sub); err != nil {
 		t.Fatalf("first fetchNow: %v", err)
 	}
 	if sink.added != 3 {
@@ -171,7 +175,7 @@ func TestFetchNowRemovesStaleNodes(t *testing.T) {
 
 	// 第二次抓取：3.3.3.3 从订阅中消失
 	body = "1.1.1.1:80\n2.2.2.2:443"
-	if err := m.FetchNow(context.Background(), sub); err != nil {
+	if _, err := m.FetchNow(context.Background(), sub); err != nil {
 		t.Fatalf("second fetchNow: %v", err)
 	}
 	if len(sink.removed) != 1 {
@@ -206,16 +210,16 @@ func TestFetchNowKeepsSharedNodes(t *testing.T) {
 	subA, _ := m.AddSubscription("a", srv.URL+"/a", 3600)
 	subB, _ := m.AddSubscription("b", srv.URL+"/b", 3600)
 
-	if err := m.FetchNow(context.Background(), subA); err != nil {
+	if _, err := m.FetchNow(context.Background(), subA); err != nil {
 		t.Fatalf("fetch A: %v", err)
 	}
-	if err := m.FetchNow(context.Background(), subB); err != nil {
+	if _, err := m.FetchNow(context.Background(), subB); err != nil {
 		t.Fatalf("fetch B: %v", err)
 	}
 
 	// 订阅 A 移除 2.2.2.2
 	bodyA = "1.1.1.1:80"
-	if err := m.FetchNow(context.Background(), subA); err != nil {
+	if _, err := m.FetchNow(context.Background(), subA); err != nil {
 		t.Fatalf("fetch A again: %v", err)
 	}
 	// 2.2.2.2 仍被订阅 B 引用，不应被删除
@@ -341,7 +345,7 @@ func TestDisableSubscriptionRemovesNodes(t *testing.T) {
 
 	m, st, sink := newTestManager(t)
 	sub, _ := m.AddSubscription("sub", srv.URL, 3600)
-	if err := m.FetchNow(context.Background(), sub); err != nil {
+	if _, err := m.FetchNow(context.Background(), sub); err != nil {
 		t.Fatalf("fetchNow: %v", err)
 	}
 	nodes, _ := st.ListNodesBySubscription(sub.ID)
@@ -369,7 +373,7 @@ func TestDisableSubscriptionRemovesNodes(t *testing.T) {
 	if err := m.UpdateSubscription(sub.ID, "sub", srv.URL, 3600, true); err != nil {
 		t.Fatalf("re-enable: %v", err)
 	}
-	if err := m.FetchNow(context.Background(), sub); err != nil {
+	if _, err := m.FetchNow(context.Background(), sub); err != nil {
 		t.Fatalf("refetch: %v", err)
 	}
 	nodes, _ = st.ListNodesBySubscription(sub.ID)
@@ -392,10 +396,10 @@ func TestDisableKeepsSharedNodes(t *testing.T) {
 	m, st, sink := newTestManager(t)
 	subA, _ := m.AddSubscription("a", srvA.URL, 3600)
 	subB, _ := m.AddSubscription("b", srvB.URL, 3600)
-	if err := m.FetchNow(context.Background(), subA); err != nil {
+	if _, err := m.FetchNow(context.Background(), subA); err != nil {
 		t.Fatalf("fetchA: %v", err)
 	}
-	if err := m.FetchNow(context.Background(), subB); err != nil {
+	if _, err := m.FetchNow(context.Background(), subB); err != nil {
 		t.Fatalf("fetchB: %v", err)
 	}
 

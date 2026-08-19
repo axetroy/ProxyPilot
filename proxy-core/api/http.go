@@ -195,11 +195,19 @@ func (s *Services) refreshSubscription(c *gin.Context) {
 	}
 	for _, sub := range subs {
 		if sub.ID == id {
-			if err := s.Collector.FetchNow(c.Request.Context(), sub); err != nil {
+			result, err := s.Collector.FetchNow(c.Request.Context(), sub)
+			if err != nil {
 				c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
 				return
 			}
-			c.JSON(http.StatusOK, ok(sub))
+			// 返回本次抓取摘要：解析节点总数与新增节点数，供前端确认订阅内容是否有效。
+			// result 为 nil 表示该订阅正在抓取中（防重入跳过），此时无摘要可返回。
+			resp := gin.H{"id": sub.ID}
+			if result != nil {
+				resp["total"] = result.Total
+				resp["added"] = result.Added
+			}
+			c.JSON(http.StatusOK, ok(resp))
 			return
 		}
 	}

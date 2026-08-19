@@ -271,6 +271,12 @@ export interface ApiResponse<T = unknown> {
   data: T
 }
 
+export interface FetchSummary {
+  id: number
+  total: number
+  added: number
+}
+
 export interface CheckHistory {
   id: number
   proxyId: number

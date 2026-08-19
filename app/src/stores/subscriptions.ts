@@ -92,11 +92,21 @@ export const useSubsStore = create<SubsState>((set, get) => ({
   refreshOne: async (id: number) => {
     set((s) => ({ fetchingIds: [...s.fetchingIds, id], notice: null }))
     try {
-      await refreshSubscription(id)
+      const res = await refreshSubscription(id)
       await get().refresh()
+      const summary = res.data
+      // 抓取摘要反馈：确认订阅内容是否有效（total 缺失表示该订阅正在抓取中，防重入跳过）
+      let notice: Notice
+      if (summary && typeof summary.total === 'number' && summary.total > 0) {
+        notice = { type: 'success', text: `订阅 #${id} 抓取完成：解析 ${summary.total} 个节点（新增 ${summary.added}）` }
+      } else if (summary && typeof summary.total === 'number') {
+        notice = { type: 'error', text: `订阅 #${id} 抓取完成，但未解析到节点（内容可能无效）` }
+      } else {
+        notice = { type: 'success', text: `订阅 #${id} 抓取成功` }
+      }
       set((s) => ({
         fetchingIds: s.fetchingIds.filter((x) => x !== id),
-        notice: { type: 'success', text: `订阅 #${id} 抓取成功` },
+        notice,
       }))
     } catch (e) {
       set((s) => ({

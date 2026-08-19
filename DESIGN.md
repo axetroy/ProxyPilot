@@ -347,6 +347,22 @@ url 支持 http(s) 订阅地址与 `file://` 本地文件（如 `file:///C:/path
 
 由 Fetcher 按 scheme 分发：http/https 走 HTTP 下载，file 读取本地文件。
 
+手动抓取（立即测试）：
+
+```
+POST /api/subscription/:id/refresh
+```
+
+同步抓取该订阅并返回本次结果摘要：
+
+```json
+{ "id": 1, "total": 120, "added": 3 }
+```
+
+`total` 为本次解析出的节点总数，`added` 为相对池中已有的新增节点数；
+`total` 为 0 表示订阅内容解析为空（可能无效）。前端「抓取」按钮与
+新增订阅后的自动抓取均以此摘要反馈结果。
+
 ---
 
 # 6.3 节点列表

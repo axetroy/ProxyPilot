@@ -368,6 +368,15 @@ func TestRefreshSubscription(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want 200 (body=%s)", w.Code, w.Body.String())
 	}
+	// 响应应包含抓取摘要：解析 2 个节点、新增 2 个
+	resp := decodeResponse(t, w)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("data type = %T", resp.Data)
+	}
+	if int(data["total"].(float64)) != 2 || int(data["added"].(float64)) != 2 {
+		t.Errorf("total/added = %v/%v, want 2/2", data["total"], data["added"])
+	}
 	// 节点应进入池
 	if n := s.Pool.Count(); n != 2 {
 		t.Errorf("pool count = %d, want 2", n)

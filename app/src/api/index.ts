@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from 'axios'
-import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckHistory, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
+import type { ApiResponse, AppSettings, ChainSelection, ChainTestResult, CheckHistory, CheckResult, CompactResult, DbStatus, EgressConfig, EgressStrategy, FetchSummary, LogEvent, PacConfig, ProxyChain, ProxyNode, SettingItem, Subscription, SubscriptionExportConfig, SystemStatus, SystemProxyState, TrafficSnapshot, UpdateSettingsResult, UpdaterState } from '@/types'
 
 // 默认 API 地址；Electron 环境由主进程告知实际地址（API 端口可能顺延）。
 let API_BASE = 'http://127.0.0.1:17890'
@@ -214,9 +214,9 @@ export async function deleteSubscription(id: number): Promise<ApiResponse<void>>
   return data
 }
 
-export async function refreshSubscription(id: number): Promise<ApiResponse<Subscription>> {
+export async function refreshSubscription(id: number): Promise<ApiResponse<FetchSummary>> {
   await ensureApiReady()
-  const { data } = await http.post<ApiResponse<Subscription>>(`/api/subscription/${id}/refresh`)
+  const { data } = await http.post<ApiResponse<FetchSummary>>(`/api/subscription/${id}/refresh`)
   return data
 }
 
