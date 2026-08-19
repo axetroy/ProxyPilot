@@ -36,13 +36,25 @@ contextBridge.exposeInMainWorld('proxypilot', {
     }
   },
 
-  onCoreExit: (cb: () => void): void => {
-    ipcRenderer.on('core:exit', () => cb())
+  onCoreExit: (cb: () => void): (() => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('core:exit', listener)
+    return () => {
+      ipcRenderer.removeListener('core:exit', listener)
+    }
   },
-  onCoreError: (cb: (msg: string) => void): void => {
-    ipcRenderer.on('core:error', (_e, msg: string) => cb(msg))
+  onCoreError: (cb: (msg: string) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, msg: string) => cb(msg)
+    ipcRenderer.on('core:error', listener)
+    return () => {
+      ipcRenderer.removeListener('core:error', listener)
+    }
   },
-  onCoreRestarted: (cb: () => void): void => {
-    ipcRenderer.on('core:restarted', () => cb())
+  onCoreRestarted: (cb: () => void): (() => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('core:restarted', listener)
+    return () => {
+      ipcRenderer.removeListener('core:restarted', listener)
+    }
   },
 })

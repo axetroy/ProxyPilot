@@ -76,6 +76,11 @@ type Gateway struct {
 	// Stop 时强制关闭，避免长连接（隧道/会话）在网关停止后悬挂。
 	activeMu    sync.Mutex
 	activeConns map[net.Conn]struct{}
+
+	// trafficPruneAt 上次执行残留统计清理的时间：Traffic 快照限频 prune，
+	// 避免高频轮询时每次都全量扫描节点池/链路表。
+	trafficPruneMu sync.Mutex
+	trafficPruneAt time.Time
 }
 
 // ipv6CacheEntry 记录某个 IPv6 地址的 PTR 反查结果与缓存时间。

@@ -59,12 +59,16 @@ function App() {
     void useUpdaterStore.getState().init()
     void useSystemProxyStore.getState().init()
     const off = window.proxypilot?.onUpdaterEvent(handleUpdaterEvent)
-    // core 生命周期：意外退出/错误提示 + 重启成功后恢复 API 与状态
-    window.proxypilot?.onCoreExit(handleCoreExit)
-    window.proxypilot?.onCoreError(handleCoreError)
-    window.proxypilot?.onCoreRestarted(handleCoreRestarted)
+    // core 生命周期：意外退出/错误提示 + 重启成功后恢复 API 与状态。
+    // 订阅函数返回 off 用于卸载，避免 StrictMode 下 double-mount 重复注册监听器。
+    const offCoreExit = window.proxypilot?.onCoreExit(handleCoreExit)
+    const offCoreError = window.proxypilot?.onCoreError(handleCoreError)
+    const offCoreRestarted = window.proxypilot?.onCoreRestarted(handleCoreRestarted)
     return () => {
       off?.()
+      offCoreExit?.()
+      offCoreError?.()
+      offCoreRestarted?.()
     }
   }, [])
 

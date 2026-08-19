@@ -191,6 +191,9 @@ function scheduleCoreRestart(): void {
   if (coreRestartTimer) clearTimeout(coreRestartTimer)
   coreRestartTimer = setTimeout(() => {
     coreRestartTimer = null
+    // 计时器 pending 期间用户可能已退出应用：此时不再重启，
+    // 避免 spawn 出的 proxy-core 随应用退出成为孤儿进程占着端口。
+    if (isQuitting || shutdownStarted) return
     void (async () => {
       try {
         await startCore()
@@ -552,6 +555,9 @@ app.on('window-all-closed', () => {
 function gracefulShutdown(): void {
   if (shutdownStarted) return
   shutdownStarted = true
+  // 取消待执行的 core 自动重启：退出流程中不应再 spawn proxy-core。
+  if (coreRestartTimer) clearTimeout(coreRestartTimer)
+  coreRestartTimer = null
   // 兜底看门狗：清理挂起时强制退出（此路径跳过 'quit'，自动安装不生效，仅作最后保障）
   setTimeout(() => app.exit(0), 15000).unref()
   void (async () => {

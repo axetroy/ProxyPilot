@@ -4,6 +4,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 )
 
 // autoChainTrafficName 是 auto-chain 策略在流量统计中的固定链路名。
@@ -164,28 +165,46 @@ func (c *trafficCounter) prune(validNodeIDs map[int64]struct{}, validChainNames 
 	}
 }
 
+// trafficPruneInterval 是残留统计清理的最短间隔：
+// 残留条目只有到快照时才清理，而流量快照可能被前端高频轮询，
+// 限频避免每次轮询都全量扫描节点池与链路表。
+const trafficPruneInterval = 10 * time.Second
+
+// maybePruneTraffic 限频执行残留统计清理（至少间隔 trafficPruneInterval）。
+// 剔除已删除节点/链路的统计条目，避免 map 无限增长。
+func (g *Gateway) maybePruneTraffic() {
+	g.trafficPruneMu.Lock()
+	defer g.trafficPruneMu.Unlock()
+	if !g.trafficPruneAt.IsZero() && time.Since(g.trafficPruneAt) < trafficPruneInterval {
+		return
+	}
+	g.trafficPruneAt = time.Now()
+	if g.pool == nil {
+		return
+	}
+	nodes := g.pool.List()
+	validNodes := make(map[int64]struct{}, len(nodes))
+	for _, n := range nodes {
+		validNodes[n.ID] = struct{}{}
+	}
+	validChains := map[string]struct{}{autoChainTrafficName: {}}
+	if g.chainsProvider != nil {
+		if chains, err := g.chainsProvider(); err == nil {
+			for _, ch := range chains {
+				validChains[ch.Name] = struct{}{}
+			}
+		}
+	}
+	g.traffic.prune(validNodes, validChains)
+}
+
 // Traffic 返回流量统计快照（本次启动累计）。
-// 顺带清理已删除节点/链路的残留统计条目，避免 map 无限增长。
+// 顺带按 trafficPruneInterval 限频清理已删除节点/链路的残留统计条目。
 func (g *Gateway) Traffic() TrafficSnapshot {
 	if g.traffic == nil {
 		return TrafficSnapshot{}
 	}
-	if g.pool != nil {
-		nodes := g.pool.List()
-		validNodes := make(map[int64]struct{}, len(nodes))
-		for _, n := range nodes {
-			validNodes[n.ID] = struct{}{}
-		}
-		validChains := map[string]struct{}{autoChainTrafficName: {}}
-		if g.chainsProvider != nil {
-			if chains, err := g.chainsProvider(); err == nil {
-				for _, ch := range chains {
-					validChains[ch.Name] = struct{}{}
-				}
-			}
-		}
-		g.traffic.prune(validNodes, validChains)
-	}
+	g.maybePruneTraffic()
 	g.traffic.mu.Lock()
 	defer g.traffic.mu.Unlock()
 	snap := TrafficSnapshot{

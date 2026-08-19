@@ -31,9 +31,9 @@ declare global {
       getSystemProxyState: () => Promise<SystemProxyState>
       setSystemProxy: (enabled: boolean) => Promise<SystemProxyState>
       onSystemProxyEvent: (cb: (state: SystemProxyState) => void) => () => void
-      onCoreExit: (cb: () => void) => void
-      onCoreError: (cb: (msg: string) => void) => void
-      onCoreRestarted: (cb: () => void) => void
+      onCoreExit: (cb: () => void) => () => void
+      onCoreError: (cb: (msg: string) => void) => () => void
+      onCoreRestarted: (cb: () => void) => () => void
     }
   }
 }
@@ -59,10 +59,13 @@ export async function initApi(): Promise<void> {
 
 // resetApiReady 在 core 重启后调用：清除已完成的就绪状态，
 // 让后续请求重新获取 token / API 地址（core 重启后 token 与端口都可能变化）。
+// 同时 resolve 仍等待旧就绪状态的调用方（否则会被丢弃的 promise 永久挂起），
+// 它们随后带空 token 发出请求、命中 401 重试逻辑重新就绪。
 export function resetApiReady(): void {
   token = ''
-  apiReadyPromise = null
+  resolveApiReady?.()
   resolveApiReady = null
+  apiReadyPromise = null
 }
 
 async function refreshToken(): Promise<void> {
