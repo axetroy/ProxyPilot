@@ -659,6 +659,10 @@ export default function Settings() {
 
                 <Divider />
 
+                <Alert color="yellow" variant="light">
+                  默认仅本机可访问。向他人提供代理节点服务（如改为 0.0.0.0 供局域网/外部设备订阅）可能违反你所在司法辖区的法律法规，请自行评估并仅对可信设备开放
+                </Alert>
+
                 <Group justify="space-between" wrap="wrap">
                   <div>
                     <Text fw={600}>开启订阅服务</Text>
@@ -673,7 +677,7 @@ export default function Settings() {
 
                 <TextInput
                   label="监听地址"
-                  description="默认仅本机可访问；如需局域网设备订阅，改为 0.0.0.0:17891。修改后需重启应用生效"
+                  description="默认仅本机可访问；改为 0.0.0.0 会向局域网设备开放订阅，请先评估合规风险。修改后需重启应用生效"
                   value={subListenDraft}
                   onChange={(e) => setSubListenDraft(e.currentTarget.value)}
                   rightSection={
@@ -691,18 +695,23 @@ export default function Settings() {
                 />
 
                 {subConfig && isWildcardListen(subConfig.listen) && (
-                  <Select
-                    label="对外 IP"
-                    description="监听 0.0.0.0 时，局域网设备通过此 IP 访问订阅服务；订阅 URL 将随所选 IP 更新"
-                    data={subConfig.lanIPs}
-                    value={subConfig.host || null}
-                    placeholder={subConfig.lanIPs.length ? '请选择局域网 IP' : '未检测到局域网 IP'}
-                    disabled={!subConfig.lanIPs.length || subSaving}
-                    onChange={(v) => onSaveSubHost(v ?? '')}
-                    searchable
-                    clearable
-                    allowDeselect
-                  />
+                  <>
+                    <Alert color="red" variant="light">
+                      当前监听为通配地址，订阅服务已对外网卡开放。仅在确有需要时使用，并确保接收方为可信设备
+                    </Alert>
+                    <Select
+                      label="对外 IP"
+                      description="监听 0.0.0.0 时，局域网设备通过此 IP 访问订阅服务；订阅 URL 将随所选 IP 更新"
+                      data={subConfig.lanIPs}
+                      value={subConfig.host || null}
+                      placeholder={subConfig.lanIPs.length ? '请选择局域网 IP' : '未检测到局域网 IP'}
+                      disabled={!subConfig.lanIPs.length || subSaving}
+                      onChange={(v) => onSaveSubHost(v ?? '')}
+                      searchable
+                      clearable
+                      allowDeselect
+                    />
+                  </>
                 )}
 
                 <TextInput

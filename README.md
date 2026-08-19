@@ -1,9 +1,20 @@
 # ProxyPilot
 
-桌面端智能代理管理与代理网关系统。
+桌面端本地代理管理与代理网关系统。
 
-自动收集代理订阅 → 检测可用性 → 质量评分 → 维护代理池 → 为本机应用提供统一的
-HTTP / HTTPS / SOCKS5 代理出口。
+导入代理订阅 → 检测可用性 → 质量评分 → 维护代理池 → 为本机应用提供统一的
+HTTP / HTTPS / SOCKS5 本地代理出口。
+
+> **使用须知**：本软件是**本地网络代理管理工具**，仅在本机运行、默认仅监听本机、
+> 不收集任何个人数据，也不对外提供任何代理或节点服务。使用本软件前，请确认：
+>
+> - 代理订阅来自你拥有合法授权或使用权限的来源，且仅用于合法用途；
+> - 使用方式符合所在司法辖区的法律法规（在中国大陆使用请遵守《网络安全法》
+>   《数据安全法》《个人信息保护法》等规定）；
+> - 不以任何形式向第三方转售、共享订阅或节点，不向他人提供代理服务
+>   （未经许可经营代理/VPN 服务可能违反相关法律）。
+>
+> 开发者不对使用者及订阅来源的行为承担责任。
 
 - **架构定位**：Electron 桌面端 + Golang 核心引擎
 - **核心出口**：`127.0.0.1:7892`（HTTP 与 SOCKS5 默认共用同一端口，按首字节自动识别分流）
@@ -13,15 +24,15 @@ HTTP / HTTPS / SOCKS5 代理出口。
 
 ## 核心能力
 
-| 能力 | 说明 |
-| --- | --- |
-| 代理订阅管理 | 通过 URL 订阅自动采集节点，支持 interval 定时刷新与手动触发 |
-| 订阅内容解析 | 自动识别 Base64 编码列表 / 裸 `host:port` / `protocol://user:pass@host:port` |
-| 可用性检测 | 通过节点建立真实 HTTP 请求，测量延迟与连通性 |
-| 质量评分 | `40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 匿名度` |
-| 代理池维护 | 状态机 `NEW → CHECKING → AVAILABLE → DEAD`，失效节点自动降级，连续失败 ≥3 次自动淘汰 |
+| 能力         | 说明                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| 代理订阅管理 | 导入用户配置的 URL 订阅源，定时同步节点（interval 可调，支持手动刷新）                                  |
+| 订阅内容解析 | 自动识别 Base64 编码列表 / 裸 `host:port` / `protocol://user:pass@host:port`                            |
+| 可用性检测   | 通过节点建立真实 HTTP 请求，测量延迟与连通性                                                            |
+| 质量评分     | `40% 成功率 + 30% 延迟 + 20% 稳定性 + 10% 连接安全度`                                                   |
+| 代理池维护   | 状态机 `NEW → CHECKING → AVAILABLE → DEAD`，失效节点自动降级，连续失败 ≥3 次自动淘汰                    |
 | 本地代理网关 | HTTP 代理、HTTPS CONNECT 隧道、SOCKS5 服务，按 `score/latency` 权重选出口，失败自动切换（30s 惩罚窗口） |
-| 实时日志 | 检查进度与日志通过 WebSocket 实时推送到界面 |
+| 实时日志     | 检查进度与日志通过 WebSocket 实时推送到界面                                                             |
 
 ---
 
@@ -102,11 +113,11 @@ ProxyPilot/
 
 ### 环境要求
 
-| 依赖 | 版本 |
-| --- | --- |
-| Go | 1.23+ |
-| Node.js | 18+ |
-| npm | 9+ |
+| 依赖    | 版本  |
+| ------- | ----- |
+| Go      | 1.23+ |
+| Node.js | 18+   |
+| npm     | 9+    |
 
 ### 1. 编译并运行 Go 核心
 
@@ -150,16 +161,16 @@ Electron 会自动 spawn Go 核心，并注入 token，加载界面后即可使�
 
 ## 配置（proxy-core 环境变量）
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `PROXYPILOT_API_BIND` | `127.0.0.1:17890` | API / WebSocket 监听地址（仅本机） |
-| `PROXYPILOT_DB_PATH` | `proxypilot.db` | SQLite 数据库文件路径 |
-| `PROXYPILOT_PROXY_PORT` | `7892` | 代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用时自动顺延） |
-| `PROXYPILOT_TOKEN` | 随机生成 | Session token（不设则每次启动生成） |
-| `PROXYPILOT_CHECK_TARGET` | `https://www.apple.com/library/test/success.html` | 节点检测目标 URL |
-| `PROXYPILOT_CHECK_TIMEOUT` | `10s` | 单节点检测超时 |
-| `PROXYPILOT_CHECK_CONCURRENCY` | `32` | 并发检测数 |
-| `PROXYPILOT_REFRESH_INTERVAL` | `15m` | 代理池自动检测周期 |
+| 变量                           | 默认值                                            | 说明                                                          |
+| ------------------------------ | ------------------------------------------------- | ------------------------------------------------------------- |
+| `PROXYPILOT_API_BIND`          | `127.0.0.1:17890`                                 | API / WebSocket 监听地址（仅本机）                            |
+| `PROXYPILOT_DB_PATH`           | `proxypilot.db`                                   | SQLite 数据库文件路径                                         |
+| `PROXYPILOT_PROXY_PORT`        | `7892`                                            | 代理监听端口（HTTP 与 SOCKS5 共用，仅本机，被占用时自动顺延） |
+| `PROXYPILOT_TOKEN`             | 随机生成                                          | Session token（不设则每次启动生成）                           |
+| `PROXYPILOT_CHECK_TARGET`      | `https://www.apple.com/library/test/success.html` | 节点检测目标 URL                                              |
+| `PROXYPILOT_CHECK_TIMEOUT`     | `10s`                                             | 单节点检测超时                                                |
+| `PROXYPILOT_CHECK_CONCURRENCY` | `32`                                              | 并发检测数                                                    |
+| `PROXYPILOT_REFRESH_INTERVAL`  | `15m`                                             | 代理池自动检测周期                                            |
 
 示例：
 
@@ -176,24 +187,24 @@ PROXYPILOT_DB_PATH=/opt/proxypilot/proxypilot.db PROXYPILOT_PROXY_PORT=8080 ./pr
 - 响应统一格式：
 
 ```json
-{ "code": 0, "msg": "ok", "data": { } }
+{ "code": 0, "msg": "ok", "data": {} }
 ```
 
-| Method | Path | 说明 |
-| --- | --- | --- |
-| GET | `/api/status` | 系统状态（running / proxyCount / aliveCount / currentIP / version） |
-| GET | `/api/proxies` | 节点列表，支持 `?status=alive|dead|new` 过滤 |
-| DELETE | `/api/proxy/:id` | 删除节点 |
-| POST | `/api/proxy/check` | 触发全量检测（空 body）或检测指定节点（`{"id": <n>}`） |
-| GET | `/api/subscriptions` | 订阅列表 |
-| POST | `/api/subscription` | 新增订阅（`{name, url, interval}`） |
-| DELETE | `/api/subscription/:id` | 删除订阅 |
-| POST | `/api/subscription/:id/refresh` | 立即刷新该订阅 |
-| POST | `/api/gateway/start` | 启动代理网关（默认 HTTP+SOCKS5 共用 7892，端口被占用自动顺延） |
-| POST | `/api/gateway/stop` | 停止网关 |
-| GET | `/api/settings` | 获取可配置项（代理端口、检测目标、超时、并发、刷新周期） |
-| PUT | `/api/settings` | 更新配置（`{"proxy_port": "8080"}`），保存并立即生效，重启后仍保留 |
-| GET | `/ws` | WebSocket 实时事件流 |
+| Method | Path                            | 说明                                                                |
+| ------ | ------------------------------- | ------------------------------------------------------------------- | ---- | --------- |
+| GET    | `/api/status`                   | 系统状态（running / proxyCount / aliveCount / currentIP / version） |
+| GET    | `/api/proxies`                  | 节点列表，支持 `?status=alive                                       | dead | new` 过滤 |
+| DELETE | `/api/proxy/:id`                | 删除节点                                                            |
+| POST   | `/api/proxy/check`              | 触发全量检测（空 body）或检测指定节点（`{"id": <n>}`）              |
+| GET    | `/api/subscriptions`            | 订阅列表                                                            |
+| POST   | `/api/subscription`             | 新增订阅（`{name, url, interval}`）                                 |
+| DELETE | `/api/subscription/:id`         | 删除订阅                                                            |
+| POST   | `/api/subscription/:id/refresh` | 立即刷新该订阅                                                      |
+| POST   | `/api/gateway/start`            | 启动代理网关（默认 HTTP+SOCKS5 共用 7892，端口被占用自动顺延）      |
+| POST   | `/api/gateway/stop`             | 停止网关                                                            |
+| GET    | `/api/settings`                 | 获取可配置项（代理端口、检测目标、超时、并发、刷新周期）            |
+| PUT    | `/api/settings`                 | 更新配置（`{"proxy_port": "8080"}`），保存并立即生效，重启后仍保留  |
+| GET    | `/ws`                           | WebSocket 实时事件流                                                |
 
 ### 示例
 
@@ -232,13 +243,13 @@ curl -X POST -H "X-Token: $TOKEN" http://127.0.0.1:17890/api/gateway/start
 ## 评分模型（DESIGN.md §9）
 
 ```
-Score = 40% × 成功率 + 30% × 延迟得分 + 20% × 稳定性 + 10% × 匿名性
+Score = 40% × 成功率 + 30% × 延迟得分 + 20% × 稳定性 + 10% × 连接安全
 ```
 
 - 成功率：最近检测成功占比
 - 延迟得分：按阈值分级（≤100ms=100、≤300ms=80、≤600ms=60、≤1000ms=40、≤2000ms=20）
 - 稳定性：失败次数越多扣分越多
-- 匿名性：SOCKS5 默认 95、HTTP(S) 默认 80；带用户名密码的节点降低
+- 连接安全：SOCKS5 默认 95、HTTP(S) 默认 80；带用户名密码的节点降低
 
 ---
 
@@ -246,11 +257,11 @@ Score = 40% × 成功率 + 30% × 延迟得分 + 20% × 稳定性 + 10% × 匿�
 
 数据库文件默认 `proxypilot.db`，含三张表（DESIGN.md §13）：
 
-| 表 | 字段 |
-| --- | --- |
-| `proxy_nodes` | id, host, port, protocol, username, password, latency, score, status, success_count, fail_count, last_check, created_at, updated_at |
-| `subscriptions` | id, name, url, interval, enabled, last_fetch, created_at |
-| `check_history` | id, proxy_id, success, latency, error, created_at |
+| 表              | 字段                                                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `proxy_nodes`   | id, host, port, protocol, username, password, latency, score, status, success_count, fail_count, last_check, created_at, updated_at |
+| `subscriptions` | id, name, url, interval, enabled, last_fetch, created_at                                                                            |
+| `check_history` | id, proxy_id, success, latency, error, created_at                                                                                   |
 
 > 节点以 `(host, port, protocol)` 唯一去重，重复抓取自动更新；检测历史被用于评分与稳定性计算。
 
@@ -294,12 +305,12 @@ npm run dist:mac    # 指定 macOS 平台
 
 产物输出到 `app/release/`：
 
-| 平台 | 产物 | 说明 |
-| --- | --- | --- |
-| Windows | `ProxyPilot Setup <version>.exe` | NSIS 安装包（可选安装目录、桌面/开始菜单快捷方式） |
-| Windows | `win-unpacked/` | 解包目录（`ProxyPilot.exe` + `resources/proxy-core.exe`） |
-| Linux | `ProxyPilot-<version>.AppImage` 等 | 按 electron-builder 默认目标生成 |
-| macOS | `ProxyPilot-<version>.dmg` / `.zip` | dmg 供手动安装，zip 供自动更新（Squirrel.Mac 只接受 zip） |
+| 平台    | 产物                                | 说明                                                      |
+| ------- | ----------------------------------- | --------------------------------------------------------- |
+| Windows | `ProxyPilot Setup <version>.exe`    | NSIS 安装包（可选安装目录、桌面/开始菜单快捷方式）        |
+| Windows | `win-unpacked/`                     | 解包目录（`ProxyPilot.exe` + `resources/proxy-core.exe`） |
+| Linux   | `ProxyPilot-<version>.AppImage` 等  | 按 electron-builder 默认目标生成                          |
+| macOS   | `ProxyPilot-<version>.dmg` / `.zip` | dmg 供手动安装，zip 供自动更新（Squirrel.Mac 只接受 zip） |
 
 > 打包配置见 `app/electron-builder.cjs`（通过环境变量 `PP_CORE_BIN` 指定随包分发的 proxy-core 二进制：Windows 为 `proxy-core.exe`，Linux/macOS 为 `proxy-core`）。
 
@@ -321,13 +332,13 @@ npm run dist:mac    # 指定 macOS 平台
 
 ## 路线图（DESIGN.md §17）
 
-| 阶段 | 内容 | 状态 |
-| --- | --- | --- |
+| 阶段    | 内容                                                                  | 状态      |
+| ------- | --------------------------------------------------------------------- | --------- |
 | Phase 1 | Electron 框架 · Go 启动管理 · HTTP API · SQLite · 订阅抓取 · 节点检测 | ✅ 已完成 |
-| Phase 2 | HTTP Proxy · HTTPS CONNECT · SOCKS5 · 自动选节点 | ✅ 已完成 |
-| Phase 3 | 节点评分 · 自动淘汰 · 自动切换 · 实时监控 | ✅ 已完成 |
-| Phase 4 | 账号系统 · 云同步 · 代理市场 · 团队管理 · API 服务 | ⏳ 待办 |
-| 打包 | electron-builder / NSIS / portable | ✅ 已完成 |
+| Phase 2 | HTTP Proxy · HTTPS CONNECT · SOCKS5 · 自动选节点                      | ✅ 已完成 |
+| Phase 3 | 节点评分 · 自动淘汰 · 自动切换 · 实时监控                             | ✅ 已完成 |
+| Phase 4 | 账号系统 · 云同步 · 扩展功能 · 团队管理 · API 服务                    | ⏳ 待办   |
+| 打包    | electron-builder / NSIS / portable                                    | ✅ 已完成 |
 
 ---
 
@@ -355,7 +366,8 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 **安全说明**
 
-`proxy-core.exe` 默认只绑定 `127.0.0.1`，请勿改为 `0.0.0.0`，以避免成为开放代理。
+- `proxy-core.exe` 默认只绑定 `127.0.0.1`，请勿改为 `0.0.0.0`，以避免成为开放代理。
+- 代理订阅仅用于你拥有合法授权或明确许可的目的；请勿以任何形式向第三方转售、共享订阅或节点。
 
 ---
 

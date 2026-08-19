@@ -89,6 +89,11 @@ module.exports = () => {
         from: path.join(__dirname, 'build', 'trayTemplate@2x.png'),
         to: 'trayTemplate@2x.png',
       },
+      // 第三方许可证声明（Apache-2.0 等要求保留归属），打包后位于 resources/THIRD_PARTY_NOTICES.md
+      {
+        from: path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md'),
+        to: 'THIRD_PARTY_NOTICES.md',
+      },
     ],
     win: {
       icon: 'build/icon.ico',

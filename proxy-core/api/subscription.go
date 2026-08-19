@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"net"
 	"net/http"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/config"
@@ -87,6 +88,12 @@ func (s *Services) updateSubscriptionConfig(c *gin.Context) {
 		}
 		s.Cfg.SubListen = *req.Listen
 		_ = s.Store.SetSetting(config.KeySubListen, *req.Listen)
+		// 对外监听（0.0.0.0/::）会把代理节点订阅开放到其他设备，
+		// 记录警示日志提示用户评估合规风险。
+		host, _, err := net.SplitHostPort(*req.Listen)
+		if err == nil && (host == "" || host == "0.0.0.0" || host == "::" || host == "[::]") {
+			s.Bus.Warn("订阅服务已配置为对外监听，向其他设备提供代理节点订阅，请确认符合所在司法辖区的法律法规")
+		}
 	}
 	if req.Host != nil {
 		if err := config.ValidateSetting(config.KeySubHost, *req.Host); err != nil {
