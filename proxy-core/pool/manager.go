@@ -100,6 +100,16 @@ func (m *Manager) AddNodes(nodes []*model.ProxyNode) int {
 			m.mx.Unlock()
 		} else {
 			updated++
+			// 节点已存在：凭据可能在 SaveNode 中被更新，刷新内存池避免网关继续用旧凭据。
+			if n.ID > 0 {
+				m.mx.Lock()
+				if cur, ok := m.nodes[n.ID]; ok {
+					cur.Username = n.Username
+					cur.Password = n.Password
+					cur.UpdatedAt = n.UpdatedAt
+				}
+				m.mx.Unlock()
+			}
 		}
 	}
 	if added > 0 && updated > 0 {
@@ -414,7 +424,14 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 	}
 	m.mx.Unlock()
 
-	result, _ := (*m.checker.Load()).Check(fresh)
+	result, err := (*m.checker.Load()).Check(fresh)
+	if err != nil {
+		// 检测器内部错误（非节点不可达）：保留结果并记录，避免静默吞掉诊断信息。
+		m.bus.Debug(fmt.Sprintf("check node %s failed with error: %v", node.Key(), err))
+		if result.Error == "" {
+			result.Error = err.Error()
+		}
+	}
 	score := CalculateScore(fresh, result)
 
 	status := model.StatusAlive

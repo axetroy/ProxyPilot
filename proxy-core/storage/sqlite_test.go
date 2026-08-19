@@ -117,6 +117,37 @@ func TestSaveNodeDeduplicates(t *testing.T) {
 	}
 }
 
+// TestSaveNodeConflictUpdatesCredentials 节点已存在但凭据更新时，
+// SaveNode 应返回 false 并同步更新 username/password（订阅密码变更生效）。
+func TestSaveNodeConflictUpdatesCredentials(t *testing.T) {
+	st := newTestStore(t)
+	n := baseNode("1.1.1.1", 8080, model.ProtocolHTTP)
+	n.Username = "old-user"
+	n.Password = "old-pass"
+	if added, _ := st.SaveNode(n); !added {
+		t.Fatal("expected first insert added")
+	}
+
+	// 同一 key 携带新凭据再次保存：不新增但应更新凭据
+	n2 := baseNode("1.1.1.1", 8080, model.ProtocolHTTP)
+	n2.Username = "new-user"
+	n2.Password = "new-pass"
+	added, err := st.SaveNode(n2)
+	if err != nil {
+		t.Fatalf("save node: %v", err)
+	}
+	if added {
+		t.Fatal("expected duplicate not added")
+	}
+	got, err := st.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("get node: %v", err)
+	}
+	if got.Username != "new-user" || got.Password != "new-pass" {
+		t.Fatalf("credentials not updated: user=%q pass=%q", got.Username, got.Password)
+	}
+}
+
 func TestUpsertNodeUpdatesExisting(t *testing.T) {
 	st := newTestStore(t)
 	n := baseNode("1.1.1.1", 8080, model.ProtocolHTTP)

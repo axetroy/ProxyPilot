@@ -294,6 +294,10 @@ func (s *Store) SaveNode(n *model.ProxyNode) (bool, error) {
 		return false, err
 	}
 	if affected == 0 {
+		// 节点已存在（host:port:protocol 相同）：更新凭据，避免订阅密码变更不生效。
+		if err := s.updateNodeCredentials(n); err != nil {
+			return false, err
+		}
 		if n.SubscriptionID > 0 {
 			var existingID int64
 			err := s.db.QueryRow(`SELECT id FROM proxy_nodes WHERE host=? AND port=? AND protocol=?`, n.Host, n.Port, string(n.Protocol)).Scan(&existingID)
@@ -328,6 +332,14 @@ func (s *Store) AttachNodeToSubscription(proxyID, subscriptionID int64) error {
 		return nil
 	}
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO subscription_nodes (subscription_id, proxy_id) VALUES (?, ?)`, subscriptionID, proxyID)
+	return err
+}
+
+// updateNodeCredentials 节点已存在（key 冲突）时更新其凭据与更新时间，
+// 保证订阅源密码变更后网关能使用新凭据。
+func (s *Store) updateNodeCredentials(n *model.ProxyNode) error {
+	_, err := s.db.Exec(`UPDATE proxy_nodes SET username=?, password=?, updated_at=? WHERE host=? AND port=? AND protocol=?`,
+		n.Username, n.Password, time.Now().UTC(), n.Host, n.Port, string(n.Protocol))
 	return err
 }
 

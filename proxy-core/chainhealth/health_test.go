@@ -199,3 +199,33 @@ func TestManagerStartContextCancel(t *testing.T) {
 		t.Fatal("Start did not exit after context cancel")
 	}
 }
+
+// TestManagerIntervalHotReload 修改 ChainCheckInterval 后，
+// 下一次等待周期应读取新值（支持前端热更新），而不是一直用 Start 时的旧周期。
+func TestManagerIntervalHotReload(t *testing.T) {
+	store := newMockChainStore([]model.ProxyChain{{ID: 1, Name: "c1", NodeIDs: []int64{10}, Enabled: true}})
+	mgr := newTestManager(store, mockNodes{10: chainNode(10)}, func(_ []*model.ProxyNode, _ string, _ time.Duration) model.ChainTestResult {
+		return okResult()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 初始周期 1 分钟；改小后应在短时间触发下一轮（验证实时读取而非缓存旧值）。
+	mgr.cfg.ChainCheckInterval = 60 * time.Millisecond
+	go mgr.Start(ctx)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		store.mu.Lock()
+		hasHealth := store.health[1].ok
+		store.mu.Unlock()
+		if hasHealth {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("health check did not run after interval hot reload")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

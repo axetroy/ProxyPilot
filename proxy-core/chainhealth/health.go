@@ -54,19 +54,20 @@ func New(store ChainStore, nodes NodeProvider, b *bus.Bus, cfg *config.Config) *
 }
 
 // Start 启动周期检测循环，直到 ctx 取消。启动后立即执行一轮，尽早暴露失效链路。
+// 检测周期每次循环实时读取 Config，支持前端热更新。
 func (m *Manager) Start(ctx context.Context) {
-	interval := m.cfg.ChainCheckInterval
-	if interval < time.Minute {
-		interval = time.Minute
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	m.checkAll()
 	for {
+		interval := m.cfg.ChainCheckInterval
+		if interval < time.Minute {
+			interval = time.Minute
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			m.checkAll()
 		}
 	}
