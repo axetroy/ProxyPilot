@@ -26,6 +26,7 @@ func TestExportProxies(t *testing.T) {
 	// json（默认）
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/export", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export json status = %d, body %s", rec.Code, rec.Body.String())
@@ -49,6 +50,7 @@ func TestExportProxies(t *testing.T) {
 	// base64
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/export?format=base64", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export base64 status = %d", rec.Code)
@@ -67,6 +69,7 @@ func TestExportProxies(t *testing.T) {
 	// plain
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/export?format=plain", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), "socks5://u:p@2.2.2.2:1080") {
 		t.Fatalf("export plain missing node: %q", rec.Body.String())
@@ -75,6 +78,7 @@ func TestExportProxies(t *testing.T) {
 	// 非法格式
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/export?format=yaml", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("export invalid format status = %d, want 400", rec.Code)
@@ -87,6 +91,7 @@ func TestExportEmptyPool(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/export?format=base64", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -104,6 +109,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	// GET 初始配置
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/subscription", nil)
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get subscription status = %d", rec.Code)
@@ -125,6 +131,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/subscription", strings.NewReader(`{"enabled":false}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put subscription status = %d, body %s", rec.Code, rec.Body.String())
@@ -144,6 +151,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/subscription", strings.NewReader(`{"resetToken":true}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -159,6 +167,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/subscription", strings.NewReader(`{"listen":"bad-addr"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid listen status = %d, want 400", rec.Code)
@@ -168,6 +177,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/subscription", strings.NewReader(`{"listen":"0.0.0.0:17891","host":"192.168.1.50"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("put listen+host status = %d, body %s", rec.Code, rec.Body.String())
@@ -189,6 +199,7 @@ func TestSubscriptionConfigAPI(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/subscription", strings.NewReader(`{"host":"not-an-ip"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Token", testToken)
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid host status = %d, want 400", rec.Code)

@@ -12,18 +12,18 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		// 无 Origin（非浏览器客户端，如 curl）或命中本地白名单才允许升级。
+		if origin == "" {
+			return true
+		}
+		return allowedCORSOrigins[origin]
 	},
 }
 
 // websocket streams bus events (logs, progress) to the Electron UI.
 // Token is verified via the X-Token header (middleware) or ?token= query param.
 func (s *Services) websocket(c *gin.Context) {
-	queryToken := c.Query("token")
-	if s.Cfg.SessionToken != "" && queryToken != "" && queryToken != s.Cfg.SessionToken {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, fail(401, "invalid session token"))
-		return
-	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return

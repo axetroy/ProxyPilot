@@ -547,21 +547,32 @@ func (s *Store) DeleteSubscription(id int64) ([]int64, error) {
 		return nil, err
 	}
 
+	// 先解除该订阅与节点的关联，再对每个节点判断是否还被其他订阅引用；
+	// 仅删除不再被任何订阅引用的节点，避免共享节点被连带删除。
+	if _, err := s.db.Exec(`DELETE FROM subscription_nodes WHERE subscription_id=?`, id); err != nil {
+		return nil, err
+	}
+	var removed []int64
 	if len(proxyIDs) > 0 {
 		for _, proxyID := range proxyIDs {
+			refs, err := s.CountSubscriptionRefs(proxyID)
+			if err != nil {
+				return nil, err
+			}
+			if refs > 0 {
+				continue
+			}
 			if _, err := s.db.Exec(`DELETE FROM check_history WHERE proxy_id=?`, proxyID); err != nil {
 				return nil, err
 			}
 			if _, err := s.db.Exec(`DELETE FROM proxy_nodes WHERE id=?`, proxyID); err != nil {
 				return nil, err
 			}
+			removed = append(removed, proxyID)
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM subscription_nodes WHERE subscription_id=?`, id); err != nil {
-		return nil, err
-	}
 	_, err = s.db.Exec(`DELETE FROM subscriptions WHERE id=?`, id)
-	return proxyIDs, err
+	return removed, err
 }
 
 // ---------- check history ----------

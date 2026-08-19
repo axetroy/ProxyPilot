@@ -413,6 +413,53 @@ func TestDeleteSubscriptionKeepsOtherNodes(t *testing.T) {
 	}
 }
 
+// TestDeleteSubscriptionKeepsSharedNodes 同一节点被多个订阅共享时，
+// 删除其中一个订阅不应连带删除该节点（仍被其他订阅引用）。
+func TestDeleteSubscriptionKeepsSharedNodes(t *testing.T) {
+	st := newTestStore(t)
+
+	subA := &model.Subscription{Name: "sub-a", URL: "https://a.example.com", Enabled: true}
+	_ = st.UpsertSubscription(subA)
+	subB := &model.Subscription{Name: "sub-b", URL: "https://b.example.com", Enabled: true}
+	_ = st.UpsertSubscription(subB)
+
+	// 同一节点同时挂到两个订阅下（共享节点）
+	shared := baseNode("9.9.9.9", 443, model.ProtocolHTTPS)
+	_, _ = st.SaveNode(shared)
+	_ = st.AttachNodeToSubscription(shared.ID, subA.ID)
+	_ = st.AttachNodeToSubscription(shared.ID, subB.ID)
+
+	// 该订阅独有的节点，删除订阅后应一并清理
+	own := baseNode("8.8.8.8", 80, model.ProtocolHTTP)
+	_, _ = st.SaveNode(own)
+	_ = st.AttachNodeToSubscription(own.ID, subA.ID)
+
+	removed, err := st.DeleteSubscription(subA.ID)
+	if err != nil {
+		t.Fatalf("delete subscription: %v", err)
+	}
+	// 只有独有节点被删除；共享节点保留
+	if len(removed) != 1 || removed[0] != own.ID {
+		t.Fatalf("removed = %v, want only own node %d", removed, own.ID)
+	}
+	count, _ := st.CountNodes()
+	if count != 1 {
+		t.Fatalf("count = %d, want 1 (shared node kept)", count)
+	}
+	nodes, _ := st.ListNode()
+	if nodes[0].Host != "9.9.9.9" {
+		t.Fatalf("unexpected remaining node: %+v", nodes[0])
+	}
+	// 共享节点仍挂在 subB 下
+	refs, err := st.CountSubscriptionRefs(shared.ID)
+	if err != nil {
+		t.Fatalf("count refs: %v", err)
+	}
+	if refs != 1 {
+		t.Fatalf("refs = %d, want 1 (only subB)", refs)
+	}
+}
+
 func TestAddCheckHistoryAndRecent(t *testing.T) {
 	st := newTestStore(t)
 	n := baseNode("1.1.1.1", 80, model.ProtocolHTTP)

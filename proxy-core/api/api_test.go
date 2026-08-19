@@ -31,6 +31,10 @@ func (mockChecker) Check(node *model.ProxyNode) (model.CheckResult, error) {
 	return model.CheckResult{OK: true, Latency: 10}, nil
 }
 
+// testToken 是 api 测试统一使用的 session token，由 newTestServices 固定注入，
+// 便于验证鉴权中间件（所有测试请求都需携带该 token）。
+const testToken = "test-token"
+
 // newTestServices 构造完整的 Services（内存存储 + mock 检测器 + 未启动网关）。
 func newTestServices(t *testing.T) *Services {
 	t.Helper()
@@ -49,8 +53,11 @@ func newTestServices(t *testing.T) *Services {
 	sel := scheduler.NewSelector(poolMgr)
 	gw := gateway.NewGateway(poolMgr, sel, b, "127.0.0.1:0")
 
+	cfg := config.New()
+	cfg.SessionToken = testToken
+
 	return &Services{
-		Cfg:       config.New(),
+		Cfg:       cfg,
 		Store:     st,
 		Pool:      poolMgr,
 		Collector: col,
@@ -90,7 +97,7 @@ func restoreEnv() {
 	savedEnv = map[string]string{}
 }
 
-// doRequest 执行一次带可选 JSON body 的请求。
+// doRequest 执行一次带可选 JSON body 的请求，自动携带测试 token。
 func doRequest(t *testing.T, r *gin.Engine, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *bytes.Reader
@@ -104,6 +111,7 @@ func doRequest(t *testing.T, r *gin.Engine, method, path string, body any) *http
 		reader = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("X-Token", testToken)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -972,7 +980,7 @@ func TestWebsocketStreamsEvents(t *testing.T) {
 	ts := httptest.NewServer(r)
 	defer ts.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws?token=" + testToken
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial ws: %v", err)
@@ -1011,6 +1019,62 @@ func TestWebsocketInvalidToken(t *testing.T) {
 
 // ---------- middleware ----------
 
+func TestTokenAuthPasses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 携带正确 token 的请求应通过
+	w := doRequest(t, r, http.MethodGet, "/api/status", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", w.Code)
+	}
+}
+
+func TestTokenAuthRejectsMissingToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 不带 token 的请求应被拒绝（401）
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want 401", w.Code)
+	}
+}
+
+func TestTokenAuthRejectsWrongToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	r := NewRouter(s)
+
+	// 错误 token 应被拒绝（401）
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("X-Token", "wrong-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want 401", w.Code)
+	}
+}
+
+func TestTokenAuthRejectsEmptyToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newTestServices(t)
+	// 模拟配置异常：token 为空时所有请求都应被拒绝（不做无鉴权放行）
+	s.Cfg.SessionToken = ""
+	r := NewRouter(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want 401 when token empty", w.Code)
+	}
+}
+
 func TestCORSPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := newTestServices(t)
@@ -1029,14 +1093,18 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
-func TestTokenAuthPasses(t *testing.T) {
+func TestCORSRejectsUnknownOrigin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := newTestServices(t)
 	r := NewRouter(s)
 
-	// token 中间件当前放行所有请求（本地开发模式）
-	w := doRequest(t, r, http.MethodGet, "/api/status", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want 200", w.Code)
+	// 非白名单 Origin 不应回显（浏览器将拦截跨域读取）
+	req := httptest.NewRequest(http.MethodOptions, "/api/status", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("CORS origin = %q, want empty for unknown origin", got)
 	}
 }
