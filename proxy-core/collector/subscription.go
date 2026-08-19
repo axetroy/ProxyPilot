@@ -204,7 +204,7 @@ func (m *Manager) refresh(ctx context.Context, sub *model.Subscription) (*FetchR
 		m.mu.Unlock()
 	}()
 
-	m.bus.Info(fmt.Sprintf("fetching subscription %s from %s", sub.Name, sub.URL))
+	m.bus.Info(fmt.Sprintf("fetching subscription %s", sub.Name))
 	body, err := m.fetcher.Fetch(ctx, sub.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrFetch, err)

@@ -87,7 +87,16 @@ func fetchLocalFile(ctx context.Context, u *url.URL) ([]byte, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	body := make([]byte, 0, maxBodySize)
+	// 先用 stat 查大小：超限立即报错，并据此精准预分配，避免小文件浪费 8MB。
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxBodySize {
+		return nil, fmt.Errorf("subscription file exceeds %d bytes", maxBodySize)
+	}
+
+	body := make([]byte, 0, info.Size())
 	tmp := make([]byte, 64<<10)
 	for {
 		if err := ctx.Err(); err != nil {
