@@ -90,14 +90,14 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
 
   async function refresh() {
     const res = await listChains()
-    if (res.code === 0 && res.data) setChains(res.data)
+    if (res.code === 0) setChains(res.data ?? [])
   }
 
   useEffect(() => {
     let active = true
     listChains()
       .then((res) => {
-        if (active && res.code === 0 && res.data) setChains(res.data)
+        if (active && res.code === 0) setChains(res.data ?? [])
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -269,7 +269,8 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
             placeholder={options.length ? '搜索并选择节点' : '没有存活节点可选'}
             data={options}
             value={selected}
-            onChange={setSelected}
+            onChange={(vals) => setSelected(Array.from(new Set(vals)))}
+            hidePickedOptions
             searchable
             disabled={!options.length}
             filter={egressOptionFilter}
