@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Select, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
 import { useSubsStore } from '@/stores/subscriptions'
@@ -106,7 +106,8 @@ export default function ProxyPool() {
 
   const [filter, setFilter] = useState('')
   const deferredFilter = useDeferredValue(filter)
-  const [subFilter, setSubFilter] = useState<string | null>(null)
+  // 订阅分组过滤：'all' 全部 / 'none' 未分组（手动添加的节点）/ String(订阅 id)
+  const [subFilter, setSubFilter] = useState<string>('all')
   const [scrollTop, setScrollTop] = useState(0)
   const [pending, setPending] = useState<ProxyNode | null>(null)
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
@@ -187,11 +188,30 @@ export default function ProxyPool() {
     viewportRef.current?.scrollTo({ top: 0 })
   }, [deferredFilter, subFilter])
 
+  // 订阅分组计数：每个订阅的节点数 + 未分组节点数，用于分组 Tabs 显示
+  const subCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    let none = 0
+    for (const n of nodes) {
+      if (n.subscriptionId == null) {
+        none++
+      } else {
+        const key = String(n.subscriptionId)
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+    }
+    return { counts, none }
+  }, [nodes])
+
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
     return nodes.filter((n) => {
-      if (subFilter !== null && n.subscriptionId !== Number(subFilter)) return false
+      if (subFilter === 'none') {
+        if (n.subscriptionId != null) return false
+      } else if (subFilter !== 'all' && n.subscriptionId !== Number(subFilter)) {
+        return false
+      }
       if (!normalizedFilter) return true
       const subName = subscriptionName(subs, n.subscriptionId) ?? ''
       return `${n.host}:${n.port} ${n.protocol} ${geoText(n)} ${subName}`.toLowerCase().includes(normalizedFilter)
@@ -285,22 +305,6 @@ export default function ProxyPool() {
             <Text size="sm" c="dimmed" mt={4}>按评分、状态、主机名和地区快速筛选和管理节点</Text>
           </div>
           <Group gap="sm" wrap="wrap">
-            <TextInput
-              leftSection={<Search size={16} />}
-              placeholder="筛选主机 / 地区 / 订阅"
-              value={filter}
-              onChange={(e) => setFilter(e.currentTarget.value)}
-              style={{ width: 260 }}
-            />
-            <Select
-              placeholder="全部订阅"
-              clearable
-              value={subFilter}
-              onChange={setSubFilter}
-              data={subs.map((s) => ({ value: String(s.id), label: s.name }))}
-              style={{ width: 180 }}
-              comboboxProps={{ withinPortal: true }}
-            />
             <Button leftSection={<Zap size={16} />} variant="light" loading={checkingAll} onClick={onCheckAll}>
               {checkingAll ? '检测中...' : '检测新节点'}
             </Button>
@@ -313,6 +317,33 @@ export default function ProxyPool() {
               刷新
             </Button>
           </Group>
+        </Group>
+        <Group gap="sm" mt="sm" wrap="nowrap" style={{ alignItems: 'center' }}>
+          <TextInput
+            leftSection={<Search size={16} />}
+            placeholder="筛选主机 / 地区 / 订阅"
+            value={filter}
+            onChange={(e) => setFilter(e.currentTarget.value)}
+            style={{ width: 260, flexShrink: 0 }}
+          />
+          {/* 订阅分组视图：按订阅分组过滤，每个 Tab 显示该订阅节点数 */}
+          <Tabs value={subFilter} onChange={(v) => setSubFilter(v ?? 'all')} style={{ flex: 1, minWidth: 0 }}>
+            <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto' }}>
+              <Tabs.Tab value="all">
+                全部 <Badge size="xs" variant="light" ml={4}>{nodes.length}</Badge>
+              </Tabs.Tab>
+              {subs.map((s) => (
+                <Tabs.Tab key={s.id} value={String(s.id)}>
+                  {s.name} <Badge size="xs" variant="light" ml={4}>{subCounts.counts.get(String(s.id)) ?? 0}</Badge>
+                </Tabs.Tab>
+              ))}
+              {subCounts.none > 0 && (
+                <Tabs.Tab value="none">
+                  未分组 <Badge size="xs" variant="light" ml={4}>{subCounts.none}</Badge>
+                </Tabs.Tab>
+              )}
+            </Tabs.List>
+          </Tabs>
         </Group>
       </Card>
 
