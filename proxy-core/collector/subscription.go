@@ -90,17 +90,14 @@ func (m *Manager) Delete(id int64) error {
 // UpdateSubscription updates subscription details and reschedules if needed.
 func (m *Manager) UpdateSubscription(id int64, name, url string, interval int64, enabled bool) error {
 	// 查询旧状态，判断是否发生 启用→禁用 切换（禁用时需把该订阅节点移出代理池）
-	prevEnabled := false
-	subs, err := m.store.ListSubscriptions()
+	prev, err := m.Get(id)
 	if err != nil {
 		return err
 	}
-	for _, s := range subs {
-		if s.ID == id {
-			prevEnabled = s.Enabled
-			break
-		}
+	if prev == nil {
+		return fmt.Errorf("subscription %d not found", id)
 	}
+	prevEnabled := prev.Enabled
 
 	sub := &model.Subscription{ID: id, Name: name, URL: url, Interval: interval, Enabled: enabled}
 	if err := m.store.UpsertSubscription(sub); err != nil {

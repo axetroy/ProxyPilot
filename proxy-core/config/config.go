@@ -316,6 +316,45 @@ func (c *Config) MutatePAC(fn func(f *PACFields)) {
 	c.PACCustomProxy = f.CustomProxy
 }
 
+// SubFields 是订阅导出相关可变字段的快照。
+// api 层通过 MutateSub 在锁内整体读改写，避免订阅服务（独立路由）
+// 与配置更新并发时读到中间状态。
+type SubFields struct {
+	Enabled bool
+	Listen  string
+	Host    string
+	Token   string
+}
+
+// SubSnapshot 返回当前订阅导出相关字段的副本（并发安全）。
+func (c *Config) SubSnapshot() SubFields {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return SubFields{
+		Enabled: c.SubEnabled,
+		Listen:  c.SubListen,
+		Host:    c.SubHost,
+		Token:   c.SubToken,
+	}
+}
+
+// MutateSub 在锁内读改写订阅导出相关字段（fn 可修改快照字段，随后写回）。
+func (c *Config) MutateSub(fn func(f *SubFields)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f := SubFields{
+		Enabled: c.SubEnabled,
+		Listen:  c.SubListen,
+		Host:    c.SubHost,
+		Token:   c.SubToken,
+	}
+	fn(&f)
+	c.SubEnabled = f.Enabled
+	c.SubListen = f.Listen
+	c.SubHost = f.Host
+	c.SubToken = f.Token
+}
+
 // ChainParams 返回自动链路参数（并发安全）。
 func (c *Config) ChainParams() (int, string) {
 	c.mu.RLock()
@@ -364,17 +403,18 @@ func New() *Config {
 // 用户配置了具体监听 IP 时原样拼接；监听为 0.0.0.0/:: 等通配地址时，
 // 拼接用户在前端下拉选中的局域网 IP（SubHost），未选择时回退 127.0.0.1。
 func (c *Config) SubscriptionURL() string {
-	host, port, err := net.SplitHostPort(c.SubListen)
+	f := c.SubSnapshot()
+	host, port, err := net.SplitHostPort(f.Listen)
 	if err != nil {
 		host, port = "127.0.0.1", "17891"
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		host = c.SubHost
+		host = f.Host
 		if host == "" {
 			host = "127.0.0.1"
 		}
 	}
-	return "http://" + net.JoinHostPort(host, port) + "/sub/" + c.SubToken
+	return "http://" + net.JoinHostPort(host, port) + "/sub/" + f.Token
 }
 
 // LANIPs 返回本机所有非回环的 IPv4 局域网地址（供前端下拉选择）。
@@ -558,11 +598,17 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 			}
 		}, true
 	case KeySubEnabled:
-		return func(v string) { c.SubEnabled = v == "1" }, true
+		return func(v string) {
+			c.MutateSub(func(f *SubFields) { f.Enabled = v == "1" })
+		}, true
 	case KeySubListen:
-		return func(v string) { c.SubListen = v }, true
+		return func(v string) {
+			c.MutateSub(func(f *SubFields) { f.Listen = v })
+		}, true
 	case KeySubHost:
-		return func(v string) { c.SubHost = v }, true
+		return func(v string) {
+			c.MutateSub(func(f *SubFields) { f.Host = v })
+		}, true
 	case KeyHistoryRetention:
 		return func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -674,14 +720,14 @@ func (c *Config) SettingValue(key string) (string, bool) {
 	case KeyRefreshPeriod:
 		return c.RefreshInterval.String(), true
 	case KeySubEnabled:
-		if c.SubEnabled {
+		if c.SubSnapshot().Enabled {
 			return "1", true
 		}
 		return "0", true
 	case KeySubListen:
-		return c.SubListen, true
+		return c.SubSnapshot().Listen, true
 	case KeySubHost:
-		return c.SubHost, true
+		return c.SubSnapshot().Host, true
 	case KeyHistoryRetention:
 		return strconv.Itoa(c.HistoryRetentionDays), true
 	case KeyPACEnabled:

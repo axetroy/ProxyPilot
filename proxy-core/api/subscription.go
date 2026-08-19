@@ -21,12 +21,13 @@ type subscriptionConfig struct {
 }
 
 func (s *Services) currentSubscription() subscriptionConfig {
+	f := s.Cfg.SubSnapshot()
 	return subscriptionConfig{
-		Enabled: s.Cfg.SubEnabled,
-		Listen:  s.Cfg.SubListen,
-		Host:    s.Cfg.SubHost,
+		Enabled: f.Enabled,
+		Listen:  f.Listen,
+		Host:    f.Host,
 		LANIPs:  config.LANIPs(),
-		Token:   s.Cfg.SubToken,
+		Token:   f.Token,
 		URL:     s.Cfg.SubscriptionURL(),
 	}
 }
@@ -69,6 +70,7 @@ func (s *Services) updateSubscriptionConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, "请求体格式错误: "+err.Error()))
 		return
 	}
+	// 先整体校验（不修改状态），任一非法则全部不应用（原子性）。
 	if req.Enabled != nil {
 		v := "0"
 		if *req.Enabled {
@@ -78,15 +80,45 @@ func (s *Services) updateSubscriptionConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.SubEnabled = *req.Enabled
-		_ = s.Store.SetSetting(config.KeySubEnabled, v)
 	}
 	if req.Listen != nil {
 		if err := config.ValidateSetting(config.KeySubListen, *req.Listen); err != nil {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.SubListen = *req.Listen
+	}
+	if req.Host != nil {
+		if err := config.ValidateSetting(config.KeySubHost, *req.Host); err != nil {
+			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
+			return
+		}
+	}
+	// 校验通过后，在锁内一次性应用到 Config（避免订阅服务并发读到中间状态）。
+	var newToken string
+	s.Cfg.MutateSub(func(f *config.SubFields) {
+		if req.Enabled != nil {
+			f.Enabled = *req.Enabled
+		}
+		if req.Listen != nil {
+			f.Listen = *req.Listen
+		}
+		if req.Host != nil {
+			f.Host = *req.Host
+		}
+		if req.ResetToken {
+			newToken = config.NewToken()
+			f.Token = newToken
+		}
+	})
+	// 持久化（锁外执行 DB 写）。
+	if req.Enabled != nil {
+		v := "0"
+		if *req.Enabled {
+			v = "1"
+		}
+		_ = s.Store.SetSetting(config.KeySubEnabled, v)
+	}
+	if req.Listen != nil {
 		_ = s.Store.SetSetting(config.KeySubListen, *req.Listen)
 		// 对外监听（0.0.0.0/::）会把代理节点订阅开放到其他设备，
 		// 记录警示日志提示用户评估合规风险。
@@ -96,16 +128,10 @@ func (s *Services) updateSubscriptionConfig(c *gin.Context) {
 		}
 	}
 	if req.Host != nil {
-		if err := config.ValidateSetting(config.KeySubHost, *req.Host); err != nil {
-			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
-			return
-		}
-		s.Cfg.SubHost = *req.Host
 		_ = s.Store.SetSetting(config.KeySubHost, *req.Host)
 	}
 	if req.ResetToken {
-		s.Cfg.SubToken = config.NewToken()
-		_ = s.Store.SetSetting(config.KeySubToken, s.Cfg.SubToken)
+		_ = s.Store.SetSetting(config.KeySubToken, newToken)
 	}
 	c.JSON(http.StatusOK, ok(s.currentSubscription()))
 }
@@ -123,7 +149,8 @@ func NewSubscriptionRouter(s *Services) *gin.Engine {
 // serveSubscription 处理 GET /sub/:token，返回存活节点的订阅文本。
 // 支持 ?format=plain（明文）与 ?format=base64（默认）。
 func (s *Services) serveSubscription(c *gin.Context) {
-	if !s.Cfg.SubEnabled {
+	sub := s.Cfg.SubSnapshot()
+	if !sub.Enabled {
 		c.JSON(http.StatusNotFound, fail(http.StatusNotFound, "订阅未开启"))
 		return
 	}
@@ -131,7 +158,7 @@ func (s *Services) serveSubscription(c *gin.Context) {
 	if token == "" {
 		token = c.Query("token")
 	}
-	if !constantTimeEqual(token, s.Cfg.SubToken) {
+	if !constantTimeEqual(token, sub.Token) {
 		c.JSON(http.StatusUnauthorized, fail(http.StatusUnauthorized, "订阅密钥错误"))
 		return
 	}
