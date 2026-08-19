@@ -71,6 +71,11 @@ type Gateway struct {
 
 	// traffic 统计网关转发的流量与连接数（本次启动累计）。
 	traffic *trafficCounter
+
+	// activeConns 追踪所有仍在处理的客户端连接（CONNECT 隧道 / SOCKS5 会话）。
+	// Stop 时强制关闭，避免长连接（隧道/会话）在网关停止后悬挂。
+	activeMu    sync.Mutex
+	activeConns map[net.Conn]struct{}
 }
 
 // ipv6CacheEntry 记录某个 IPv6 地址的 PTR 反查结果与缓存时间。
@@ -84,13 +89,14 @@ const ipv6CacheTTL = 10 * time.Minute
 
 func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, addr string) *Gateway {
 	g := &Gateway{
-		pool:      pool,
-		selector:  selector,
-		bus:       bus,
-		addr:      addr,
-		limitCtx:  4,
-		ipv6Cache: make(map[string]ipv6CacheEntry),
-		traffic:   newTrafficCounter(),
+		pool:        pool,
+		selector:    selector,
+		bus:         bus,
+		addr:        addr,
+		limitCtx:    4,
+		ipv6Cache:   make(map[string]ipv6CacheEntry),
+		traffic:     newTrafficCounter(),
+		activeConns: make(map[net.Conn]struct{}),
 	}
 	g.forwardTransport = &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -226,9 +232,42 @@ func (g *Gateway) Stop() {
 		g.mixed = nil
 	}
 	g.currentNode = nil
+	// 强制关闭所有仍在处理的客户端连接（CONNECT 隧道 / SOCKS5 会话），
+	// 避免网关停止后这些长连接继续悬挂。
+	g.closeActiveConns()
 	if g.bus != nil {
 		g.bus.Info("proxy gateway stopped")
 	}
+}
+
+// trackConn 登记一条正在处理的客户端连接。
+func (g *Gateway) trackConn(conn net.Conn) {
+	if g == nil {
+		return
+	}
+	g.activeMu.Lock()
+	g.activeConns[conn] = struct{}{}
+	g.activeMu.Unlock()
+}
+
+// untrackConn 注销一条已结束的客户端连接。
+func (g *Gateway) untrackConn(conn net.Conn) {
+	if g == nil {
+		return
+	}
+	g.activeMu.Lock()
+	delete(g.activeConns, conn)
+	g.activeMu.Unlock()
+}
+
+// closeActiveConns 关闭所有已登记的活动连接并清空集合。
+func (g *Gateway) closeActiveConns() {
+	g.activeMu.Lock()
+	for conn := range g.activeConns {
+		_ = conn.Close()
+	}
+	g.activeConns = make(map[net.Conn]struct{})
+	g.activeMu.Unlock()
 }
 
 // dialDirect 智能分流命中「直连」时直接建立 TCP 连接（不经节点池）。

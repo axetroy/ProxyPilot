@@ -39,12 +39,13 @@ type egressConfig struct {
 
 // getEgress 返回当前出口策略、固定节点与可选策略列表。
 func (s *Services) getEgress(c *gin.Context) {
+	hops, selection := s.Cfg.ChainParams()
 	cfg := egressConfig{
 		Strategy:       string(s.Selector.Strategy()),
 		AliveCount:     s.Pool.CountAlive(),
 		Strategies:     scheduler.Strategies(),
-		ChainHops:      s.Cfg.ChainHops,
-		ChainSelection: s.Cfg.ChainSelection,
+		ChainHops:      hops,
+		ChainSelection: selection,
 	}
 	cfg.PinnedNode = s.Selector.Pinned()
 	c.JSON(http.StatusOK, ok(cfg))
@@ -68,9 +69,10 @@ func (s *Services) updateEgress(c *gin.Context) {
 	var hops int
 	var selection string
 	if strategy == scheduler.StrategyAutoChain {
+		curHops, curSelection := s.Cfg.ChainParams()
 		hops = payload.ChainHops
 		if hops <= 0 {
-			hops = s.Cfg.ChainHops
+			hops = curHops
 			if hops <= 0 {
 				hops = 2
 			}
@@ -81,7 +83,7 @@ func (s *Services) updateEgress(c *gin.Context) {
 		}
 		selection = payload.ChainSelection
 		if selection == "" {
-			selection = s.Cfg.ChainSelection
+			selection = curSelection
 			if selection == "" {
 				selection = "weighted"
 			}
@@ -99,8 +101,7 @@ func (s *Services) updateEgress(c *gin.Context) {
 
 	if strategy == scheduler.StrategyAutoChain {
 		// 自动链路策略：保存层数与每层选择策略。
-		s.Cfg.ChainHops = hops
-		s.Cfg.ChainSelection = selection
+		s.Cfg.SetChainParams(hops, selection)
 		if err := s.Store.SetSetting(config.KeyChainHops, strconv.Itoa(hops)); err != nil {
 			s.Bus.Error("persist chain hops failed: " + err.Error())
 		}
@@ -123,20 +124,21 @@ func (s *Services) updateEgress(c *gin.Context) {
 	} else {
 		s.Bus.Info(fmt.Sprintf("egress strategy set to %s", payload.Strategy))
 	}
+	respHops, respSelection := s.Cfg.ChainParams()
 	c.JSON(http.StatusOK, ok(egressConfig{
 		Strategy:       payload.Strategy,
 		PinnedNode:     s.Selector.Pinned(),
 		AliveCount:     s.Pool.CountAlive(),
 		Strategies:     scheduler.Strategies(),
-		ChainHops:      s.Cfg.ChainHops,
-		ChainSelection: s.Cfg.ChainSelection,
+		ChainHops:      respHops,
+		ChainSelection: respSelection,
 	}))
 }
 
 // testAutoChain 测试自动链路：按当前配置（层数 + 每层选择策略）从存活节点中
 // 挑选节点，逐跳测量延迟与连通性，返回与手动链路测试相同的结果结构。
 func (s *Services) testAutoChain(c *gin.Context) {
-	hops := s.Cfg.ChainHops
+	hops, selection := s.Cfg.ChainParams()
 	if hops <= 0 {
 		hops = 2
 	}
@@ -144,7 +146,6 @@ func (s *Services) testAutoChain(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, fail(400, "自动链路层数不能超过 8"))
 		return
 	}
-	selection := s.Cfg.ChainSelection
 	if selection == "" {
 		selection = "weighted"
 	}

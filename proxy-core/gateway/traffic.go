@@ -143,10 +143,48 @@ func (g *Gateway) TrackConn(conn net.Conn, kind trafficKind, nodeID int64, chain
 	return &countedConn{Conn: conn, c: g.traffic, kind: kind, nodeID: nodeID, chainName: chainName}
 }
 
+// prune 剔除已不存在的出口（节点已删除/链路已删除）的统计条目，避免长期残留。
+// validNodeIDs / validChainNames 为当前存活集合，nil 表示保留全部。
+func (c *trafficCounter) prune(validNodeIDs map[int64]struct{}, validChainNames map[string]struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if validNodeIDs != nil {
+		for id := range c.byNode {
+			if _, ok := validNodeIDs[id]; !ok {
+				delete(c.byNode, id)
+			}
+		}
+	}
+	if validChainNames != nil {
+		for name := range c.byChain {
+			if _, ok := validChainNames[name]; !ok {
+				delete(c.byChain, name)
+			}
+		}
+	}
+}
+
 // Traffic 返回流量统计快照（本次启动累计）。
+// 顺带清理已删除节点/链路的残留统计条目，避免 map 无限增长。
 func (g *Gateway) Traffic() TrafficSnapshot {
 	if g.traffic == nil {
 		return TrafficSnapshot{}
+	}
+	if g.pool != nil {
+		nodes := g.pool.List()
+		validNodes := make(map[int64]struct{}, len(nodes))
+		for _, n := range nodes {
+			validNodes[n.ID] = struct{}{}
+		}
+		validChains := map[string]struct{}{autoChainTrafficName: {}}
+		if g.chainsProvider != nil {
+			if chains, err := g.chainsProvider(); err == nil {
+				for _, ch := range chains {
+					validChains[ch.Name] = struct{}{}
+				}
+			}
+		}
+		g.traffic.prune(validNodes, validChains)
 	}
 	g.traffic.mu.Lock()
 	defer g.traffic.mu.Unlock()

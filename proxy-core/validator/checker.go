@@ -555,6 +555,10 @@ func socks5UserPassAuth(conn net.Conn, user, pass string) error {
 	if user == "" {
 		return fmt.Errorf("socks5: user/pass auth requires credentials")
 	}
+	// RFC1929 用户名/密码长度各限制 255 字节（与 writeSocks5UserPass 校验一致）。
+	if len(user) > 255 || len(pass) > 255 {
+		return fmt.Errorf("socks5 credentials too long")
+	}
 	buf := []byte{0x01, byte(len(user))}
 	buf = append(buf, user...)
 	buf = append(buf, byte(len(pass)))

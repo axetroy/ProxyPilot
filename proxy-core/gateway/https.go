@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -65,7 +66,11 @@ func (h *httpServer) tunnel(w http.ResponseWriter, r *http.Request) {
 	// 避免 HTTPS 流量错误地使用 SOCKS5 节点。
 	upstream, err := h.g.UpstreamWithProtocol(r.Context(), target, model.ProtocolHTTP)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// 只向客户端返回通用错误，避免泄露内部节点信息。
+		if h.g.bus != nil {
+			h.g.bus.Debug(fmt.Sprintf("CONNECT %s upstream dial failed: %v", target, err))
+		}
+		http.Error(w, "upstream connection failed", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = upstream.Close() }()
@@ -79,7 +84,11 @@ func (h *httpServer) tunnel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer func() { _ = client.Close() }()
+	h.g.trackConn(client)
+	defer func() {
+		h.g.untrackConn(client)
+		_ = client.Close()
+	}()
 	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
 		return
 	}

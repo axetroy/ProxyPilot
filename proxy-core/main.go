@@ -60,7 +60,8 @@ func main() {
 	gw.SetChainsProvider(st.ListChains)
 	// 注入自动链路配置读取函数，供 auto-chain 策略按配置自动挑选节点。
 	gw.SetAutoChainConfig(func() (int, scheduler.Strategy) {
-		return cfg.ChainHops, scheduler.Strategy(cfg.ChainSelection)
+		hops, selection := cfg.ChainParams()
+		return hops, scheduler.Strategy(selection)
 	})
 
 	// 恢复用户上次的出口策略与固定出口节点。

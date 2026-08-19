@@ -164,22 +164,20 @@ func (s *Services) deleteSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, fail(400, "bad id"))
 		return
 	}
-	subs, err := s.Collector.List()
+	sub, err := s.Collector.Get(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
 		return
 	}
-	for _, sub := range subs {
-		if sub.ID == id {
-			if err := s.Collector.Delete(sub.ID); err != nil {
-				c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
-				return
-			}
-			c.JSON(http.StatusOK, ok(nil))
-			return
-		}
+	if sub == nil {
+		c.JSON(http.StatusNotFound, fail(404, "subscription not found"))
+		return
 	}
-	c.JSON(http.StatusNotFound, fail(404, "subscription not found"))
+	if err := s.Collector.Delete(sub.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, ok(nil))
 }
 
 func (s *Services) refreshSubscription(c *gin.Context) {
@@ -188,30 +186,28 @@ func (s *Services) refreshSubscription(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, fail(400, "bad id"))
 		return
 	}
-	subs, err := s.Collector.List()
+	sub, err := s.Collector.Get(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
 		return
 	}
-	for _, sub := range subs {
-		if sub.ID == id {
-			result, err := s.Collector.FetchNow(c.Request.Context(), sub)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
-				return
-			}
-			// 返回本次抓取摘要：解析节点总数与新增节点数，供前端确认订阅内容是否有效。
-			// result 为 nil 表示该订阅正在抓取中（防重入跳过），此时无摘要可返回。
-			resp := gin.H{"id": sub.ID}
-			if result != nil {
-				resp["total"] = result.Total
-				resp["added"] = result.Added
-			}
-			c.JSON(http.StatusOK, ok(resp))
-			return
-		}
+	if sub == nil {
+		c.JSON(http.StatusNotFound, fail(404, "subscription not found"))
+		return
 	}
-	c.JSON(http.StatusNotFound, fail(404, "subscription not found"))
+	result, err := s.Collector.FetchNow(c.Request.Context(), sub)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
+		return
+	}
+	// 返回本次抓取摘要：解析节点总数与新增节点数，供前端确认订阅内容是否有效。
+	// result 为 nil 表示该订阅正在抓取中（防重入跳过），此时无摘要可返回。
+	resp := gin.H{"id": sub.ID}
+	if result != nil {
+		resp["total"] = result.Total
+		resp["added"] = result.Added
+	}
+	c.JSON(http.StatusOK, ok(resp))
 }
 
 func (s *Services) updateSubscription(c *gin.Context) {

@@ -32,15 +32,16 @@ type pacConfig struct {
 }
 
 func (s *Services) currentPAC() pacConfig {
+	pf := s.Cfg.PACSnapshot()
 	cfg := pacConfig{
-		Enabled:    s.Cfg.PACEnabled,
-		Mode:       s.Cfg.PACMode,
-		DirectURLs: s.Cfg.PACDirectURLs,
-		ProxyURLs:  s.Cfg.PACProxyURLs,
-		Refresh:    s.Cfg.PACRefreshInterval.String(),
+		Enabled:    pf.Enabled,
+		Mode:       pf.Mode,
+		DirectURLs: pf.DirectURLs,
+		ProxyURLs:  pf.ProxyURLs,
+		Refresh:    pf.RefreshInterval.String(),
 	}
-	cfg.CustomDirect = splitDomains(s.Cfg.PACCustomDirect)
-	cfg.CustomProxy = splitDomains(s.Cfg.PACCustomProxy)
+	cfg.CustomDirect = splitDomains(pf.CustomDirect)
+	cfg.CustomProxy = splitDomains(pf.CustomProxy)
 	if s.Rule != nil {
 		dc, pc, syncAt, syncErr, syncing := s.Rule.Stats()
 		cfg.DirectCount = dc
@@ -99,7 +100,6 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.PACEnabled = *req.Enabled
 		_ = s.Store.SetSetting(config.KeyPACEnabled, val)
 	}
 	if req.Mode != nil {
@@ -107,7 +107,6 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.PACMode = *req.Mode
 		_ = s.Store.SetSetting(config.KeyPACMode, *req.Mode)
 	}
 	if req.DirectURLs != nil {
@@ -115,7 +114,6 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.PACDirectURLs = *req.DirectURLs
 		_ = s.Store.SetSetting(config.KeyPACDirectURLs, *req.DirectURLs)
 	}
 	if req.ProxyURLs != nil {
@@ -123,7 +121,6 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		s.Cfg.PACProxyURLs = *req.ProxyURLs
 		_ = s.Store.SetSetting(config.KeyPACProxyURLs, *req.ProxyURLs)
 	}
 	if req.Refresh != nil {
@@ -131,31 +128,54 @@ func (s *Services) updatePACConfig(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		if d, err := time.ParseDuration(*req.Refresh); err == nil {
-			s.Cfg.PACRefreshInterval = d
-		}
 		_ = s.Store.SetSetting(config.KeyPACRefresh, *req.Refresh)
 	}
 	// 手动规则名单：整表覆盖（nil 表示不修改）
-	for _, upd := range []struct {
-		key   string
-		items *[]string
-		apply func(string)
-	}{
-		{config.KeyPACCustomDirect, req.CustomDirect, func(v string) { s.Cfg.PACCustomDirect = v }},
-		{config.KeyPACCustomProxy, req.CustomProxy, func(v string) { s.Cfg.PACCustomProxy = v }},
-	} {
-		if upd.items == nil {
-			continue
-		}
-		joined := joinDomains(*upd.items)
-		if err := config.ValidateSetting(upd.key, joined); err != nil {
+	customDirect := req.CustomDirect
+	customProxy := req.CustomProxy
+	if customDirect != nil {
+		joined := joinDomains(*customDirect)
+		if err := config.ValidateSetting(config.KeyPACCustomDirect, joined); err != nil {
 			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
 			return
 		}
-		upd.apply(joined)
-		_ = s.Store.SetSetting(upd.key, joined)
+		_ = s.Store.SetSetting(config.KeyPACCustomDirect, joined)
 	}
+	if customProxy != nil {
+		joined := joinDomains(*customProxy)
+		if err := config.ValidateSetting(config.KeyPACCustomProxy, joined); err != nil {
+			c.JSON(http.StatusBadRequest, fail(http.StatusBadRequest, err.Error()))
+			return
+		}
+		_ = s.Store.SetSetting(config.KeyPACCustomProxy, joined)
+	}
+
+	// 校验全部通过后，在锁内一次性应用到 Config（避免并发读写中间状态）。
+	s.Cfg.MutatePAC(func(f *config.PACFields) {
+		if req.Enabled != nil {
+			f.Enabled = *req.Enabled
+		}
+		if req.Mode != nil {
+			f.Mode = *req.Mode
+		}
+		if req.DirectURLs != nil {
+			f.DirectURLs = *req.DirectURLs
+		}
+		if req.ProxyURLs != nil {
+			f.ProxyURLs = *req.ProxyURLs
+		}
+		if req.Refresh != nil {
+			if d, err := time.ParseDuration(*req.Refresh); err == nil {
+				f.RefreshInterval = d
+			}
+		}
+		if customDirect != nil {
+			f.CustomDirect = joinDomains(*customDirect)
+		}
+		if customProxy != nil {
+			f.CustomProxy = joinDomains(*customProxy)
+		}
+	})
 
 	// 同步开关/模式/规则源/刷新周期到规则管理器（保护其内部状态的一致性）
 	if s.Rule != nil {

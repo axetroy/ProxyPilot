@@ -57,7 +57,11 @@ func (s *socksServer) handleConn(conn net.Conn) {
 // handleConnWithReader 处理一条 SOCKS5 连接，握手数据从 br 读取。
 // 混合模式下由 mixedServer 传入已嗅探的 bufio.Reader，避免丢失首字节。
 func (s *socksServer) handleConnWithReader(conn net.Conn, br *bufio.Reader) {
-	defer func() { _ = conn.Close() }()
+	s.g.trackConn(conn)
+	defer func() {
+		s.g.untrackConn(conn)
+		_ = conn.Close()
+	}()
 
 	if s.g != nil && s.g.bus != nil {
 		s.g.bus.Debug(fmt.Sprintf("SOCKS5 connection accepted from %s", conn.RemoteAddr()))

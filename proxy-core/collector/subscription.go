@@ -64,6 +64,11 @@ func (m *Manager) List() ([]*model.Subscription, error) {
 	return m.store.ListSubscriptions()
 }
 
+// Get 按 ID 查询单个订阅（返回 nil 表示不存在）。
+func (m *Manager) Get(id int64) (*model.Subscription, error) {
+	return m.store.GetSubscription(id)
+}
+
 func (m *Manager) Delete(id int64) error {
 	m.mu.Lock()
 	if t, ok := m.timers[id]; ok {

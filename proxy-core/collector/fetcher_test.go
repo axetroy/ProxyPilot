@@ -61,7 +61,7 @@ func TestFetchCanceledContext(t *testing.T) {
 }
 
 func TestFetchLargeBodyLimited(t *testing.T) {
-	// 超过 8MB 的内容应被截断而不是 OOM
+	// 超过 8MB 的内容应报错而非静默截断（与 file 源行为一致，避免导入残缺订阅）
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunk := make([]byte, 1024)
 		for i := 0; i < 9000; i++ { // ~9MB
@@ -71,12 +71,9 @@ func TestFetchLargeBodyLimited(t *testing.T) {
 	defer srv.Close()
 
 	f := NewFetcher(5 * time.Second)
-	body, err := f.Fetch(context.Background(), srv.URL)
-	if err != nil {
-		t.Fatalf("fetch: %v", err)
-	}
-	if len(body) > 8<<20 {
-		t.Fatalf("body too large: %d bytes", len(body))
+	_, err := f.Fetch(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatal("expected error for oversized body")
 	}
 }
 

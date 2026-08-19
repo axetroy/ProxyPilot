@@ -45,10 +45,14 @@ func fetchFirst(ctx context.Context, urls string) ([]byte, error) {
 			lastErr = err
 			continue
 		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRuleListBytes))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRuleListBytes+1))
 		_ = resp.Body.Close()
 		if err != nil {
 			lastErr = err
+			continue
+		}
+		if len(body) > maxRuleListBytes {
+			lastErr = fmt.Errorf("rule list from %s exceeds %d bytes", u, maxRuleListBytes)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {

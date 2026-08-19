@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
@@ -233,6 +234,8 @@ func validateIPOrEmpty(v string) error {
 }
 
 type Config struct {
+	mu sync.RWMutex // 保护运行时热更新的可变字段（PAC* / Chain*），见 PACFields / ChainParams
+
 	APIBind              string
 	DBPath               string
 	ProxyHost            string // 代理监听 host，固定仅本机，不允许修改
@@ -260,6 +263,72 @@ type Config struct {
 	ChainSelection string // 每层选择策略（weighted / random / best，默认 weighted）
 	// 链路自动健康检测周期：对启用的链路定时探测，连续失败达阈值自动停用。
 	ChainCheckInterval time.Duration
+}
+
+// PACFields 是智能分流（PAC）相关可变字段的快照。
+// api 层通过 MutatePAC 在锁内整体读改写，避免并发配置更新时的数据竞争。
+type PACFields struct {
+	Enabled         bool
+	Mode            string
+	DirectURLs      string
+	ProxyURLs       string
+	RefreshInterval time.Duration
+	CustomDirect    string
+	CustomProxy     string
+}
+
+// PACSnapshot 返回当前 PAC 相关字段的副本（并发安全）。
+func (c *Config) PACSnapshot() PACFields {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return PACFields{
+		Enabled:         c.PACEnabled,
+		Mode:            c.PACMode,
+		DirectURLs:      c.PACDirectURLs,
+		ProxyURLs:       c.PACProxyURLs,
+		RefreshInterval: c.PACRefreshInterval,
+		CustomDirect:    c.PACCustomDirect,
+		CustomProxy:     c.PACCustomProxy,
+	}
+}
+
+// MutatePAC 在锁内读改写 PAC 相关字段（fn 可修改快照字段，随后写回）。
+// 用于 API 配置更新，保证并发读取方不会读到中间状态。
+func (c *Config) MutatePAC(fn func(f *PACFields)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f := PACFields{
+		Enabled:         c.PACEnabled,
+		Mode:            c.PACMode,
+		DirectURLs:      c.PACDirectURLs,
+		ProxyURLs:       c.PACProxyURLs,
+		RefreshInterval: c.PACRefreshInterval,
+		CustomDirect:    c.PACCustomDirect,
+		CustomProxy:     c.PACCustomProxy,
+	}
+	fn(&f)
+	c.PACEnabled = f.Enabled
+	c.PACMode = f.Mode
+	c.PACDirectURLs = f.DirectURLs
+	c.PACProxyURLs = f.ProxyURLs
+	c.PACRefreshInterval = f.RefreshInterval
+	c.PACCustomDirect = f.CustomDirect
+	c.PACCustomProxy = f.CustomProxy
+}
+
+// ChainParams 返回自动链路参数（并发安全）。
+func (c *Config) ChainParams() (int, string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ChainHops, c.ChainSelection
+}
+
+// SetChainParams 更新自动链路参数（并发安全）。
+func (c *Config) SetChainParams(hops int, selection string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ChainHops = hops
+	c.ChainSelection = selection
 }
 
 func New() *Config {

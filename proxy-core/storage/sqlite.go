@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -504,6 +505,32 @@ func (s *Store) UpsertSubscription(sub *model.Subscription) error {
 		sub.ID = id
 	}
 	return nil
+}
+
+// GetSubscription 按 ID 查询单个订阅（返回 nil 表示不存在）。
+func (s *Store) GetSubscription(id int64) (*model.Subscription, error) {
+	row := s.db.QueryRow(`SELECT s.id, s.name, s.url, s.interval, s.enabled, s.last_fetch, s.created_at, 
+		(SELECT COUNT(*) FROM subscription_nodes sn WHERE sn.subscription_id = s.id) as proxy_count
+		FROM subscriptions s WHERE s.id = ?`, id)
+	var sub model.Subscription
+	var enabled int
+	var lastFetch, createdAt sql.NullTime
+	var proxyCount int
+	if err := row.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.Interval, &enabled, &lastFetch, &createdAt, &proxyCount); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if lastFetch.Valid {
+		sub.LastFetch = lastFetch.Time
+	}
+	if createdAt.Valid {
+		sub.CreatedAt = createdAt.Time
+	}
+	sub.Enabled = enabled == 1
+	sub.ProxyCount = proxyCount
+	return &sub, nil
 }
 
 func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {

@@ -382,10 +382,17 @@ func (m *Manager) runChecks(ctx context.Context, nodes []*model.ProxyNode) error
 	var wg sync.WaitGroup
 	progressTicker := time.NewTicker(500 * time.Millisecond)
 	defer progressTicker.Stop()
+	progressDone := make(chan struct{})
+	defer close(progressDone)
 	go func() {
-		for range progressTicker.C {
-			doneCount := atomic.LoadInt64(&done)
-			m.bus.Progress(int(doneCount), len(nodes))
+		for {
+			select {
+			case <-progressDone:
+				return
+			case <-progressTicker.C:
+				doneCount := atomic.LoadInt64(&done)
+				m.bus.Progress(int(doneCount), len(nodes))
+			}
 		}
 	}()
 
@@ -399,6 +406,12 @@ func (m *Manager) runChecks(ctx context.Context, nodes []*model.ProxyNode) error
 		go func(node *model.ProxyNode) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// 取消后已排队未启动的检查直接跳过，避免产生"幽灵检测"。
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			m.evalOne(node)
 			atomic.AddInt64(&done, 1)
 		}(n)

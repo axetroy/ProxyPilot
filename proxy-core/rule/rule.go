@@ -72,13 +72,14 @@ func NewManager(cfg *config.Config, bus *bus.Bus, dbPath string) *Manager {
 func (m *Manager) ApplyConfig() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.enabled = m.cfg.PACEnabled
-	m.mode = m.cfg.PACMode
-	m.directURLs = m.cfg.PACDirectURLs
-	m.proxyURLs = m.cfg.PACProxyURLs
-	m.refreshInterval = m.cfg.PACRefreshInterval
-	m.customDirect = parseDomainList(m.cfg.PACCustomDirect)
-	m.customProxy = parseDomainList(m.cfg.PACCustomProxy)
+	pf := m.cfg.PACSnapshot()
+	m.enabled = pf.Enabled
+	m.mode = pf.Mode
+	m.directURLs = pf.DirectURLs
+	m.proxyURLs = pf.ProxyURLs
+	m.refreshInterval = pf.RefreshInterval
+	m.customDirect = parseDomainList(pf.CustomDirect)
+	m.customProxy = parseDomainList(pf.CustomProxy)
 }
 
 // parseDomainList 解析逗号分隔的域名名单为集合（规范化：小写、去空白）。

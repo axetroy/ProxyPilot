@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -47,7 +48,11 @@ func (h *httpServer) forward(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// 只向客户端返回通用错误，避免泄露内部节点信息（节点地址/凭据等）。
+		if h.g.bus != nil {
+			h.g.bus.Debug(fmt.Sprintf("forward %s failed: %v", req.URL, err))
+		}
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

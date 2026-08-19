@@ -84,6 +84,10 @@ const failureWindow = 30 * time.Second
 // 避免短时间内多个 IP 访问同一网站而触发目标站点的安全防控机制。
 const stickyWindow = 10 * time.Minute
 
+// stickyMaxEntries 是粘性绑定的容量上限。域名粘性只有被再次访问才惰性清理，
+// 恶意随机生成海量域名可在窗口内撑爆内存，超出上限时强制淘汰最早过期的条目。
+const stickyMaxEntries = 4096
+
 // stickyEntry 记录某个目标域名当前绑定的出口节点。
 type stickyEntry struct {
 	nodeID    int64     // 绑定的节点 ID
@@ -246,6 +250,7 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 			nodeID:    node.ID,
 			expiresAt: time.Now().Add(stickyWindow),
 		}
+		s.pruneSticky()
 		s.mu.Unlock()
 	}
 	return node
@@ -268,6 +273,36 @@ func (s *Selector) pinnedNode() *model.ProxyNode {
 		return n
 	}
 	return nil
+}
+
+// pruneSticky 清理粘性绑定：先清过期条目；仍超上限时淘汰最接近过期的条目，
+// 防止恶意随机域名在窗口内无限增长。
+// 必须在持有 s.mu 时调用。
+func (s *Selector) pruneSticky() {
+	now := time.Now()
+	for key, e := range s.sticky {
+		if now.After(e.expiresAt) {
+			delete(s.sticky, key)
+		}
+	}
+	if len(s.sticky) <= stickyMaxEntries {
+		return
+	}
+	// 仍超上限：循环淘汰最早过期的条目（每轮最多淘汰一次，直至回到上限内）。
+	for len(s.sticky) > stickyMaxEntries {
+		oldestKey := ""
+		var oldestAt time.Time
+		for key, e := range s.sticky {
+			if oldestKey == "" || e.expiresAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = e.expiresAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.sticky, oldestKey)
+	}
 }
 
 // stickyNode 查找 key（协议 + 域名）的粘性绑定：
@@ -336,6 +371,7 @@ func (s *Selector) selectRandom(host string) *model.ProxyNode {
 			nodeID:    node.ID,
 			expiresAt: time.Now().Add(stickyWindow),
 		}
+		s.pruneSticky()
 		s.mu.Unlock()
 	}
 	return node

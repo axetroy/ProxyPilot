@@ -60,9 +60,13 @@ func (f *Fetcher) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 	if resp.StatusCode != http.StatusOK {
 		return nil, ErrFetch
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
+	// 与 file 源一致：超限报错而非静默截断，避免导入被截断的残缺订阅。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxBodySize {
+		return nil, fmt.Errorf("subscription content exceeds %d bytes", maxBodySize)
 	}
 	return body, nil
 }
