@@ -41,6 +41,9 @@ module.exports = () => {
   return {
     appId: 'com.axetroy.proxypilot',
     productName: 'ProxyPilot',
+    // 安装包压缩级别：maximum 以更慢的打包时间为代价换取更小的安装包
+    // （NSIS 的 7z 压缩 / AppImage 的 squashfs 压缩级别均提升）。
+    compression: 'maximum',
     // 安装包命名遵循 electron-builder 升级检测（electron-updater）约定的格式：
     // ${productName}-${version}-${os}-${arch}.${ext}
     // 例如：ProxyPilot-0.1.5-mac-arm64.dmg、ProxyPilot-0.1.5-win-x64.exe、
