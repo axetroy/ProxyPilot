@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, Tray, nativeIm
 import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import * as path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { isProxyPilotStatus } from './core-process'
 import { loadAppSettings, saveAppSettings, type AppSettings } from './app-settings'
 import {
@@ -405,11 +406,9 @@ ipcMain.handle('pick-subscription-file', async (): Promise<string | null> => {
     ],
   })
   if (result.canceled || result.filePaths.length === 0) return null
-  const p = result.filePaths[0]
-  // file:// 形式：Windows 下反斜杠转正斜杠（file:///C:/path）。
-  const normalized = p.replace(/\\/g, '/')
-  const prefix = normalized.startsWith('/') ? 'file://' : 'file:///'
-  return `${prefix}${normalized}`
+  // file:// 形式：用 pathToFileURL 统一编码，正确处理空格、#、?、中文等字符，
+  // 避免手动拼接导致 URL 解析把路径截断。
+  return pathToFileURL(result.filePaths[0]).href
 })
 // 开机自启：通过系统登录项实现（Windows 注册表 Run 键 / macOS LaunchAgents / Linux autostart）。
 // 仅在保存设置变化时写入，避免每次启动都重置用户手动在系统层的改动。

@@ -69,6 +69,7 @@ func (f *Fetcher) fetchHTTP(ctx context.Context, rawURL string) ([]byte, error) 
 
 // fetchLocalFile 读取 file:// URL 指向的本地订阅文件，
 // 大小限制与 HTTP 源一致（8MB），防止超大文件拖垮解析。
+// 分块读取并在每块之间检查 ctx 取消，避免取消操作被大文件阻塞。
 func fetchLocalFile(ctx context.Context, u *url.URL) ([]byte, error) {
 	p := u.Path
 	// Windows 盘符可能落在 host 字段（file://C:/xxx）：拼回路径。
@@ -80,30 +81,31 @@ func fetchLocalFile(ctx context.Context, u *url.URL) ([]byte, error) {
 		p = p[1:]
 	}
 
-	// 支持 ctx 取消：文件读取用 goroutine + select 兜底，避免超大文件卡住取消。
-	type result struct {
-		body []byte
-		err  error
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, err
 	}
-	done := make(chan result, 1)
-	go func() {
-		f, err := os.Open(p)
-		if err != nil {
-			done <- result{err: err}
-			return
-		}
-		defer func() { _ = f.Close() }()
-		body, err := io.ReadAll(io.LimitReader(f, maxBodySize))
-		done <- result{body: body, err: err}
-	}()
+	defer func() { _ = f.Close() }()
 
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case r := <-done:
-		if r.err != nil {
-			return nil, r.err
+	body := make([]byte, 0, maxBodySize)
+	tmp := make([]byte, 64<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return r.body, nil
+		n, rerr := f.Read(tmp)
+		if n > 0 {
+			body = append(body, tmp[:n]...)
+			if len(body) > maxBodySize {
+				return nil, fmt.Errorf("subscription file exceeds %d bytes", maxBodySize)
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return nil, rerr
+		}
 	}
+	return body, nil
 }

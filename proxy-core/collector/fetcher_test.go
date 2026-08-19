@@ -110,6 +110,21 @@ func TestFetchLocalFileMissing(t *testing.T) {
 	}
 }
 
+// TestFetchLocalFileTooLarge 文件超过大小上限时返回错误而不是静默截断。
+func TestFetchLocalFileTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, make([]byte, maxBodySize+1), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	f := NewFetcher(5 * time.Second)
+	_, err := f.Fetch(context.Background(), "file://"+filepath.ToSlash(path))
+	if err == nil {
+		t.Fatal("expected error for oversized file")
+	}
+}
+
 // TestFetchLocalFileCanceled 取消的 context 应中断本地文件读取。
 func TestFetchLocalFileCanceled(t *testing.T) {
 	dir := t.TempDir()
