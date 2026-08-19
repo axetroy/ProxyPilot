@@ -8,6 +8,38 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 )
 
+func TestTargetHostPort(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+		err  bool
+	}{
+		{"https://www.apple.com/library/test/success.html", "www.apple.com:443", false},
+		{"http://example.com/204", "example.com:80", false},
+		{"http://example.com:8080/x", "example.com:8080", false},
+		{"1.2.3.4:1080", "1.2.3.4:1080", false},
+		{"", "", true},
+		{"not-a-host", "", true},
+		{"example.com", "", true},
+	}
+	for _, tc := range cases {
+		got, err := TargetHostPort(tc.raw)
+		if tc.err {
+			if err == nil {
+				t.Errorf("TargetHostPort(%q) = %q, want error", tc.raw, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("TargetHostPort(%q) error: %v", tc.raw, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("TargetHostPort(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestNewDefaults(t *testing.T) {
 	// 确保环境变量不干扰默认值测试
 	unsetEnv(t)

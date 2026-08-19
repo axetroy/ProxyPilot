@@ -159,7 +159,7 @@ func (s *Services) testAutoChain(c *gin.Context) {
 		return
 	}
 
-	target, err := hostPortFromTarget(s.Cfg.CheckTarget)
+	target, err := config.TargetHostPort(s.Cfg.CheckTarget)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, fail(400, err.Error()))
 		return

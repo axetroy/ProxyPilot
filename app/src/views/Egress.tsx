@@ -74,6 +74,17 @@ function buildChainOptions(nodes: ProxyNode[], chains: ProxyChain[]): NodeSelect
   return options
 }
 
+// formatAgo 把 ISO 时间格式化为「N 分钟/小时/天前」的相对描述。
+function formatAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return '刚刚'
+  const m = Math.floor(ms / 60_000)
+  if (m < 60) return `${m} 分钟前`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} 小时前`
+  return `${Math.floor(h / 24)} 天前`
+}
+
 // ChainManager 代理链路管理：列表（名称/节点/启停/编辑/删除）+ 新建/编辑弹窗。
 function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
   const [chains, setChains] = useState<ProxyChain[]>([])
@@ -183,6 +194,8 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
       const res = await testChain(c.id)
       if (res.code === 0 && res.data) {
         setTestResult({ chain: c, result: res.data })
+        // 手动测试结果已同步到健康状态字段，刷新列表让卡片状态即时更新。
+        refresh()
       } else {
         setTestResult({ chain: c, result: { ok: false, totalLatency: 0, hops: [] } })
       }
@@ -229,13 +242,29 @@ function ChainManager({ nodes }: { nodes: ProxyNode[] }) {
                   <div style={{ flex: 1, minWidth: 220 }}>
                     <Group gap="xs">
                       <Text fw={600} size="sm">{c.name}</Text>
-                      <Badge size="xs" variant="light" color={c.enabled ? 'green' : 'gray'}>
-                        {c.enabled ? '启用' : '停用'}
-                      </Badge>
+                      {c.autoDisabled ? (
+                        <Badge size="xs" variant="light" color="red">已自动停用</Badge>
+                      ) : (
+                        <Badge size="xs" variant="light" color={c.enabled ? 'green' : 'gray'}>
+                          {c.enabled ? '启用' : '停用'}
+                        </Badge>
+                      )}
                     </Group>
                     <Text size="xs" c="dimmed" mt={2} truncate style={{ maxWidth: 380 }}>
                       {labels}
                     </Text>
+                    {c.autoDisabled ? (
+                      <Text size="xs" c="red" mt={2} style={{ wordBreak: 'break-all' }}>
+                        连续检测失败已自动停用{c.lastError ? `：${c.lastError}` : ''}
+                      </Text>
+                    ) : c.lastCheckedAt ? (
+                      <Text size="xs" c="dimmed" mt={2} truncate style={{ maxWidth: 460 }}>
+                        最近检测 {formatAgo(c.lastCheckedAt)}
+                        {c.lastOk ? ` · 正常 ${c.lastLatency} ms` : ` · 失败${c.lastError ? `：${c.lastError}` : ''}`}
+                      </Text>
+                    ) : c.enabled ? (
+                      <Text size="xs" c="dimmed" mt={2}>等待首次健康检测</Text>
+                    ) : null}
                   </div>
                   <Group gap="xs">
                     <ActionIcon variant="subtle" loading={testing === c.id} onClick={() => runTest(c)} title="测试链路" aria-label={`测试链路 ${c.name}`}>

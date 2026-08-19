@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,6 +43,8 @@ const (
 	// 与出口策略同属「出口路由」管理，不进 Settings() 通用表单。
 	KeyChainHops      = "chain_hops"
 	KeyChainSelection = "chain_selection"
+	// 链路自动健康检测周期：对启用的链路定时探测，连续失败达阈值自动停用。
+	KeyChainCheckInterval = "chain_check_interval"
 	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
 	KeyHistoryRetention = "history_retention_days"
 	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单
@@ -86,6 +89,7 @@ func Settings() []SettingDef {
 		{Key: KeySubListen, Default: "127.0.0.1:17891", Desc: "订阅服务监听地址（如需局域网设备订阅改为 0.0.0.0:17891）", Validate: validateHostPort},
 		{Key: KeySubHost, Default: "", Desc: "对外展示的订阅 IP（监听为 0.0.0.0 时用于生成订阅 URL）", Validate: validateIPOrEmpty},
 		{Key: KeyHistoryRetention, Default: "7", Desc: "检测历史保留天数（瘦身数据库时清理更早的记录）", Validate: validatePositiveInt},
+		{Key: KeyChainCheckInterval, Default: "5m", Desc: "链路自动健康检测周期（如 5m、15m，最小 1 分钟，连续失败 2 次自动停用）", Validate: validateDuration},
 		{Key: KeyPACEnabled, Default: "1", Desc: "智能分流开关（0 关闭全部走代理 / 1 开启按规则分流）", Validate: validateBool},
 		{Key: KeyPACMode, Default: "whitelist", Desc: "智能分流模式（whitelist 默认走代理 / blacklist 默认直连）", Validate: validatePACMode},
 		{Key: KeyPACDirectURLs, Default: DefaultPACDirectURLs, Desc: "直连规则列表 URL（逗号分隔，按序尝试）", Validate: validateURLList},
@@ -254,6 +258,8 @@ type Config struct {
 	// 自动链路（auto-chain）策略参数：层数与每层选择策略。
 	ChainHops      int    // 自动链路层数（默认 2）
 	ChainSelection string // 每层选择策略（weighted / random / best，默认 weighted）
+	// 链路自动健康检测周期：对启用的链路定时探测，连续失败达阈值自动停用。
+	ChainCheckInterval time.Duration
 }
 
 func New() *Config {
@@ -278,6 +284,7 @@ func New() *Config {
 		PACRefreshInterval:   24 * time.Hour,
 		ChainHops:            2,
 		ChainSelection:       "weighted",
+		ChainCheckInterval:   5 * time.Minute,
 	}
 	c.SessionToken = generatedSessionToken()
 	c.ApplyEnv()
@@ -319,6 +326,44 @@ func LANIPs() []string {
 // ProxyAddr 返回代理网关的完整监听地址 host:port。
 func (c *Config) ProxyAddr() string {
 	return net.JoinHostPort(c.ProxyHost, strconv.Itoa(c.ProxyPort))
+}
+
+// TargetHostPort 从检测目标（URL 或裸 host:port）解析出 host:port。
+// URL 不带端口时按 scheme 推断默认端口（https=443，其他=80）。
+// 供节点检测与链路健康检测共用。
+func TargetHostPort(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("检测目标为空")
+	}
+	// 带 scheme 的 URL：按 URL 解析提取 host:port。
+	// 注意不能先裸调 net.SplitHostPort：对 "https://example.com/path" 这种
+	// 只有一个冒号的字符串，SplitHostPort 会把 https 当 host、//… 当 port 返回 nil error，
+	// 导致整个 URL 被误当成 target 传入握手。
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" {
+			return "", fmt.Errorf("无效的检测目标 %q", raw)
+		}
+		port := u.Port()
+		if port == "" {
+			if u.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		return net.JoinHostPort(u.Hostname(), port), nil
+	}
+	// 裸 host:port：校验端口为数字，避免非 host:port 形式被误判为合法目标。
+	host, port, err := net.SplitHostPort(raw)
+	if err != nil {
+		return "", fmt.Errorf("无效的检测目标 %q", raw)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return "", fmt.Errorf("无效的检测目标 %q：端口 %q 不是数字", raw, port)
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 func (c *Config) ApplyEnv() {
@@ -389,6 +434,11 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_PAC_REFRESH_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			c.PACRefreshInterval = d
+		}
+	}
+	if v := os.Getenv("PROXYPILOT_CHAIN_CHECK_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.ChainCheckInterval = d
 		}
 	}
 }
@@ -479,6 +529,15 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 			switch v {
 			case "weighted", "random", "best":
 				c.ChainSelection = v
+			}
+		}, true
+	case KeyChainCheckInterval:
+		return func(v string) {
+			if d, err := time.ParseDuration(v); err == nil {
+				if d < time.Minute {
+					d = time.Minute
+				}
+				c.ChainCheckInterval = d
 			}
 		}, true
 	default:

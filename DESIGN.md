@@ -832,6 +832,14 @@ score / latency
   链列表带 30s TTL 缓存（避免每次请求查询 SQLite），增删/启停最多延迟 30s 生效。
 - 链 CRUD 由 `/api/chain`（`GET /api/chains`、`POST /api/chain`、`PUT /api/chain/:id`、`DELETE /api/chain/:id`）管理，
   节点校验：全部存在于节点池、去重保序；链默认停用，需在界面显式启用。
+- **链路自动健康管理**（`chainhealth`）：对**已启用**的链路按周期
+  （`chain_check_interval`，默认 5m，最小 1m，settings 表持久化，热更新）做整链探测
+  （复用 `validator.TestChain` 与检测目标 `check_target`），结果持久化在 `proxy_chains` 表
+  （`last_checked_at` / `last_ok` / `last_latency` / `last_error` / `consecutive_failures` /
+  `auto_disabled`），`GET /api/chains` 随链路返回供界面展示最近检测时间/延迟/失败原因。
+  **连续失败 2 次自动停用**（避免单次网络抖动误伤），停用后标记 `auto_disabled=1`、
+  保留失败原因并写入 bus 日志；用户手动重新启用时重置自动停用标记与连续失败计数，
+  链路恢复后重新积累。手动停用不参与探测。
 - 限制：SOCKS5 UDP 中继不支持链路承载，chain 策略下 UDP 流量回退到单跳 SOCKS5 节点。
 
 ### 自动链路（auto-chain）

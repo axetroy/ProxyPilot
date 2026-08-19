@@ -187,6 +187,18 @@ export interface ProxyChain {
   enabled: boolean
   createdAt: string
   updatedAt: string
+  /** 最近一次自动健康检测时间（从未检测过为空） */
+  lastCheckedAt?: string
+  /** 最近一次健康检测是否通过 */
+  lastOk: boolean
+  /** 最近一次健康检测整链建链总耗时（毫秒），失败时为 0 */
+  lastLatency: number
+  /** 最近一次健康检测失败原因（通过时为空） */
+  lastError?: string
+  /** 连续失败次数；达到阈值自动停用后归零 */
+  consecutiveFailures: number
+  /** 是否被链路健康管理自动停用（区别于用户手动停用） */
+  autoDisabled: boolean
 }
 
 /** 链路测试中某一跳（节点）的测试结果 */

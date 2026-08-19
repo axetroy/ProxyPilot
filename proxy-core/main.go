@@ -13,6 +13,7 @@ import (
 
 	"github.com/axetroy/ProxyPilot/proxy-core/api"
 	"github.com/axetroy/ProxyPilot/proxy-core/bus"
+	"github.com/axetroy/ProxyPilot/proxy-core/chainhealth"
 	"github.com/axetroy/ProxyPilot/proxy-core/collector"
 	"github.com/axetroy/ProxyPilot/proxy-core/config"
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
@@ -108,6 +109,9 @@ func main() {
 	go func() { _ = col.Run(ctx) }()
 	go poolMgr.RefreshLoop(ctx)
 	go ruleMgr.Start(ctx)
+	// 链路自动健康管理：对启用的链路定时探测，连续失败达阈值自动停用。
+	chainHealthMgr := chainhealth.New(st, poolMgr, busc, cfg)
+	go chainHealthMgr.Start(ctx)
 
 	// API 监听端口：被占用时向后顺延（与网关端口顺延一致），实际端口通过
 	// stdout 的 PROXYPILOT_API 告诉 Electron，由前端按实际地址访问。

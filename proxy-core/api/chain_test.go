@@ -170,39 +170,14 @@ func TestTestChainEndpoint(t *testing.T) {
 	if first["error"] == "" {
 		t.Errorf("first hop error empty, want readable failure")
 	}
-}
 
-// TestHostPortFromTarget 验证检测目标解析：URL 提取 host:port，裸 host:port 原样返回，
-// 非法格式报错。
-func TestHostPortFromTarget(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want string
-		err  bool
-	}{
-		{"https://www.apple.com/library/test/success.html", "www.apple.com:443", false},
-		{"http://example.com/204", "example.com:80", false},
-		{"http://example.com:8080/x", "example.com:8080", false},
-		{"1.2.3.4:1080", "1.2.3.4:1080", false},
-		{"", "", true},
-		{"not-a-host", "", true},
-		{"example.com", "", true},
+	// 手动测试结果同步到链路的健康状态字段（last_ok=false + 失败原因）。
+	got, err := s.Store.GetChain(chain2.ID)
+	if err != nil {
+		t.Fatalf("get chain: %v", err)
 	}
-	for _, tc := range cases {
-		got, err := hostPortFromTarget(tc.raw)
-		if tc.err {
-			if err == nil {
-				t.Errorf("hostPortFromTarget(%q) = %q, want error", tc.raw, got)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("hostPortFromTarget(%q) error: %v", tc.raw, err)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("hostPortFromTarget(%q) = %q, want %q", tc.raw, got, tc.want)
-		}
+	if got == nil || got.LastOK || got.LastCheckedAt == nil || got.LastError == "" {
+		t.Fatalf("chain health after failed manual test = %+v, want lastOk=false with error", got)
 	}
 }
 

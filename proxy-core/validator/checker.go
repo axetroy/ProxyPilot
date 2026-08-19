@@ -376,6 +376,19 @@ func TestChain(nodes []*model.ProxyNode, target string, timeout time.Duration) m
 	return res
 }
 
+// ChainError 提取链路测试失败原因：最后一跳的错误信息。
+// 测试无任何跳（空链/探测中断）时返回"未知错误"。
+func ChainError(res model.ChainTestResult) string {
+	if len(res.Hops) == 0 {
+		return "未知错误"
+	}
+	last := res.Hops[len(res.Hops)-1]
+	if last.Error != "" {
+		return last.Error
+	}
+	return "链路不可用"
+}
+
 // dialNode 建立到代理节点本身的 TCP 连接（HTTPS 代理附带 TLS 握手）。
 func dialNode(node *model.ProxyNode, timeout time.Duration) (net.Conn, error) {
 	proxyAddr := net.JoinHostPort(node.Host, strconv.Itoa(node.Port))

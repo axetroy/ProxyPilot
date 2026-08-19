@@ -106,7 +106,13 @@ func (s *Store) migrate() error {
 			node_ids TEXT NOT NULL DEFAULT '[]',
 			enabled INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
+			updated_at DATETIME NOT NULL,
+			last_checked_at DATETIME,
+			last_ok INTEGER NOT NULL DEFAULT 0,
+			last_latency INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			consecutive_failures INTEGER NOT NULL DEFAULT 0,
+			auto_disabled INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_check_history_proxy ON check_history(proxy_id, id DESC)`,
 	}
@@ -117,7 +123,42 @@ func (s *Store) migrate() error {
 	}
 	// 已有数据库升级：为 proxy_nodes 补充地区列（CREATE TABLE IF NOT EXISTS 不会改动旧表）。
 	// SQLite 不支持 ADD COLUMN IF NOT EXISTS，需先查 PRAGMA table_info 判断列是否已存在。
-	return s.migrateProxyNodesColumns()
+	if err := s.migrateProxyNodesColumns(); err != nil {
+		return err
+	}
+	// 已有数据库升级：为 proxy_chains 补充健康检测列（链路自动健康管理）。
+	return s.migrateProxyChainsColumns()
+}
+
+// migrateProxyChainsColumns 为旧版 proxy_chains 表补齐健康检测列。
+func (s *Store) migrateProxyChainsColumns() error {
+	cols, err := s.tableColumns("proxy_chains")
+	if err != nil {
+		return err
+	}
+	has := func(name string) bool {
+		_, ok := cols[name]
+		return ok
+	}
+	for _, c := range []string{"last_checked_at", "last_ok", "last_latency", "last_error", "consecutive_failures", "auto_disabled"} {
+		if has(c) {
+			continue
+		}
+		// 迁移后旧行按「从未检测」处理：时间列可为空，其余列取默认值。
+		stmt := fmt.Sprintf(`ALTER TABLE proxy_chains ADD COLUMN %s `, c)
+		switch c {
+		case "last_checked_at":
+			stmt += `DATETIME`
+		case "last_error":
+			stmt += `TEXT NOT NULL DEFAULT ''`
+		default:
+			stmt += `INTEGER NOT NULL DEFAULT 0`
+		}
+		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateProxyNodesColumns 为旧版 proxy_nodes 表补齐 GeoIP 地区列。

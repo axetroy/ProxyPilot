@@ -85,6 +85,18 @@ type ProxyChain struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// LastCheckedAt 最近一次自动健康检测时间（从未检测过为空）。
+	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
+	// LastOK 最近一次健康检测是否通过。
+	LastOK bool `json:"lastOk"`
+	// LastLatency 最近一次健康检测整链建链总耗时（毫秒），失败时为 0。
+	LastLatency int64 `json:"lastLatency"`
+	// LastError 最近一次健康检测失败原因（通过时为空）。
+	LastError string `json:"lastError,omitempty"`
+	// ConsecutiveFailures 连续失败次数；达到阈值自动停用后重置为 0。
+	ConsecutiveFailures int `json:"consecutiveFailures"`
+	// AutoDisabled 是否被链路健康管理自动停用（区别于用户手动停用）。
+	AutoDisabled bool `json:"autoDisabled"`
 }
 
 // ChainHopResult 链路测试中某一跳（节点）的测试结果。
