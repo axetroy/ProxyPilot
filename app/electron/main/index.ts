@@ -217,7 +217,6 @@ function scheduleCoreRestart(): void {
 
 // maxCoreRestarts 是 core 意外退出后自动重启的最大次数。
 const maxCoreRestarts = 5
-}
 
 function stopCore(): void {
   if (core) {
