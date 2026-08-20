@@ -29,28 +29,61 @@ type ChainStore interface {
 // CheckFunc 一次链路的探测函数（生产默认 validator.TestChain，测试可注入避免真实网络）。
 type CheckFunc func(nodes []*model.ProxyNode, target string, timeout time.Duration) model.ChainTestResult
 
-// failThreshold 连续失败达到该次数自动停用链路，避免单次网络抖动误伤。
-const failThreshold = 2
+// maxChainConcurrency 链路健康探测的最大并发数，防止链路过多时瞬时并发连接风暴。
+const maxChainConcurrency = 8
 
-// Manager 链路自动健康管理。检测周期、检测目标与超时每次轮询实时读取
-// Config，支持前端热更新；检测结果持久化在 proxy_chains 表并推送 bus 日志。
+// failThreshold 连续失败达到该次数自动停用链路，避免单次网络抖动误伤。
+// 作为 Manager 字段，测试可通过 NewWithOptions 注入覆盖默认值。
 type Manager struct {
 	store ChainStore
 	nodes NodeProvider
 	bus   *bus.Bus
 	cfg   *config.Config
 	check CheckFunc
+	// failThreshold 连续失败自动停用阈值，默认 2。
+	failThreshold int
+}
+
+// Option 可选参数，用于覆盖 Manager 默认行为（目前仅 failThreshold）。
+type Option func(*Manager)
+
+// WithFailThreshold 设置连续失败自动停用阈值（≥1）。
+func WithFailThreshold(n int) Option {
+	return func(m *Manager) {
+		if n >= 1 {
+			m.failThreshold = n
+		}
+	}
+}
+
+// WithCheckFunc 注入链路探测函数（测试用，避免真实联网）。
+func WithCheckFunc(f CheckFunc) Option {
+	return func(m *Manager) {
+		if f != nil {
+			m.check = f
+		}
+	}
 }
 
 // New 创建链路健康管理器。checkFunc 缺省使用真实整链探测。
 func New(store ChainStore, nodes NodeProvider, b *bus.Bus, cfg *config.Config) *Manager {
-	return &Manager{
-		store: store,
-		nodes: nodes,
-		bus:   b,
-		cfg:   cfg,
-		check: validator.TestChain,
+	return NewWithOptions(store, nodes, b, cfg)
+}
+
+// NewWithOptions 创建链路健康管理器，可注入可选参数覆盖默认行为。
+func NewWithOptions(store ChainStore, nodes NodeProvider, b *bus.Bus, cfg *config.Config, opts ...Option) *Manager {
+	m := &Manager{
+		store:         store,
+		nodes:         nodes,
+		bus:           b,
+		cfg:           cfg,
+		check:         validator.TestChain,
+		failThreshold: 2,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // Start 启动周期检测循环，直到 ctx 取消。启动后立即执行一轮，尽早暴露失效链路。
@@ -83,7 +116,9 @@ func (m *Manager) checkAll() {
 		m.bus.Debug(fmt.Sprintf("chain health: list chains: %v", err))
 		return
 	}
-	// 链路数量少，并行探测避免多链串行时被单链超时拖慢整个周期。
+	// 链路数量少，并行探测避免多链串行时被单链超时拖慢整个周期；
+	// 用信号量限制最大并发，避免链路数量很大时瞬间发起大量连接。
+	sem := make(chan struct{}, maxChainConcurrency)
 	var wg sync.WaitGroup
 	for i := range chains {
 		if !chains[i].Enabled {
@@ -92,6 +127,8 @@ func (m *Manager) checkAll() {
 		wg.Add(1)
 		go func(c *model.ProxyChain) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			m.checkOne(c)
 		}(&chains[i])
 	}
@@ -130,7 +167,7 @@ func (m *Manager) checkOne(ch *model.ProxyChain) {
 // recordFailure 记录一次失败；连续失败达到阈值时自动停用链路。
 func (m *Manager) recordFailure(ch *model.ProxyChain, msg string) {
 	consecutive := ch.ConsecutiveFailures + 1
-	if consecutive >= failThreshold {
+	if consecutive >= m.failThreshold {
 		if err := m.store.SetChainAutoDisabled(ch.ID); err != nil {
 			m.bus.Error(fmt.Sprintf("chain health: auto disable chain %q: %v", ch.Name, err))
 			return

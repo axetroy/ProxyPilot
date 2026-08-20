@@ -464,18 +464,10 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 		fresh.FailCount++
 	}
 
-	if err := m.store.UpdateNodeCheck(
+	if err := m.store.RecordCheckResult(
 		node.ID, status, result.Latency, int64(score.Score), result.OK,
-		fresh.Country, fresh.Province, fresh.City); err != nil {
+		fresh.Country, fresh.Province, fresh.City, result.Error); err != nil {
 		m.bus.Debug(fmt.Sprintf("persist check failed: %v", err))
-	}
-	if err := m.store.AddCheckHistory(model.CheckHistory{
-		ProxyID: node.ID,
-		Success: result.OK,
-		Latency: result.Latency,
-		Error:   result.Error,
-	}); err != nil {
-		m.bus.Debug(fmt.Sprintf("history write failed: %v", err))
 	}
 
 	m.mx.Lock()

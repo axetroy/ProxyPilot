@@ -565,6 +565,46 @@ func TestAddCheckHistoryAndRecent(t *testing.T) {
 	}
 }
 
+// TestRecordCheckResult 单事务写入：节点状态与检测历史在同一次事务中提交，
+// 成功时 success_count 自增并写入一条成功历史，失败时写入失败历史。
+func TestRecordCheckResult(t *testing.T) {
+	st := newTestStore(t)
+	n := baseNode("2.2.2.2", 443, model.ProtocolHTTPS)
+	_, _ = st.SaveNode(n)
+
+	// 成功：状态 alive、success_count 自增、写入成功历史。
+	if err := st.RecordCheckResult(n.ID, model.StatusAlive, 80, 90, true, "CN", "广东", "深圳", ""); err != nil {
+		t.Fatalf("record success: %v", err)
+	}
+	got, err := st.GetNode(n.ID)
+	if err != nil {
+		t.Fatalf("get node: %v", err)
+	}
+	if got.Status != model.StatusAlive || got.SuccessCount != 1 || got.FailCount != 0 || got.Score != 90 {
+		t.Fatalf("node after success = %+v", got)
+	}
+	if got.Country != "CN" || got.Province != "广东" || got.City != "深圳" {
+		t.Fatalf("geo fields not persisted: %+v", got)
+	}
+	hist, _ := st.RecentHistory(n.ID, 1)
+	if len(hist) != 1 || !hist[0].Success || hist[0].Latency != 80 {
+		t.Fatalf("history after success = %+v", hist)
+	}
+
+	// 失败：状态 dead、fail_count 自增、写入失败历史（保留错误信息）。
+	if err := st.RecordCheckResult(n.ID, model.StatusDead, 0, 30, false, "", "", "", "connection refused"); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+	got, _ = st.GetNode(n.ID)
+	if got.Status != model.StatusDead || got.FailCount != 1 || got.SuccessCount != 1 {
+		t.Fatalf("node after failure = %+v", got)
+	}
+	hist, _ = st.RecentHistory(n.ID, 1)
+	if len(hist) != 1 || hist[0].Success || hist[0].Error != "connection refused" {
+		t.Fatalf("history after failure = %+v", hist)
+	}
+}
+
 func TestRecentHistoryLimit(t *testing.T) {
 	st := newTestStore(t)
 	n := baseNode("1.1.1.1", 80, model.ProtocolHTTP)

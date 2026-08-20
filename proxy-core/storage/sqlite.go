@@ -400,6 +400,44 @@ func (s *Store) UpdateNodeCheck(id int64, status model.ProxyStatus, latency, sco
 	return err
 }
 
+// RecordCheckResult 在一次事务内完成节点状态更新与检测历史写入，
+// 避免单节点检测产生两次独立提交（检测高频并发时减少 SQLite 写放大）。
+func (s *Store) RecordCheckResult(id int64, status model.ProxyStatus, latency, score int64, ok bool,
+	country, province, city string, historyErr string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	sqlStmt := `UPDATE proxy_nodes SET
+		status=?, latency=?, score=?,
+		country=?, province=?, city=?,
+		success_count=success_count+?, fail_count=fail_count+?,
+		last_check=?, updated_at=? WHERE id=?`
+	successInc, failInc := 0, 0
+	if ok {
+		successInc = 1
+	} else {
+		failInc = 1
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(sqlStmt,
+		string(status), latency, score, country, province, city, successInc, failInc, nullTime(now), now, id); err != nil {
+		return err
+	}
+
+	historyOK := 0
+	if ok {
+		historyOK = 1
+	}
+	if _, err := tx.Exec(`INSERT INTO check_history (proxy_id, success, latency, error, created_at)
+		VALUES (?, ?, ?, ?, ?)`, id, historyOK, latency, historyErr, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) DeleteNode(id int64) error {
 	if _, err := s.db.Exec(`DELETE FROM proxy_nodes WHERE id=?`, id); err != nil {
 		return err

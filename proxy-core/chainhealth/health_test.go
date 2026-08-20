@@ -78,7 +78,7 @@ func newTestManager(store ChainStore, nodes NodeProvider, check CheckFunc) *Mana
 	cfg.ChainCheckInterval = time.Minute
 	cfg.CheckTarget = "https://www.apple.com/library/test/success.html"
 	cfg.CheckTimeout = time.Second
-	return &Manager{store: store, nodes: nodes, bus: bus.New(), cfg: cfg, check: check}
+	return NewWithOptions(store, nodes, bus.New(), cfg, WithCheckFunc(check))
 }
 
 func chainNode(id int64) *model.ProxyNode {

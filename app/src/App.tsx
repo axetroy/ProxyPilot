@@ -47,7 +47,9 @@ function App() {
   useEffect(() => {
     refreshStatus()
     const closeLog = connect()
-    const timer = window.setInterval(() => refreshStatus(), 1000)
+    // 全局状态轮询 2s：端口、网关运行状态等实时性要求不高，
+    // 1s 过于频繁且与页面级 5s 轮询叠加造成无谓请求。
+    const timer = window.setInterval(() => refreshStatus(), 2000)
     return () => {
       closeLog()
       window.clearInterval(timer)
