@@ -161,8 +161,6 @@ async function startCore(): Promise<void> {
       scheduleCoreRestart()
     }
   })
-
-  return core
 }
 
 // coreRestartAttempts 连续意外退出的重启计数：防止 core 存在启动即崩溃的
