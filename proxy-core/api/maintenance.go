@@ -26,7 +26,7 @@ type compactResult struct {
 
 // retentionCutoff 返回基于保留天数的清理截止时间。
 func (s *Services) retentionCutoff() time.Time {
-	days := s.Cfg.HistoryRetentionDays
+	days := s.Cfg.RuntimeSnapshot().HistoryRetentionDays
 	if days <= 0 {
 		days = 7
 	}
@@ -49,7 +49,7 @@ func (s *Services) dbStatus(c *gin.Context) {
 		DBSize:        s.Store.DBFileSize(),
 		HistoryCount:  historyCount,
 		Purgeable:     purgeable,
-		RetentionDays: s.Cfg.HistoryRetentionDays,
+		RetentionDays: s.Cfg.RuntimeSnapshot().HistoryRetentionDays,
 	}))
 }
 

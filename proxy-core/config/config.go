@@ -370,6 +370,61 @@ func (c *Config) SetChainParams(hops int, selection string) {
 	c.ChainSelection = selection
 }
 
+// RuntimeFields 是运行期可热更新的通用设置字段快照（代理端口、检测参数、
+// 历史保留天数、链路健康检测周期等）。与 PAC / Sub / Chain 字段一样，
+// 统一通过锁保护，避免配置热更新与后台协程并发读取时的数据竞争。
+type RuntimeFields struct {
+	ProxyPort            int
+	CheckTarget          string
+	CheckSafetyTarget    string
+	CheckTimeout         time.Duration
+	CheckConcurrency     int
+	RefreshInterval      time.Duration
+	HistoryRetentionDays int
+	ChainCheckInterval   time.Duration
+}
+
+// RuntimeSnapshot 返回运行期热更新字段的副本（并发安全）。
+func (c *Config) RuntimeSnapshot() RuntimeFields {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return RuntimeFields{
+		ProxyPort:            c.ProxyPort,
+		CheckTarget:          c.CheckTarget,
+		CheckSafetyTarget:    c.CheckSafetyTarget,
+		CheckTimeout:         c.CheckTimeout,
+		CheckConcurrency:     c.CheckConcurrency,
+		RefreshInterval:      c.RefreshInterval,
+		HistoryRetentionDays: c.HistoryRetentionDays,
+		ChainCheckInterval:   c.ChainCheckInterval,
+	}
+}
+
+// MutateRuntime 在锁内读改写运行期热更新字段（fn 可修改快照字段，随后写回）。
+func (c *Config) MutateRuntime(fn func(f *RuntimeFields)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f := RuntimeFields{
+		ProxyPort:            c.ProxyPort,
+		CheckTarget:          c.CheckTarget,
+		CheckSafetyTarget:    c.CheckSafetyTarget,
+		CheckTimeout:         c.CheckTimeout,
+		CheckConcurrency:     c.CheckConcurrency,
+		RefreshInterval:      c.RefreshInterval,
+		HistoryRetentionDays: c.HistoryRetentionDays,
+		ChainCheckInterval:   c.ChainCheckInterval,
+	}
+	fn(&f)
+	c.ProxyPort = f.ProxyPort
+	c.CheckTarget = f.CheckTarget
+	c.CheckSafetyTarget = f.CheckSafetyTarget
+	c.CheckTimeout = f.CheckTimeout
+	c.CheckConcurrency = f.CheckConcurrency
+	c.RefreshInterval = f.RefreshInterval
+	c.HistoryRetentionDays = f.HistoryRetentionDays
+	c.ChainCheckInterval = f.ChainCheckInterval
+}
+
 func New() *Config {
 	c := &Config{
 		APIBind:              "127.0.0.1:17890",
@@ -432,9 +487,10 @@ func LANIPs() []string {
 	return ips
 }
 
-// ProxyAddr 返回代理网关的完整监听地址 host:port。
+// ProxyAddr 返回代理网关的完整监听地址 host:port（并发安全）。
 func (c *Config) ProxyAddr() string {
-	return net.JoinHostPort(c.ProxyHost, strconv.Itoa(c.ProxyPort))
+	f := c.RuntimeSnapshot()
+	return net.JoinHostPort(c.ProxyHost, strconv.Itoa(f.ProxyPort))
 }
 
 // TargetHostPort 从检测目标（URL 或裸 host:port）解析出 host:port。
@@ -571,31 +627,43 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 	switch key {
 	case KeyProxyPort:
 		return func(v string) {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
-				c.ProxyPort = n
-			}
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+					f.ProxyPort = n
+				}
+			})
 		}, true
 	case KeyCheckTarget:
-		return func(v string) { c.CheckTarget = v }, true
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) { f.CheckTarget = v })
+		}, true
 	case KeyCheckSafetyTgt:
-		return func(v string) { c.CheckSafetyTarget = v }, true
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) { f.CheckSafetyTarget = v })
+		}, true
 	case KeyCheckTimeout:
 		return func(v string) {
-			if d, err := time.ParseDuration(v); err == nil {
-				c.CheckTimeout = d
-			}
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if d, err := time.ParseDuration(v); err == nil {
+					f.CheckTimeout = d
+				}
+			})
 		}, true
 	case KeyCheckConcurr:
 		return func(v string) {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				c.CheckConcurrency = n
-			}
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					f.CheckConcurrency = n
+				}
+			})
 		}, true
 	case KeyRefreshPeriod:
 		return func(v string) {
-			if d, err := time.ParseDuration(v); err == nil {
-				c.RefreshInterval = d
-			}
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if d, err := time.ParseDuration(v); err == nil {
+					f.RefreshInterval = d
+				}
+			})
 		}, true
 	case KeySubEnabled:
 		return func(v string) {
@@ -611,49 +679,57 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 		}, true
 	case KeyHistoryRetention:
 		return func(v string) {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				c.HistoryRetentionDays = n
-			}
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					f.HistoryRetentionDays = n
+				}
+			})
 		}, true
 	case KeyPACEnabled:
-		return func(v string) { c.PACEnabled = v == "1" }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.Enabled = v == "1" }) }, true
 	case KeyPACMode:
-		return func(v string) { c.PACMode = v }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.Mode = v }) }, true
 	case KeyPACDirectURLs:
-		return func(v string) { c.PACDirectURLs = v }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.DirectURLs = v }) }, true
 	case KeyPACProxyURLs:
-		return func(v string) { c.PACProxyURLs = v }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.ProxyURLs = v }) }, true
 	case KeyPACRefresh:
 		return func(v string) {
-			if d, err := time.ParseDuration(v); err == nil {
-				c.PACRefreshInterval = d
-			}
+			c.MutatePAC(func(f *PACFields) {
+				if d, err := time.ParseDuration(v); err == nil {
+					f.RefreshInterval = d
+				}
+			})
 		}, true
 	case KeyPACCustomDirect:
-		return func(v string) { c.PACCustomDirect = v }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.CustomDirect = v }) }, true
 	case KeyPACCustomProxy:
-		return func(v string) { c.PACCustomProxy = v }, true
+		return func(v string) { c.MutatePAC(func(f *PACFields) { f.CustomProxy = v }) }, true
 	case KeyChainHops:
 		return func(v string) {
 			if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 8 {
-				c.ChainHops = n
+				_, sel := c.ChainParams()
+				c.SetChainParams(n, sel)
 			}
 		}, true
 	case KeyChainSelection:
 		return func(v string) {
 			switch v {
 			case "weighted", "random", "best":
-				c.ChainSelection = v
+				hops, _ := c.ChainParams()
+				c.SetChainParams(hops, v)
 			}
 		}, true
 	case KeyChainCheckInterval:
 		return func(v string) {
-			if d, err := time.ParseDuration(v); err == nil {
-				if d < time.Minute {
-					d = time.Minute
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if d, err := time.ParseDuration(v); err == nil {
+					if d < time.Minute {
+						d = time.Minute
+					}
+					f.ChainCheckInterval = d
 				}
-				c.ChainCheckInterval = d
-			}
+			})
 		}, true
 	default:
 		return nil, false
@@ -708,17 +784,17 @@ func (c *Config) LoadOverrides(st *storage.Store) {
 func (c *Config) SettingValue(key string) (string, bool) {
 	switch key {
 	case KeyProxyPort:
-		return strconv.Itoa(c.ProxyPort), true
+		return strconv.Itoa(c.RuntimeSnapshot().ProxyPort), true
 	case KeyCheckTarget:
-		return c.CheckTarget, true
+		return c.RuntimeSnapshot().CheckTarget, true
 	case KeyCheckSafetyTgt:
-		return c.CheckSafetyTarget, true
+		return c.RuntimeSnapshot().CheckSafetyTarget, true
 	case KeyCheckTimeout:
-		return c.CheckTimeout.String(), true
+		return c.RuntimeSnapshot().CheckTimeout.String(), true
 	case KeyCheckConcurr:
-		return strconv.Itoa(c.CheckConcurrency), true
+		return strconv.Itoa(c.RuntimeSnapshot().CheckConcurrency), true
 	case KeyRefreshPeriod:
-		return c.RefreshInterval.String(), true
+		return c.RuntimeSnapshot().RefreshInterval.String(), true
 	case KeySubEnabled:
 		if c.SubSnapshot().Enabled {
 			return "1", true
@@ -729,24 +805,26 @@ func (c *Config) SettingValue(key string) (string, bool) {
 	case KeySubHost:
 		return c.SubSnapshot().Host, true
 	case KeyHistoryRetention:
-		return strconv.Itoa(c.HistoryRetentionDays), true
+		return strconv.Itoa(c.RuntimeSnapshot().HistoryRetentionDays), true
 	case KeyPACEnabled:
-		if c.PACEnabled {
+		if c.PACSnapshot().Enabled {
 			return "1", true
 		}
 		return "0", true
 	case KeyPACMode:
-		return c.PACMode, true
+		return c.PACSnapshot().Mode, true
 	case KeyPACDirectURLs:
-		return c.PACDirectURLs, true
+		return c.PACSnapshot().DirectURLs, true
 	case KeyPACProxyURLs:
-		return c.PACProxyURLs, true
+		return c.PACSnapshot().ProxyURLs, true
 	case KeyPACRefresh:
-		return c.PACRefreshInterval.String(), true
+		return c.PACSnapshot().RefreshInterval.String(), true
 	case KeyChainHops:
-		return strconv.Itoa(c.ChainHops), true
+		hops, _ := c.ChainParams()
+		return strconv.Itoa(hops), true
 	case KeyChainSelection:
-		return c.ChainSelection, true
+		_, sel := c.ChainParams()
+		return sel, true
 	default:
 		return "", false
 	}

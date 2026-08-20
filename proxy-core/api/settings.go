@@ -19,7 +19,8 @@ type settingItem struct {
 
 // buildChecker 基于当前配置构建节点检测器（target/timeout/连接安全端点变化时热替换）。
 func (s *Services) buildChecker() *validator.Checker {
-	return validator.NewCheckerWithSafety(s.Cfg.CheckTarget, s.Cfg.CheckSafetyTarget, s.Cfg.CheckTimeout)
+	f := s.Cfg.RuntimeSnapshot()
+	return validator.NewCheckerWithSafety(f.CheckTarget, f.CheckSafetyTarget, f.CheckTimeout)
 }
 
 // listSettings 返回所有可配置项及其当前值。
@@ -76,11 +77,11 @@ func (s *Services) updateSettings(c *gin.Context) {
 			s.Pool.SetChecker(s.buildChecker())
 			s.Bus.Info("checker updated (target/timeout/safety)")
 		case config.KeyCheckConcurr:
-			n := s.Cfg.CheckConcurrency
+			n := s.Cfg.RuntimeSnapshot().CheckConcurrency
 			s.Pool.SetConcurrency(n)
 			s.Bus.Info("check concurrency updated")
 		case config.KeyRefreshPeriod:
-			s.Pool.SetRefreshInterval(s.Cfg.RefreshInterval)
+			s.Pool.SetRefreshInterval(s.Cfg.RuntimeSnapshot().RefreshInterval)
 			s.Bus.Info("refresh interval updated")
 		case config.KeyProxyPort:
 			if err := s.restartGatewayIfRunning(); err != nil {

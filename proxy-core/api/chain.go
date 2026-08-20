@@ -133,12 +133,13 @@ func (s *Services) testChain(c *gin.Context) {
 		return
 	}
 
-	target, err := config.TargetHostPort(s.Cfg.CheckTarget)
+	f := s.Cfg.RuntimeSnapshot()
+	target, err := config.TargetHostPort(f.CheckTarget)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, fail(400, err.Error()))
 		return
 	}
-	timeout := s.Cfg.CheckTimeout
+	timeout := f.CheckTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}

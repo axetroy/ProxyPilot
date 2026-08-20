@@ -122,7 +122,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "api listen: %v\n", err)
 		os.Exit(1)
 	}
-	srv := &http.Server{Handler: router}
+	// 慢速攻击防护：限制请求头读取时间与空闲 keep-alive 时间。
+	// 不设 ReadTimeout/WriteTimeout：链路检测等 handler 可能执行数秒甚至更长，
+	// 且 WebSocket 升级后的连接不受这两个字段影响，ReadHeaderTimeout 已足够防慢速攻击。
+	srv := &http.Server{
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			busc.Error(fmt.Sprintf("api server: %v", err))
@@ -132,18 +139,24 @@ func main() {
 
 	// 订阅服务：独立端口，仅暴露订阅端点。默认仅监听本机；
 	// 如需局域网设备拉取订阅，用户需在设置中显式把监听地址改为 0.0.0.0:17891。
-	var subSrv *http.Server
-	if cfg.SubEnabled {
-		subSrv = &http.Server{Addr: cfg.SubListen, Handler: api.NewSubscriptionRouter(services)}
-		go func() {
-			busc.Info(fmt.Sprintf("subscription service listening on %s", cfg.SubListen))
-			if err := subSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				busc.Error(fmt.Sprintf("subscription server: %v", err))
-			}
-		}()
-	} else {
-		busc.Info("subscription service disabled")
+	// 服务常驻监听（开关由 serveSubscription 按 SubEnabled 返回 404），
+	// 这样运行中切换订阅开关立即生效；监听地址变化仍需重启 proxy-core。
+	subSrv := &http.Server{
+		Addr:              cfg.SubSnapshot().Listen,
+		Handler:           api.NewSubscriptionRouter(services),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
+	go func() {
+		if cfg.SubSnapshot().Enabled {
+			busc.Info(fmt.Sprintf("subscription service listening on %s", cfg.SubSnapshot().Listen))
+		} else {
+			busc.Info(fmt.Sprintf("subscription service listening on %s (disabled, requests return 404)", cfg.SubSnapshot().Listen))
+		}
+		if err := subSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			busc.Error(fmt.Sprintf("subscription server: %v", err))
+		}
+	}()
 
 	// Print the session token for the Electron wrapper to pick up.
 	fmt.Printf("PROXYPILOT_TOKEN=%s\n", cfg.SessionToken)

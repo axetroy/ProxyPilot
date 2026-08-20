@@ -58,7 +58,7 @@ func New(store ChainStore, nodes NodeProvider, b *bus.Bus, cfg *config.Config) *
 func (m *Manager) Start(ctx context.Context) {
 	m.checkAll()
 	for {
-		interval := m.cfg.ChainCheckInterval
+		interval := m.cfg.RuntimeSnapshot().ChainCheckInterval
 		if interval < time.Minute {
 			interval = time.Minute
 		}
@@ -109,12 +109,13 @@ func (m *Manager) checkOne(ch *model.ProxyChain) {
 		}
 		nodes = append(nodes, n)
 	}
-	target, err := config.TargetHostPort(m.cfg.CheckTarget)
+	f := m.cfg.RuntimeSnapshot()
+	target, err := config.TargetHostPort(f.CheckTarget)
 	if err != nil {
 		m.recordFailure(ch, err.Error())
 		return
 	}
-	timeout := m.cfg.CheckTimeout
+	timeout := f.CheckTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}

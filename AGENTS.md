@@ -172,6 +172,7 @@ app/                   # Electron UI
 - **对外订阅服务**独立监听 `127.0.0.1:17891`（`subscription_listen` 可配置）：把代理池中存活的节点
   作为订阅源对外提供，订阅 URL 为 `http://<host>:<port>/sub/<token>`（支持 `?format=plain|base64`，
   默认 base64）。订阅密钥独立于 session token，可随时重置；关闭时返回 404，密钥错误返回 401。
+  服务常驻监听（保证开关热更新立即生效），开关由 `subscription_enabled` 控制；
   默认仅本机监听，对外暴露（`0.0.0.0:17891`）需用户显式配置，避免把管理 API 一起暴露；
   监听地址修改后需重启 proxy-core 生效（无热更新）。
 - 以下配置项可通过前端「设置」页或 `/api/settings` 修改，持久化在 SQLite `settings` 表：

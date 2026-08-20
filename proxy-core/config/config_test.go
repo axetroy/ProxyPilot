@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -384,4 +385,60 @@ func TestValidatePACRefresh(t *testing.T) {
 			t.Errorf("validatePACRefresh(%q) = nil, want error", bad)
 		}
 	}
+}
+
+// TestRuntimeFieldsConcurrentSafety 并发热更新与快照读取，验证 RuntimeFields
+// 相关字段无数据竞争（配合 go test -race 运行时必现数据竞争）。
+func TestRuntimeFieldsConcurrentSafety(t *testing.T) {
+	unsetEnv(t)
+	defer restoreEnv(t)
+
+	c := New()
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	// 模拟后台协程周期读取（chainhealth / API handler 读取路径）。
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					f := c.RuntimeSnapshot()
+					_ = f.CheckTarget
+					_ = f.CheckTimeout
+					_ = f.ChainCheckInterval
+					_ = f.HistoryRetentionDays
+					_ = c.ProxyAddr()
+					_, _ = c.SettingValue(KeyCheckTarget)
+					_, _ = c.SettingValue(KeyChainCheckInterval)
+				}
+			}
+		}()
+	}
+	// 模拟 /api/settings 热更新写入。
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_, _ = c.ApplySetting(KeyCheckTarget, "https://example.com")
+					_, _ = c.ApplySetting(KeyCheckTimeout, "10s")
+					_, _ = c.ApplySetting(KeyChainCheckInterval, "5m")
+					_, _ = c.ApplySetting(KeyHistoryRetention, "7")
+					c.MutateRuntime(func(f *RuntimeFields) { f.CheckTarget = "https://example.com" })
+				}
+			}
+		}()
+	}
+	// 留出并发执行窗口后停止。
+	time.Sleep(50 * time.Millisecond)
+	close(done)
+	wg.Wait()
 }
