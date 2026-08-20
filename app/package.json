@@ -1,6 +1,6 @@
 {
   "name": "proxypilot",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "ProxyPilot - desktop proxy manager",
   "main": "dist-electron/main/index.js",
   "author": "axetroy",
