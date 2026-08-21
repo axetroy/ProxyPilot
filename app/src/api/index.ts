@@ -415,39 +415,62 @@ export async function exportProxies(
   return { code: 0, msg: 'ok', data }
 }
 
-export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {
-  let ws: WebSocket | null = null
-  let closed = false
-  let retryTimer: number | null = null
-  let retryDelay = 1000
+// logStreamState 管理日志流 WebSocket 的连接状态与重连逻辑。
+// 单例模式：全局仅一个日志流连接（App.tsx 调用 connectLogStream 一次）。
+const logStreamState = {
+  ws: null as WebSocket | null,
+  closed: false,
+  retryTimer: null as number | null,
+  retryDelay: 1000,
+  onEvent: null as ((e: LogEvent) => void) | null,
+}
 
-  const connect = () => {
-    if (closed) return
-    const wsBase = API_BASE.replace(/^http/, 'ws')
-    ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`)
-    ws.onmessage = (msg) => {
-      try {
-        onEvent(JSON.parse(msg.data as string) as LogEvent)
-      } catch {
-        /* ignore malformed */
-      }
-    }
-    // 连接断开后自动重连，避免长时间运行后日志流静默中断。
-    ws.onclose = () => {
-      if (closed) return
-      retryTimer = window.setTimeout(connect, retryDelay)
-      retryDelay = Math.min(retryDelay * 2, 15000)
-    }
-    ws.onerror = () => {
-      ws?.close()
+function connectLogStreamInternal(): void {
+  if (logStreamState.closed) return
+  const wsBase = API_BASE.replace(/^http/, 'ws')
+  logStreamState.ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`)
+  logStreamState.ws.onmessage = (msg) => {
+    try {
+      logStreamState.onEvent?.(JSON.parse(msg.data as string) as LogEvent)
+    } catch {
+      /* ignore malformed */
     }
   }
+  logStreamState.ws.onclose = () => {
+    if (logStreamState.closed) return
+    logStreamState.retryTimer = window.setTimeout(connectLogStreamInternal, logStreamState.retryDelay)
+    logStreamState.retryDelay = Math.min(logStreamState.retryDelay * 2, 15000)
+  }
+  logStreamState.ws.onerror = () => {
+    logStreamState.ws?.close()
+  }
+}
 
-  connect()
+/** 连接日志流 WebSocket，返回关闭函数。 */
+export function connectLogStream(onEvent: (e: LogEvent) => void): () => void {
+  logStreamState.onEvent = onEvent
+  logStreamState.closed = false
+  connectLogStreamInternal()
 
   return () => {
-    closed = true
-    if (retryTimer !== null) window.clearTimeout(retryTimer)
-    ws?.close()
+    logStreamState.closed = true
+    if (logStreamState.retryTimer !== null) window.clearTimeout(logStreamState.retryTimer)
+    logStreamState.ws?.close()
+    logStreamState.ws = null
+    logStreamState.onEvent = null
+  }
+}
+
+/** 强制重连日志流（core 重启后调用），重置退避延迟并立即发起连接。 */
+export function reconnectLogStream(): void {
+  logStreamState.retryDelay = 1000
+  if (logStreamState.retryTimer !== null) {
+    window.clearTimeout(logStreamState.retryTimer)
+    logStreamState.retryTimer = null
+  }
+  logStreamState.ws?.close()
+  logStreamState.ws = null
+  if (!logStreamState.closed) {
+    connectLogStreamInternal()
   }
 }

@@ -1,5 +1,5 @@
 import { notifications } from '@mantine/notifications'
-import { resetApiReady } from '@/api'
+import { resetApiReady, reconnectLogStream } from '@/api'
 import { useStatusStore } from '@/stores/status'
 
 let exitingNotified = false
@@ -43,6 +43,8 @@ export function handleCoreExit(): void {
 export function handleCoreRestarted(): void {
   exitingNotified = false
   resetApiReady()
+  // 立即重连日志流，重置退避延迟，避免 core 重启后日志流长时间（最长 15s）不恢复。
+  reconnectLogStream()
   // 立即刷新状态与网关运行信息，让 UI 尽快恢复实时数据。
   void useStatusStore.getState().refresh()
   notifications.show({

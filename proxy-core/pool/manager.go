@@ -188,6 +188,71 @@ func (m *Manager) Alive() []*model.ProxyNode {
 	return out
 }
 
+// PickBest 返回评分最高（按原始分数、延迟、ID、host 排序）的存活节点。
+// 单次遍历 O(n)，不克隆也不全量排序，适合热路径（如网关选路）。
+// 返回的节点为副本，调用方可安全修改。
+func (m *Manager) PickBest() *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var best *model.ProxyNode
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		if best == nil {
+			best = n
+			continue
+		}
+		// 排序规则：分数降序 → 延迟升序 → ID 升序 → host 升序
+		if n.Score > best.Score {
+			best = n
+			continue
+		}
+		if n.Score == best.Score {
+			if n.Latency < best.Latency {
+				best = n
+				continue
+			}
+			if n.Latency == best.Latency {
+				if n.ID < best.ID {
+					best = n
+					continue
+				}
+				if n.ID == best.ID && n.Host < best.Host {
+					best = n
+				}
+			}
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	return cloneNode(best)
+}
+
+// PickRandom 随机返回一个存活节点。
+// 使用水塘采样，单次遍历 O(n)，无需构建完整切片。
+func (m *Manager) PickRandom() *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var chosen *model.ProxyNode
+	count := 0
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		count++
+		// 水塘采样：第 k 个元素以 1/k 概率被选中
+		if rand.Intn(count) == 0 {
+			chosen = n
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	return cloneNode(chosen)
+}
+
 // Get 返回指定 ID 节点的副本；不存在时返回 nil。
 // 用于选择器等热路径做 O(1) 按 ID 查找，避免整池克隆+排序。
 func (m *Manager) Get(id int64) *model.ProxyNode {
@@ -306,15 +371,6 @@ func (m *Manager) Pick() *model.ProxyNode {
 		}
 	}
 	return alive[len(alive)-1]
-}
-
-// PickRandom returns an arbitrary live node.
-func (m *Manager) PickRandom() *model.ProxyNode {
-	alive := m.Alive()
-	if len(alive) == 0 {
-		return nil
-	}
-	return alive[rand.Intn(len(alive))]
 }
 
 // CheckNow runs a full validation pass with progress broadcasting.

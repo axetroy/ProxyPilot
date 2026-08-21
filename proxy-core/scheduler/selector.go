@@ -359,11 +359,10 @@ func (s *Selector) selectRandom(host string) *model.ProxyNode {
 		}
 	}
 
-	alive := s.pool.Alive()
-	if len(alive) == 0 {
+	node := s.pool.PickRandom()
+	if node == nil {
 		return nil
 	}
-	node := alive[rand.Intn(len(alive))]
 
 	if host != "" {
 		s.mu.Lock()

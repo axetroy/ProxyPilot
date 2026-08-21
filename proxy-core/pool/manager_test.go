@@ -394,22 +394,6 @@ func TestPickEmptyPool(t *testing.T) {
 	}
 }
 
-func TestPickRandom(t *testing.T) {
-	m, _ := newTestManagerWithChecker(t, &mockChecker{})
-	for i := 0; i < 5; i++ {
-		n := newNode("1.1.1.1", 80+i, model.ProtocolHTTP)
-		n.Status = model.StatusAlive
-		m.AddNodes([]*model.ProxyNode{n})
-	}
-	picked := m.PickRandom()
-	if picked == nil {
-		t.Fatal("expected a node")
-	}
-	if picked.Status != model.StatusAlive {
-		t.Fatalf("picked node not alive: %+v", picked)
-	}
-}
-
 func TestCheckNodeSuccess(t *testing.T) {
 	m, _ := newTestManagerWithChecker(t, &mockChecker{})
 	n := newNode("1.1.1.1", 80, model.ProtocolHTTP)
@@ -655,5 +639,70 @@ func TestCheckNodeFillsGeoFromHost(t *testing.T) {
 	m2.CheckNode(ns[0])
 	if got := m2.Get(ns[0].ID); got.Country != "Reserved" {
 		t.Errorf("country = %q, want Reserved for private host", got.Country)
+	}
+}
+
+func TestPickBest(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	// 添加三个节点：分数不同
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 50, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 200, Status: model.StatusAlive},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 50, Status: model.StatusAlive}, // 最优：分数高、延迟低
+		{Host: "d.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 80, Latency: 10, Status: model.StatusDead},  // dead，应被忽略
+	})
+
+	best := m.PickBest()
+	if best == nil {
+		t.Fatal("PickBest returned nil")
+	}
+	if best.Host != "c.com" {
+		t.Errorf("PickBest = %s, want c.com (highest score, lowest latency)", best.Host)
+	}
+	if best.Status != model.StatusAlive {
+		t.Errorf("PickBest status = %v, want alive", best.Status)
+	}
+
+	// 无存活节点时返回 nil
+	m2, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m2.AddNodes([]*model.ProxyNode{
+		{Host: "x.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+	if m2.PickBest() != nil {
+		t.Error("PickBest should return nil when no alive nodes")
+	}
+}
+
+func TestPickRandom(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead}, // dead
+	})
+
+	// 多次调用，应该只返回 a.com 或 b.com（存活节点），且最终都能被选中
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		n := m.PickRandom()
+		if n == nil {
+			t.Fatal("PickRandom returned nil")
+		}
+		if n.Status != model.StatusAlive {
+			t.Errorf("PickRandom returned dead node: %s", n.Host)
+		}
+		seen[n.Host] = true
+	}
+	if len(seen) != 2 {
+		t.Errorf("PickRandom only saw hosts %v, want both a.com and b.com", seen)
+	}
+
+	// 无存活节点时返回 nil
+	m2, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m2.AddNodes([]*model.ProxyNode{
+		{Host: "x.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+	if m2.PickRandom() != nil {
+		t.Error("PickRandom should return nil when no alive nodes")
 	}
 }
