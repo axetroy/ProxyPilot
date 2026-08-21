@@ -35,6 +35,10 @@ const socksHandshakeTimeout = 10 * time.Second
 // 仅靠对端关闭无法探测半开连接，必须主动设置 deadline。
 const relayIdleTimeout = 2 * time.Minute
 
+// maxActiveConns 是网关同时处理的最大客户端连接数（CONNECT 隧道 / SOCKS5 会话）。
+// 超过上限的新连接直接关闭，防止异常或恶意客户端无界开连接耗尽 goroutine 与文件句柄。
+const maxActiveConns = 512
+
 // Gateway exposes the local proxy port and routes traffic through the node pool.
 // HTTP 与 SOCKS5 始终共用同一端口（按连接首字节自动识别协议）。
 type Gateway struct {
@@ -84,8 +88,11 @@ type Gateway struct {
 
 	// activeConns 追踪所有仍在处理的客户端连接（CONNECT 隧道 / SOCKS5 会话）。
 	// Stop 时强制关闭，避免长连接（隧道/会话）在网关停止后悬挂。
-	activeMu    sync.Mutex
-	activeConns map[net.Conn]struct{}
+	// 同时作为并发上限：超过 maxActiveConns 的新连接直接拒绝，
+	// 防止异常/恶意客户端无界开连接耗尽 goroutine 与句柄。
+	activeMu       sync.Mutex
+	activeConns    map[net.Conn]struct{}
+	maxActiveConns int
 
 	// trafficPruneAt 上次执行残留统计清理的时间：Traffic 快照限频 prune，
 	// 避免高频轮询时每次都全量扫描节点池/链路表。
@@ -112,6 +119,7 @@ func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, 
 		ipv6Cache:   make(map[string]ipv6CacheEntry),
 		traffic:     newTrafficCounter(),
 		activeConns: make(map[net.Conn]struct{}),
+		maxActiveConns: maxActiveConns,
 	}
 	g.forwardTransport = &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -255,14 +263,25 @@ func (g *Gateway) Stop() {
 	}
 }
 
-// trackConn 登记一条正在处理的客户端连接。
-func (g *Gateway) trackConn(conn net.Conn) {
+// trackConn 登记一条正在处理的客户端连接；超出并发上限时返回 false 并关闭该连接。
+// 调用方应在登记失败时立即终止本次连接处理（不再继续握手/建上游）。
+// 未绑定网关（如独立构造的 socksServer）时不限制并发，返回 true。
+func (g *Gateway) trackConn(conn net.Conn) bool {
 	if g == nil {
-		return
+		return true
 	}
 	g.activeMu.Lock()
+	if len(g.activeConns) >= g.maxActiveConns {
+		g.activeMu.Unlock()
+		_ = conn.Close()
+		if g.bus != nil {
+			g.bus.Debug(fmt.Sprintf("connection rejected: active connections exceed %d", g.maxActiveConns))
+		}
+		return false
+	}
 	g.activeConns[conn] = struct{}{}
 	g.activeMu.Unlock()
+	return true
 }
 
 // untrackConn 注销一条已结束的客户端连接。

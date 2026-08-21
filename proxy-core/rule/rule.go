@@ -7,6 +7,7 @@ package rule
 
 import (
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,6 +40,11 @@ type Manager struct {
 	bus       *bus.Bus
 	cachePath string
 
+	// httpClient 是规则列表拉取复用的 HTTP 客户端。
+	// 每次同步都新建 Client 会反复分配连接池结构并残留空闲 TCP 连接，
+	// 规则定期刷新（默认 24h）长期运行会累积；共享一个实例复用连接。
+	httpClient *http.Client
+
 	mu              sync.RWMutex
 	direct          map[string]struct{}
 	proxy           map[string]struct{}
@@ -60,8 +66,11 @@ func NewManager(cfg *config.Config, bus *bus.Bus, dbPath string) *Manager {
 		cfg:       cfg,
 		bus:       bus,
 		cachePath: filepath.Join(filepath.Dir(dbPath), "pac_rules.json"),
-		direct:    make(map[string]struct{}),
-		proxy:     make(map[string]struct{}),
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		direct: make(map[string]struct{}),
+		proxy:  make(map[string]struct{}),
 	}
 	m.ApplyConfig()
 	return m

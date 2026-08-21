@@ -21,6 +21,11 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// wsWriteTimeout 是 WebSocket 单次写入的超时：客户端慢读或网络卡顿时，
+// WriteJSON/Ping 可能无限阻塞发送 goroutine；设置写 deadline 后超时即断开，
+// 避免慢客户端拖垮事件推送通道。
+const wsWriteTimeout = 10 * time.Second
+
 // websocket streams bus events (logs, progress) to the Electron UI.
 // Token is verified via the X-Token header (middleware) or ?token= query param.
 func (s *Services) websocket(c *gin.Context) {
@@ -46,10 +51,12 @@ func (s *Services) websocket(c *gin.Context) {
 			if !ok {
 				return
 			}
+			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := conn.WriteJSON(e); err != nil {
 				return
 			}
 		case <-ticker.C:
+			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

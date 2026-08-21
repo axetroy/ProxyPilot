@@ -314,3 +314,40 @@ func TestHTTPServerStart(t *testing.T) {
 	}
 	h.Stop()
 }
+
+// 并发连接上限：超过 maxActiveConns 的新连接被拒绝并关闭，已登记的连接正常放行。
+func TestTrackConnLimit(t *testing.T) {
+	g := NewGateway(nil, nil, nil, "127.0.0.1:0")
+	g.maxActiveConns = 2
+
+	server, _ := net.Pipe()
+	defer func() { _ = server.Close() }()
+	// 第 1、2 条连接登记成功
+	if !g.trackConn(server) {
+		t.Fatal("first conn should be tracked")
+	}
+	other, _ := net.Pipe()
+	defer func() { _ = other.Close() }()
+	if !g.trackConn(other) {
+		t.Fatal("second conn should be tracked")
+	}
+
+	// 第 3 条连接超限：trackConn 返回 false 且连接已被关闭。
+	third, thirdClient := net.Pipe()
+	defer func() { _ = thirdClient.Close() }()
+	if g.trackConn(third) {
+		t.Fatal("third conn should be rejected")
+	}
+	// 关闭信号应已到达对端（连接被 trackConn 关闭）。
+	if _, err := thirdClient.Write([]byte("x")); err == nil {
+		t.Fatal("third conn should have been closed by trackConn")
+	}
+
+	// 注销一条后新连接重新放行。
+	g.untrackConn(other)
+	fourth, _ := net.Pipe()
+	defer func() { _ = fourth.Close() }()
+	if !g.trackConn(fourth) {
+		t.Fatal("fourth conn should be tracked after untrack")
+	}
+}

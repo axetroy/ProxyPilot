@@ -24,8 +24,9 @@ type cacheFile struct {
 
 // fetchFirst 按逗号分隔依次尝试各 URL，直到某次返回成功（200 + 读取完整）。
 // 全部失败时返回最后一个错误。ctx 贯穿请求以便取消/超时。
-func fetchFirst(ctx context.Context, urls string) ([]byte, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+// 复用 m.httpClient：连接复用、不反复分配连接池结构。
+func (m *Manager) fetchFirst(ctx context.Context, urls string) ([]byte, error) {
+	client := m.httpClient
 	var lastErr error
 	hadURL := false
 	for _, raw := range strings.Split(urls, ",") {
@@ -163,14 +164,14 @@ func (m *Manager) SyncNow(ctx context.Context) error {
 	}()
 
 	var errs []string
-	if body, err := fetchFirst(ctx, directURLs); err == nil {
+	if body, err := m.fetchFirst(ctx, directURLs); err == nil {
 		m.mu.Lock()
 		m.direct = toSet(ParseRules(string(body)))
 		m.mu.Unlock()
 	} else {
 		errs = append(errs, "直连规则: "+err.Error())
 	}
-	if body, err := fetchFirst(ctx, proxyURLs); err == nil {
+	if body, err := m.fetchFirst(ctx, proxyURLs); err == nil {
 		m.mu.Lock()
 		m.proxy = toSet(ParseRules(string(body)))
 		m.mu.Unlock()

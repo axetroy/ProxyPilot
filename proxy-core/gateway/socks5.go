@@ -58,7 +58,10 @@ func (s *socksServer) handleConn(conn net.Conn) {
 // handleConnWithReader 处理一条 SOCKS5 连接，握手数据从 br 读取。
 // 混合模式下由 mixedServer 传入已嗅探的 bufio.Reader，避免丢失首字节。
 func (s *socksServer) handleConnWithReader(conn net.Conn, br *bufio.Reader) {
-	s.g.trackConn(conn)
+	if !s.g.trackConn(conn) {
+		// 并发连接超限：连接已在 trackConn 中关闭，直接结束处理。
+		return
+	}
 	defer func() {
 		s.g.untrackConn(conn)
 		_ = conn.Close()

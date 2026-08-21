@@ -84,7 +84,10 @@ func (h *httpServer) tunnel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	h.g.trackConn(client)
+	if !h.g.trackConn(client) {
+		// 并发连接超限：连接已在 trackConn 中关闭，无需再处理。
+		return
+	}
 	defer func() {
 		h.g.untrackConn(client)
 		_ = client.Close()
