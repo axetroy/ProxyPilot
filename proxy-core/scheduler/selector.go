@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"math"
-	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -104,8 +103,6 @@ type Selector struct {
 
 	// strategy 当前出口策略（默认加权）。使用 atomic.Value 存放 Strategy。
 	strategy atomic.Value
-	// rrCounter 轮询策略的游标，每次取节点时自增。
-	rrCounter atomic.Uint64
 
 	// pinID 用户通过界面指定的固定出口节点 ID（0 表示未指定）。
 	// 仅策略为 fixed 时生效；节点存活时所有协议流量都固定使用该节点。
@@ -377,58 +374,17 @@ func (s *Selector) selectRandom(host string) *model.ProxyNode {
 }
 
 // selectRoundRobin 按 ID 顺序轮流返回全部存活节点。
-// 游标为原子计数器，多 goroutine 并发调用时也能保证不重复。
+// 使用 pool.PickRoundRobin() 单次遍历避免全量克隆+排序。
 func (s *Selector) selectRoundRobin() *model.ProxyNode {
-	alive := s.pool.Alive()
-	if len(alive) == 0 {
-		return nil
-	}
-	// 按 ID 稳定排序，保证轮转顺序确定（不依赖池内顺序）。
-	sort.Slice(alive, func(i, j int) bool { return alive[i].ID < alive[j].ID })
-	i := s.rrCounter.Add(1) - 1
-	return alive[i%uint64(len(alive))]
+	return s.pool.PickRoundRobin()
 }
 
 // NextStrict 返回指定协议族内的最优存活节点，且不做跨协议回退。
 // 用于必须匹配特定协议的场景：UDP 中继只能经 SOCKS5 节点承载，
 // HTTP/HTTPS 节点无法转发 UDP，因此协议族内为空时必须返回 nil 而不是回退。
+// 使用 pool.PickByProtocol() 单次遍历避免 Alive()+filterByProtocol 双重遍历。
 func (s *Selector) NextStrict(protocol model.ProxyProtocol) *model.ProxyNode {
-	alive := s.pool.Alive()
-	if len(alive) == 0 {
-		return nil
-	}
-	candidates := filterByProtocol(alive, protocol)
-	if len(candidates) == 0 {
-		return nil
-	}
-	s.sortCandidates(candidates)
-	return candidates[0]
-}
-
-// filterByProtocol 返回 nodes 中属于指定协议族的存活节点。
-// SOCKS5 只匹配 SOCKS5 节点；HTTP/HTTPS 匹配两者；protocol 为空时不筛选。
-// 仅用于 NextStrict（UDP 中继必须经 SOCKS5 节点承载）；常规 TCP 选路不区分协议。
-func filterByProtocol(nodes []*model.ProxyNode, protocol model.ProxyProtocol) []*model.ProxyNode {
-	switch protocol {
-	case model.ProtocolSOCKS5:
-		var out []*model.ProxyNode
-		for _, n := range nodes {
-			if n.Protocol == model.ProtocolSOCKS5 {
-				out = append(out, n)
-			}
-		}
-		return out
-	case model.ProtocolHTTP, model.ProtocolHTTPS:
-		var out []*model.ProxyNode
-		for _, n := range nodes {
-			if n.Protocol == model.ProtocolHTTP || n.Protocol == model.ProtocolHTTPS {
-				out = append(out, n)
-			}
-		}
-		return out
-	default:
-		return nodes
-	}
+	return s.pool.PickByProtocol(protocol)
 }
 
 // sortCandidates 对候选节点按 存活 → 有效分数 → 延迟 → ID → host 排序，
@@ -518,28 +474,32 @@ func (s *Selector) SelectChain(n int, selection Strategy) []*model.ProxyNode {
 	if n <= 0 {
 		return nil
 	}
-	alive := s.pool.Alive()
-	if len(alive) == 0 {
+	aliveCount := s.pool.CountAlive()
+	if aliveCount == 0 {
 		return nil
 	}
-	if n > len(alive) {
-		n = len(alive)
+	if n > aliveCount {
+		n = aliveCount
 	}
 	// 逐层挑选，每层排除已选节点，保证同一链路内节点不重复。
+	// StrategyBest 需应用失败惩罚，使用 selector 自身方法；
+	// Random/Weighted 使用 pool 单遍历方法避免全量克隆。
 	picked := make(map[int64]bool, n)
 	nodes := make([]*model.ProxyNode, 0, n)
 	for len(nodes) < n {
 		var node *model.ProxyNode
 		switch selection {
 		case StrategyBest:
+			// 需要完整候选列表以应用惩罚，获取一次 Alive（仅 Best 需要）
+			alive := s.pool.Alive()
 			node = s.pickBestNotIn(alive, picked)
 		case StrategyRandom:
-			node = s.pickRandomNotIn(alive, picked)
+			node = s.pool.PickRandomNotIn(picked)
 		default: // weighted（默认）：加权挑选
-			node = s.pickWeightedNotIn(alive, picked)
+			node = s.pool.PickWeightedNotIn(picked)
 		}
 		if node == nil {
-			break // 理论上不会发生（len(alive) >= n）
+			break
 		}
 		picked[node.ID] = true
 		nodes = append(nodes, node)
@@ -564,52 +524,6 @@ func (s *Selector) pickBestNotIn(candidates []*model.ProxyNode, picked map[int64
 		}
 	}
 	return best
-}
-
-// pickRandomNotIn 从 candidates 中随机选一个未被 picked 的节点。
-func (s *Selector) pickRandomNotIn(candidates []*model.ProxyNode, picked map[int64]bool) *model.ProxyNode {
-	var avail []*model.ProxyNode
-	for _, n := range candidates {
-		if !picked[n.ID] {
-			avail = append(avail, n)
-		}
-	}
-	if len(avail) == 0 {
-		return nil
-	}
-	return avail[rand.Intn(len(avail))]
-}
-
-// pickWeightedNotIn 从 candidates 中按 评分/延迟 加权随机选一个未被 picked 的节点。
-func (s *Selector) pickWeightedNotIn(candidates []*model.ProxyNode, picked map[int64]bool) *model.ProxyNode {
-	total := 0.0
-	weights := make([]float64, 0, len(candidates))
-	nodes := make([]*model.ProxyNode, 0, len(candidates))
-	for _, n := range candidates {
-		if picked[n.ID] {
-			continue
-		}
-		penalty := s.failureCount(n.ID)
-		w := effectiveScore(n, penalty)
-		if w <= 0 {
-			w = 0 // 分数无效时不参与加权（防止选择坏节点）
-		}
-		weights = append(weights, w)
-		nodes = append(nodes, n)
-		total += w
-	}
-	if total <= 0 || len(nodes) == 0 {
-		// 全部无效（无分数）：退化为随机挑选。
-		return s.pickRandomNotIn(candidates, picked)
-	}
-	r := rand.Float64() * total
-	for i, w := range weights {
-		r -= w
-		if r <= 0 {
-			return nodes[i]
-		}
-	}
-	return nodes[len(nodes)-1]
 }
 
 // failureCount 返回节点当前生效的连续失败次数（窗口外为 0）。

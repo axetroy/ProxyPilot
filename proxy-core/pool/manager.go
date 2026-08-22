@@ -27,6 +27,7 @@ type Manager struct {
 	nodes    map[int64]*model.ProxyNode
 	concur   atomic.Int32
 	checking atomic.Bool
+	rrCounter atomic.Int64 // 轮询计数器
 
 	// refreshInterval 单位纳秒，RefreshLoop 每轮读取，支持热更新
 	refreshInterval atomic.Int64
@@ -253,7 +254,203 @@ func (m *Manager) PickRandom() *model.ProxyNode {
 	return cloneNode(chosen)
 }
 
-// Get 返回指定 ID 节点的副本；不存在时返回 nil。
+// PickRoundRobin 按 ID 顺序轮询返回存活节点。
+// 使用原子计数器保证并发安全，单次遍历 O(n) 收集存活节点 ID，
+// 再按 ID 排序取模，避免全量克隆+排序。
+func (m *Manager) PickRoundRobin() *model.ProxyNode {
+	m.mx.RLock()
+	var aliveIDs []int64
+	for id, n := range m.nodes {
+		if n.Status == model.StatusAlive {
+			aliveIDs = append(aliveIDs, id)
+		}
+	}
+	m.mx.RUnlock()
+	if len(aliveIDs) == 0 {
+		return nil
+	}
+	// 按 ID 排序保证顺序确定
+	sort.Slice(aliveIDs, func(i, j int) bool { return aliveIDs[i] < aliveIDs[j] })
+	// 原子计数器选下一个（atomic.Int64 用 Load/Add 方法）
+	idx := int(m.rrCounter.Add(1)-1) % len(aliveIDs)
+	return m.Get(aliveIDs[idx])
+}
+
+// PickByProtocol 返回指定协议族中评分最高的存活节点（单次遍历）。
+// protocol: SOCKS5 只匹配 SOCKS5；HTTP/HTTPS 匹配两者；空=不筛选。
+// 供 NextStrict 等热路径使用，避免 Alive()+filterByProtocol 双重遍历。
+func (m *Manager) PickByProtocol(protocol model.ProxyProtocol) *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var best *model.ProxyNode
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		// 协议筛选
+		switch protocol {
+		case model.ProtocolSOCKS5:
+			if n.Protocol != model.ProtocolSOCKS5 {
+				continue
+			}
+		case model.ProtocolHTTP, model.ProtocolHTTPS:
+			if n.Protocol != model.ProtocolHTTP && n.Protocol != model.ProtocolHTTPS {
+				continue
+			}
+		}
+		if best == nil {
+			best = n
+			continue
+		}
+		if n.Score > best.Score {
+			best = n
+			continue
+		}
+		if n.Score == best.Score {
+			if n.Latency < best.Latency {
+				best = n
+				continue
+			}
+			if n.Latency == best.Latency {
+				if n.ID < best.ID {
+					best = n
+					continue
+				}
+				if n.ID == best.ID && n.Host < best.Host {
+					best = n
+				}
+			}
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	return cloneNode(best)
+}
+
+// PickWeightedNotIn 从存活节点中按 加权随机 选一个未在 picked 中的节点。
+// 权重 = 有效分数 / 延迟（有效分数 = 原始分数，不含 selector 的失败惩罚；
+// 失败惩罚由 selector 层在 sortCandidates 中应用，此处仅做基础加权）。
+// 单次遍历 O(n)，用于 SelectChain weighted 策略。
+func (m *Manager) PickWeightedNotIn(picked map[int64]bool) *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	type candidate struct {
+		node   *model.ProxyNode
+		weight float64
+	}
+	var candidates []candidate
+	totalWeight := 0.0
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		if picked[n.ID] {
+			continue
+		}
+		// 基础权重：分数/延迟，避免除零
+		lat := n.Latency
+		if lat <= 0 {
+			lat = 1
+		}
+		w := float64(n.Score) / float64(lat)
+		candidates = append(candidates, candidate{node: n, weight: w})
+		totalWeight += w
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	// 加权随机
+	r := rand.Float64() * totalWeight
+	for _, c := range candidates {
+		r -= c.weight
+		if r <= 0 {
+			return cloneNode(c.node)
+		}
+	}
+	// 浮点误差兜底：返回最后一个
+	return cloneNode(candidates[len(candidates)-1].node)
+}
+
+// AliveIDs 返回所有存活节点的 ID 列表（不克隆节点、不排序）。
+// 供 traffic.go 等仅需 ID 集合的场景使用，O(n) 单次遍历。
+func (m *Manager) AliveIDs() []int64 {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var ids []int64
+	for id, n := range m.nodes {
+		if n.Status == model.StatusAlive {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// PickBestNotIn 返回评分最高且未在 picked 中的存活节点（单次遍历）。
+func (m *Manager) PickBestNotIn(picked map[int64]bool) *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var best *model.ProxyNode
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		if picked[n.ID] {
+			continue
+		}
+		if best == nil {
+			best = n
+			continue
+		}
+		if n.Score > best.Score {
+			best = n
+			continue
+		}
+		if n.Score == best.Score {
+			if n.Latency < best.Latency {
+				best = n
+				continue
+			}
+			if n.Latency == best.Latency {
+				if n.ID < best.ID {
+					best = n
+					continue
+				}
+				if n.ID == best.ID && n.Host < best.Host {
+					best = n
+				}
+			}
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	return cloneNode(best)
+}
+
+// PickRandomNotIn 随机返回一个未在 picked 中的存活节点（水塘采样）。
+func (m *Manager) PickRandomNotIn(picked map[int64]bool) *model.ProxyNode {
+	m.mx.RLock()
+	defer m.mx.RUnlock()
+	var chosen *model.ProxyNode
+	count := 0
+	for _, n := range m.nodes {
+		if n.Status != model.StatusAlive {
+			continue
+		}
+		if picked[n.ID] {
+			continue
+		}
+		count++
+		if rand.Intn(count) == 0 {
+			chosen = n
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	return cloneNode(chosen)
+}
 // 用于选择器等热路径做 O(1) 按 ID 查找，避免整池克隆+排序。
 func (m *Manager) Get(id int64) *model.ProxyNode {
 	m.mx.RLock()

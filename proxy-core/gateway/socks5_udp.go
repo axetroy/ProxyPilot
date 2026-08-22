@@ -91,6 +91,13 @@ func (s *socksServer) udpBackend() (udpBackend, error) {
 // 无法承载 UDP 流量，不提供跨协议回退。
 // 会话随控制连接关闭而结束（符合 RFC 1928：客户端应保持控制连接）。
 func (s *socksServer) handleUDPAssociate(conn net.Conn, br *bufio.Reader, buf []byte) {
+	// 并发限制：超出最大 UDP ASSOCIATE 会话数直接拒绝。
+	if !s.g.trackUDP() {
+		_ = writeReply(conn, 0x01)
+		return
+	}
+	defer s.g.untrackUDP()
+
 	// ASSOCIATE 请求的 DST.ADDR/DST.PORT 通常为 0.0.0.0:0；
 	// 若客户端显式指定了 UDP 源地址，后续回包优先发往该地址。
 	reqHost, reqPort, err := readTarget(br, buf)

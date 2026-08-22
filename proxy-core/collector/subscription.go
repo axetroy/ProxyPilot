@@ -238,6 +238,7 @@ func (m *Manager) refresh(ctx context.Context, sub *model.Subscription) (*FetchR
 // syncStaleNodes 找出该订阅下已不在本次抓取结果中的旧节点并清理。
 // 节点可能被多个订阅共享：先解除与当前订阅的关联，
 // 若不再被任何订阅引用则从池中删除。
+// 使用批量 SQL 避免逐节点往返，大幅降低大订阅清理耗时。
 func (m *Manager) syncStaleNodes(subID int64, nodes []*model.ProxyNode) error {
 	existing, err := m.store.ListNodesBySubscription(subID)
 	if err != nil {
@@ -250,24 +251,29 @@ func (m *Manager) syncStaleNodes(subID int64, nodes []*model.ProxyNode) error {
 	for _, n := range nodes {
 		keep[strings.ToLower(n.Key())] = struct{}{}
 	}
-	var removed []int64
+	var staleIDs []int64
 	for _, n := range existing {
 		if _, ok := keep[strings.ToLower(n.Key())]; ok {
 			continue
 		}
-		// 解除与当前订阅的关联
-		if err := m.store.DetachNodeFromSubscription(n.ID, subID); err != nil {
-			m.bus.Debug(fmt.Sprintf("detach node %d failed: %v", n.ID, err))
-			continue
-		}
-		// 若不再被其他订阅引用，则从池中删除
-		refs, err := m.store.CountSubscriptionRefs(n.ID)
-		if err != nil {
-			m.bus.Debug(fmt.Sprintf("count refs failed: %v", err))
-			continue
-		}
-		if refs == 0 {
-			removed = append(removed, n.ID)
+		staleIDs = append(staleIDs, n.ID)
+	}
+	if len(staleIDs) == 0 {
+		return nil
+	}
+	// 批量解除关联
+	if err := m.store.BatchDetachNodesFromSubscription(staleIDs, subID); err != nil {
+		return fmt.Errorf("batch detach failed: %w", err)
+	}
+	// 批量查询剩余引用数
+	refs, err := m.store.BatchCountSubscriptionRefs(staleIDs)
+	if err != nil {
+		return fmt.Errorf("batch count refs failed: %w", err)
+	}
+	var removed []int64
+	for _, id := range staleIDs {
+		if refs[id] == 0 {
+			removed = append(removed, id)
 		}
 	}
 	if len(removed) > 0 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -378,6 +379,54 @@ func (s *Store) CountSubscriptionRefs(proxyID int64) (int, error) {
 	var c int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscription_nodes WHERE proxy_id=?`, proxyID).Scan(&c)
 	return c, err
+}
+
+// BatchDetachNodesFromSubscription 批量解除多个节点与订阅的关联。
+// 单条 SQL 完成，避免循环调用 DetachNodeFromSubscription 产生大量往返。
+func (s *Store) BatchDetachNodesFromSubscription(proxyIDs []int64, subscriptionID int64) error {
+	if len(proxyIDs) == 0 {
+		return nil
+	}
+	// 构建 IN 子句占位符
+	placeholders := make([]string, len(proxyIDs))
+	args := make([]any, len(proxyIDs)+1)
+	for i, id := range proxyIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	args[len(proxyIDs)] = subscriptionID
+	query := fmt.Sprintf(`DELETE FROM subscription_nodes WHERE proxy_id IN (%s) AND subscription_id=?`, strings.Join(placeholders, ","))
+	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+// BatchCountSubscriptionRefs 批量查询多个节点被引用的订阅数。
+// 单次查询返回 map[proxyID]count，避免循环调用 CountSubscriptionRefs。
+func (s *Store) BatchCountSubscriptionRefs(proxyIDs []int64) (map[int64]int, error) {
+	if len(proxyIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(proxyIDs))
+	args := make([]any, len(proxyIDs))
+	for i, id := range proxyIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(`SELECT proxy_id, COUNT(*) FROM subscription_nodes WHERE proxy_id IN (%s) GROUP BY proxy_id`, strings.Join(placeholders, ","))
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := make(map[int64]int, len(proxyIDs))
+	for rows.Next() {
+		var pid, cnt int64
+		if err := rows.Scan(&pid, &cnt); err != nil {
+			return nil, err
+		}
+		result[pid] = int(cnt)
+	}
+	return result, rows.Err()
 }
 
 // UpdateNodeCheck 在检测完成后更新节点状态与评分，同时回填 GeoIP 地区字段。

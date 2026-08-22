@@ -39,6 +39,10 @@ const relayIdleTimeout = 2 * time.Minute
 // 超过上限的新连接直接关闭，防止异常或恶意客户端无界开连接耗尽 goroutine 与文件句柄。
 const maxActiveConns = 512
 
+// maxUDPAssociates 是网关同时允许的最大 SOCKS5 UDP ASSOCIATE 会话数。
+// 每个会话占用 1 个本地 UDP 端口 + 多个 goroutine，无上限会被滥用耗尽资源。
+const maxUDPAssociates = 256
+
 // Gateway exposes the local proxy port and routes traffic through the node pool.
 // HTTP 与 SOCKS5 始终共用同一端口（按连接首字节自动识别协议）。
 type Gateway struct {
@@ -94,6 +98,12 @@ type Gateway struct {
 	activeConns    map[net.Conn]struct{}
 	maxActiveConns int
 
+	// udpAssociates 限制并发 SOCKS5 UDP ASSOCIATE 会话数。
+	// 每个会话占用 1 个本地 UDP 端口 + 多个 goroutine，无上限会被滥用耗尽资源。
+	udpMu          sync.Mutex
+	udpActive      int
+	maxUDPAssociates int
+
 	// trafficPruneAt 上次执行残留统计清理的时间：Traffic 快照限频 prune，
 	// 避免高频轮询时每次都全量扫描节点池/链路表。
 	trafficPruneMu sync.Mutex
@@ -111,15 +121,16 @@ const ipv6CacheTTL = 10 * time.Minute
 
 func NewGateway(pool *pool.Manager, selector *scheduler.Selector, bus *bus.Bus, addr string) *Gateway {
 	g := &Gateway{
-		pool:        pool,
-		selector:    selector,
-		bus:         bus,
-		addr:        addr,
-		limitCtx:    4,
-		ipv6Cache:   make(map[string]ipv6CacheEntry),
-		traffic:     newTrafficCounter(),
-		activeConns: make(map[net.Conn]struct{}),
-		maxActiveConns: maxActiveConns,
+		pool:              pool,
+		selector:          selector,
+		bus:               bus,
+		addr:              addr,
+		limitCtx:          4,
+		ipv6Cache:         make(map[string]ipv6CacheEntry),
+		traffic:           newTrafficCounter(),
+		activeConns:       make(map[net.Conn]struct{}),
+		maxActiveConns:    maxActiveConns,
+		maxUDPAssociates:  maxUDPAssociates,
 	}
 	g.forwardTransport = &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -302,6 +313,37 @@ func (g *Gateway) closeActiveConns() {
 	}
 	g.activeConns = make(map[net.Conn]struct{})
 	g.activeMu.Unlock()
+}
+
+// trackUDP 登记一个 UDP ASSOCIATE 会话；超出并发上限时返回 false。
+// UDP 会话不关联 net.Conn（使用 UDPConn），仅计数限流。
+func (g *Gateway) trackUDP() bool {
+	if g == nil {
+		return true
+	}
+	g.udpMu.Lock()
+	if g.udpActive >= g.maxUDPAssociates {
+		g.udpMu.Unlock()
+		if g.bus != nil {
+			g.bus.Debug(fmt.Sprintf("UDP associate rejected: active sessions exceed %d", g.maxUDPAssociates))
+		}
+		return false
+	}
+	g.udpActive++
+	g.udpMu.Unlock()
+	return true
+}
+
+// untrackUDP 注销一个 UDP ASSOCIATE 会话。
+func (g *Gateway) untrackUDP() {
+	if g == nil {
+		return
+	}
+	g.udpMu.Lock()
+	if g.udpActive > 0 {
+		g.udpActive--
+	}
+	g.udpMu.Unlock()
 }
 
 // dialDirect 智能分流命中「直连」时直接建立 TCP 连接（不经节点池）。
