@@ -706,3 +706,246 @@ func TestPickRandom(t *testing.T) {
 		t.Error("PickRandom should return nil when no alive nodes")
 	}
 }
+
+func TestPickRoundRobin(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+
+	seen := make(map[string]bool)
+	for i := 0; i < 30; i++ {
+		n := m.PickRoundRobin()
+		if n == nil {
+			t.Fatal("PickRoundRobin returned nil")
+		}
+		if n.Status != model.StatusAlive {
+			t.Errorf("PickRoundRobin returned dead node: %s", n.Host)
+		}
+		seen[n.Host] = true
+	}
+	if len(seen) != 2 {
+		t.Errorf("PickRoundRobin only saw hosts %v, want both a.com and b.com", seen)
+	}
+
+	// 无存活节点时返回 nil
+	m3, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m3.AddNodes([]*model.ProxyNode{
+		{Host: "x.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+	if m3.PickRoundRobin() != nil {
+		t.Error("PickRoundRobin should return nil when no alive nodes")
+	}
+}
+
+func TestPickByProtocol(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "socks5-a", Port: 80, Protocol: model.ProtocolSOCKS5, Score: 50, Latency: 100, Status: model.StatusAlive},
+		{Host: "socks5-b", Port: 80, Protocol: model.ProtocolSOCKS5, Score: 100, Latency: 50, Status: model.StatusAlive}, // 最优
+		{Host: "http-a", Port: 80, Protocol: model.ProtocolHTTP, Score: 80, Latency: 100, Status: model.StatusAlive},
+		{Host: "https-a", Port: 80, Protocol: model.ProtocolHTTPS, Score: 90, Latency: 200, Status: model.StatusAlive},
+		{Host: "dead-socks5", Port: 80, Protocol: model.ProtocolSOCKS5, Score: 100, Latency: 10, Status: model.StatusDead},
+	})
+
+	// SOCKS5 只匹配 SOCKS5
+	socks5Best := m.PickByProtocol(model.ProtocolSOCKS5)
+	if socks5Best == nil {
+		t.Fatal("PickByProtocol(SOCKS5) returned nil")
+	}
+	if socks5Best.Host != "socks5-b" {
+		t.Errorf("PickByProtocol(SOCKS5) = %s, want socks5-b", socks5Best.Host)
+	}
+
+	// HTTP/HTTPS 匹配两者
+	httpBest := m.PickByProtocol(model.ProtocolHTTP)
+	if httpBest == nil {
+		t.Fatal("PickByProtocol(HTTP) returned nil")
+	}
+	if httpBest.Host != "https-a" {
+		t.Errorf("PickByProtocol(HTTP) = %s, want https-a (score 90 > 80)", httpBest.Host)
+	}
+
+	httpsBest := m.PickByProtocol(model.ProtocolHTTPS)
+	if httpsBest == nil {
+		t.Fatal("PickByProtocol(HTTPS) returned nil")
+	}
+	if httpsBest.Host != "https-a" {
+		t.Errorf("PickByProtocol(HTTPS) = %s, want https-a", httpsBest.Host)
+	}
+
+	// 空协议 = 不筛选，返回全局最优
+	anyBest := m.PickByProtocol("")
+	if anyBest == nil {
+		t.Fatal("PickByProtocol('') returned nil")
+	}
+	if anyBest.Host != "socks5-b" {
+		t.Errorf("PickByProtocol('') = %s, want socks5-b (global best)", anyBest.Host)
+	}
+
+	// 无匹配协议时返回 nil
+	m2, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m2.AddNodes([]*model.ProxyNode{
+		{Host: "http-only", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+	})
+	if m2.PickByProtocol(model.ProtocolSOCKS5) != nil {
+		t.Error("PickByProtocol(SOCKS5) should return nil when only HTTP nodes exist")
+	}
+}
+
+func TestPickBestNotIn(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 90, Latency: 100, Status: model.StatusAlive},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 80, Latency: 100, Status: model.StatusAlive},
+	})
+
+	picked := map[int64]bool{}
+	// 第一次应选 a.com (score 100)
+	n1 := m.PickBestNotIn(picked)
+	if n1 == nil || n1.Host != "a.com" {
+		t.Errorf("first PickBestNotIn = %v, want a.com", n1)
+	}
+	picked[n1.ID] = true
+
+	// 第二次应选 b.com (score 90)
+	n2 := m.PickBestNotIn(picked)
+	if n2 == nil || n2.Host != "b.com" {
+		t.Errorf("second PickBestNotIn = %v, want b.com", n2)
+	}
+	picked[n2.ID] = true
+
+	// 第三次应选 c.com (score 80)
+	n3 := m.PickBestNotIn(picked)
+	if n3 == nil || n3.Host != "c.com" {
+		t.Errorf("third PickBestNotIn = %v, want c.com", n3)
+	}
+	picked[n3.ID] = true
+
+	// 第四次应返回 nil
+	if m.PickBestNotIn(picked) != nil {
+		t.Error("PickBestNotIn should return nil when all picked")
+	}
+}
+
+func TestPickRandomNotIn(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+
+	picked := map[int64]bool{}
+	seen := make(map[string]bool)
+	for i := 0; i < 50; i++ {
+		n := m.PickRandomNotIn(picked)
+		if n == nil {
+			t.Fatal("PickRandomNotIn returned nil unexpectedly")
+		}
+		if n.Status != model.StatusAlive {
+			t.Errorf("PickRandomNotIn returned dead node: %s", n.Host)
+		}
+		seen[n.Host] = true
+	}
+	if len(seen) != 2 {
+		t.Errorf("PickRandomNotIn only saw hosts %v, want both a.com and b.com", seen)
+	}
+
+	// 选过 a.com 后再排除
+	var aID int64
+	for _, n := range m.List() {
+		if n.Host == "a.com" {
+			aID = n.ID
+			break
+		}
+	}
+	if aID == 0 {
+		t.Fatal("a.com not found")
+	}
+	picked[aID] = true
+	seen = make(map[string]bool)
+	for i := 0; i < 20; i++ {
+		n := m.PickRandomNotIn(picked)
+		if n == nil {
+			t.Fatal("PickRandomNotIn returned nil after picking one")
+		}
+		seen[n.Host] = true
+	}
+	if len(seen) != 1 || !seen["b.com"] {
+		t.Errorf("PickRandomNotIn after picking a.com = %v, want only b.com", seen)
+	}
+}
+
+func TestPickWeightedNotIn(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "high-score", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "low-latency", Port: 80, Protocol: model.ProtocolHTTP, Score: 50, Latency: 10, Status: model.StatusAlive}, // weight = 5
+		{Host: "dead", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+	})
+
+	picked := map[int64]bool{}
+	// 高分低延迟权重高，应更容易被选中
+	counts := make(map[string]int)
+	for i := 0; i < 200; i++ {
+		n := m.PickWeightedNotIn(picked)
+		if n == nil {
+			t.Fatal("PickWeightedNotIn returned nil")
+		}
+		counts[n.Host]++
+	}
+	if counts["high-score"] == 0 || counts["low-latency"] == 0 {
+		t.Errorf("PickWeightedNotIn missed nodes: %v", counts)
+	}
+	if counts["dead"] > 0 {
+		t.Error("PickWeightedNotIn should not pick dead nodes")
+	}
+
+	// 全部 picked 后返回 nil
+	var hsID, llID int64
+	for _, n := range m.List() {
+		switch n.Host {
+		case "high-score":
+			hsID = n.ID
+		case "low-latency":
+			llID = n.ID
+		}
+	}
+	picked[hsID] = true
+	picked[llID] = true
+	if m.PickWeightedNotIn(picked) != nil {
+		t.Error("PickWeightedNotIn should return nil when all picked")
+	}
+}
+
+func TestAliveIDs(t *testing.T) {
+	m, _ := newTestManagerWithChecker(t, &mockChecker{})
+	m.AddNodes([]*model.ProxyNode{
+		{Host: "a.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+		{Host: "b.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusDead},
+		{Host: "c.com", Port: 80, Protocol: model.ProtocolHTTP, Score: 100, Latency: 100, Status: model.StatusAlive},
+	})
+
+	ids := m.AliveIDs()
+	if len(ids) != 2 {
+		t.Errorf("AliveIDs = %d, want 2", len(ids))
+	}
+	found := make(map[int64]bool)
+	for _, id := range ids {
+		found[id] = true
+	}
+	// 验证只有存活节点的 ID
+	all := m.List()
+	for _, n := range all {
+		if n.Status == model.StatusAlive && !found[n.ID] {
+			t.Errorf("AliveIDs missing alive node %d", n.ID)
+		}
+		if n.Status != model.StatusAlive && found[n.ID] {
+			t.Errorf("AliveIDs should not include dead node %d", n.ID)
+		}
+	}
+}

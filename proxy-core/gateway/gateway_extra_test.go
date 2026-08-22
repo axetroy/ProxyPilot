@@ -351,3 +351,41 @@ func TestTrackConnLimit(t *testing.T) {
 		t.Fatal("fourth conn should be tracked after untrack")
 	}
 }
+
+// UDP ASSOCIATE 会话并发上限：超出 maxUDPAssociates 的新会话被拒绝，已登记的正常放行。
+func TestTrackUDPLimit(t *testing.T) {
+	g := NewGateway(nil, nil, nil, "127.0.0.1:0")
+	g.maxUDPAssociates = 2
+
+	// 第 1、2 个会话登记成功
+	if !g.trackUDP() {
+		t.Fatal("first UDP session should be tracked")
+	}
+	if !g.trackUDP() {
+		t.Fatal("second UDP session should be tracked")
+	}
+
+	// 第 3 个会话超限：trackUDP 返回 false
+	if g.trackUDP() {
+		t.Fatal("third UDP session should be rejected")
+	}
+
+	// 注销一个后新会话重新放行
+	g.untrackUDP()
+	if !g.trackUDP() {
+		t.Fatal("fourth UDP session should be tracked after untrack")
+	}
+
+	// nil gateway 不限制
+	if !trackUDP(nil) {
+		t.Error("nil gateway should not limit UDP")
+	}
+}
+
+// 访问 trackUDP 的辅助函数（因未导出，仅测试用）
+func trackUDP(g *Gateway) bool {
+	if g == nil {
+		return true
+	}
+	return g.trackUDP()
+}

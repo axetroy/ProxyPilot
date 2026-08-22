@@ -947,6 +947,109 @@ func TestCountSubscriptionRefs(t *testing.T) {
 	}
 }
 
+func TestBatchDetachNodesFromSubscription(t *testing.T) {
+	st := newTestStore(t)
+	sub := saveSub(t, st, "sub")
+	n1 := saveNode(t, st, "1.1.1.1", 8080)
+	n2 := saveNode(t, st, "2.2.2.2", 8080)
+	n3 := saveNode(t, st, "3.3.3.3", 8080)
+
+	if err := st.AttachNodeToSubscription(n1.ID, sub.ID); err != nil {
+		t.Fatalf("attach n1: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n2.ID, sub.ID); err != nil {
+		t.Fatalf("attach n2: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n3.ID, sub.ID); err != nil {
+		t.Fatalf("attach n3: %v", err)
+	}
+
+	// 批量解除 n1 和 n2
+	if err := st.BatchDetachNodesFromSubscription([]int64{n1.ID, n2.ID}, sub.ID); err != nil {
+		t.Fatalf("BatchDetachNodesFromSubscription: %v", err)
+	}
+
+	// 验证 n1、n2 已解除，n3 仍关联
+	for _, id := range []int64{n1.ID, n2.ID} {
+		nodes, _ := st.ListNodesBySubscription(sub.ID)
+		found := false
+		for _, n := range nodes {
+			if n.ID == id {
+				found = true
+				break
+			}
+		}
+		if found {
+			t.Errorf("node %d should be detached", id)
+		}
+	}
+
+	// n3 应仍在
+	nodes, _ := st.ListNodesBySubscription(sub.ID)
+	found := false
+	for _, n := range nodes {
+		if n.ID == n3.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("node %d should still be attached", n3.ID)
+	}
+
+	// 空切片不报错
+	if err := st.BatchDetachNodesFromSubscription([]int64{}, sub.ID); err != nil {
+		t.Errorf("empty slice should not error: %v", err)
+	}
+}
+
+func TestBatchCountSubscriptionRefs(t *testing.T) {
+	st := newTestStore(t)
+	subA := saveSub(t, st, "sub-a")
+	subB := saveSub(t, st, "sub-b")
+	n1 := saveNode(t, st, "1.1.1.1", 8080)
+	n2 := saveNode(t, st, "2.2.2.2", 8080)
+	n3 := saveNode(t, st, "3.3.3.3", 8080)
+
+	// n1 关联 A、B；n2 关联 A；n3 无关联
+	if err := st.AttachNodeToSubscription(n1.ID, subA.ID); err != nil {
+		t.Fatalf("attach n1-A: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n1.ID, subB.ID); err != nil {
+		t.Fatalf("attach n1-B: %v", err)
+	}
+	if err := st.AttachNodeToSubscription(n2.ID, subA.ID); err != nil {
+		t.Fatalf("attach n2-A: %v", err)
+	}
+
+	refs, err := st.BatchCountSubscriptionRefs([]int64{n1.ID, n2.ID, n3.ID, 99999})
+	if err != nil {
+		t.Fatalf("BatchCountSubscriptionRefs: %v", err)
+	}
+	if refs[n1.ID] != 2 {
+		t.Errorf("n1 refs = %d, want 2", refs[n1.ID])
+	}
+	if refs[n2.ID] != 1 {
+		t.Errorf("n2 refs = %d, want 1", refs[n2.ID])
+	}
+	if refs[n3.ID] != 0 {
+		t.Errorf("n3 refs = %d, want 0", refs[n3.ID])
+	}
+	// 不存在的 ID 不在结果中（或为 0）
+	if refs[99999] != 0 {
+		t.Errorf("unknown ID refs = %d, want 0", refs[99999])
+	}
+
+	// 空切片返回空 map
+	empty, err := st.BatchCountSubscriptionRefs([]int64{})
+	if err != nil {
+		t.Fatalf("empty slice error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("empty slice should return empty map, got %v", empty)
+	}
+}
+
 // 旧版数据库（没有地区列）在 storage.New 打开时应自动 ALTER 补列，且能正常读写地区字段。
 func TestMigrateAddsGeoColumnsToLegacyDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
