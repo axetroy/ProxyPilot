@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap } from 'lucide-react'
-import { Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
+import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap, ChevronDown } from 'lucide-react'
+import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
 import { useSubsStore } from '@/stores/subscriptions'
@@ -124,6 +124,7 @@ export default function ProxyPool() {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const ROW_HEIGHT = 56
   const OVERSCAN = 8
+  const MAX_VISIBLE_TABS = 6 // 超过此数量的订阅折叠到「更多」下拉菜单
   // 列表视口实际高度（由 flex 布局决定，ResizeObserver 实时测量），用于虚拟滚动计算
   const [viewportHeight, setViewportHeight] = useState(0)
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
@@ -332,12 +333,56 @@ export default function ProxyPool() {
               <Tabs.Tab value="all">
                 全部 <Badge size="xs" variant="light" ml={4}>{nodes.length}</Badge>
               </Tabs.Tab>
-              {subs.map((s) => (
+              {subs.slice(0, MAX_VISIBLE_TABS).map((s) => (
                 <Tabs.Tab key={s.id} value={String(s.id)}>
-                  {s.name} <Badge size="xs" variant="light" ml={4}>{subCounts.counts.get(String(s.id)) ?? 0}</Badge>
+                  <Tooltip label={s.name} position="bottom">
+                    <Text size="sm" style={{ maxWidth: 160, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'middle' }}>
+                      {s.name}
+                    </Text>
+                  </Tooltip>
+                  <Badge size="xs" variant="light" ml={4}>{subCounts.counts.get(String(s.id)) ?? 0}</Badge>
                 </Tabs.Tab>
               ))}
-              {subCounts.none > 0 && (
+              {subs.length > MAX_VISIBLE_TABS && (
+                <Menu shadow="md" width={220}>
+                  <Menu.Target>
+                    <ActionIcon
+                      variant="subtle"
+                      size="sm"
+                      radius="xs"
+                      style={{ minWidth: 48, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      aria-label="更多订阅"
+                    >
+                      <ChevronDown size={14} />
+                      <Badge size="xs" variant="light">{subs.length - MAX_VISIBLE_TABS + 1}</Badge>
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {subs.slice(MAX_VISIBLE_TABS).map((s) => (
+                      <Menu.Item
+                        key={s.id}
+                        onClick={() => setSubFilter(String(s.id))}
+                        leftSection={<Tooltip label={s.name} position="left"><Text size="sm" style={{ maxWidth: 180, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', display: 'block' }}>{s.name}</Text></Tooltip>}
+                        rightSection={<Badge size="xs" variant="light">{subCounts.counts.get(String(s.id)) ?? 0}</Badge>}
+                      >
+                        {s.name}
+                      </Menu.Item>
+                    ))}
+                    {subCounts.none > 0 && (
+                      <Menu.Divider />
+                    )}
+                    {subCounts.none > 0 && (
+                      <Menu.Item
+                        onClick={() => setSubFilter('none')}
+                        rightSection={<Badge size="xs" variant="light">{subCounts.none}</Badge>}
+                      >
+                        未分组
+                      </Menu.Item>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+              {subCounts.none > 0 && subs.length <= MAX_VISIBLE_TABS && (
                 <Tabs.Tab value="none">
                   未分组 <Badge size="xs" variant="light" ml={4}>{subCounts.none}</Badge>
                 </Tabs.Tab>
