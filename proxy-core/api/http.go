@@ -58,10 +58,17 @@ func buildSystemStatus(running bool, total, alive int, currentNode *model.ProxyN
 }
 
 // NewRouter builds the Gin engine with token protection.
-func NewRouter(s *Services) *gin.Engine {
+// metricsHandler: 可选的 /metrics 处理器（无需 token，供 Prometheus 抓取），为 nil 时不注册。
+func NewRouter(s *Services, metricsHandler ...http.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware())
+
+	// /metrics 端点无需 token 鉴权，供 Prometheus 直接抓取
+	if len(metricsHandler) > 0 && metricsHandler[0] != nil {
+		r.GET("/metrics", gin.WrapH(metricsHandler[0]))
+	}
+
 	r.Use(tokenAuth(s.Cfg.SessionToken))
 	r.Use(eventBusMiddleware(s.Bus))
 

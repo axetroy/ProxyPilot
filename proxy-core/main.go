@@ -23,7 +23,6 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 	"github.com/axetroy/ProxyPilot/proxy-core/validator"
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -96,12 +95,7 @@ func main() {
 		Bus:       busc,
 		Rule:      ruleMgr,
 	}
-	router := api.NewRouter(services)
-
-	// 注册 /metrics 端点（无需 token 鉴权，供 Prometheus 抓取）
-	router.GET("/metrics", func(c *gin.Context) {
-		metrics.Handler().ServeHTTP(c.Writer, c.Request)
-	})
+	router := api.NewRouter(services, metrics.Handler())
 
 	// 启动时自动启动网关，让客户端打开即可直接使用代理，
 	// 无需手动点击"启动网关"。若端口被占用等导致失败，仅记录错误，
