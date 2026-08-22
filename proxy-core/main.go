@@ -17,11 +17,13 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/collector"
 	"github.com/axetroy/ProxyPilot/proxy-core/config"
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
+	"github.com/axetroy/ProxyPilot/proxy-core/metrics"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
 	"github.com/axetroy/ProxyPilot/proxy-core/rule"
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
 	"github.com/axetroy/ProxyPilot/proxy-core/storage"
 	"github.com/axetroy/ProxyPilot/proxy-core/validator"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -96,6 +98,11 @@ func main() {
 	}
 	router := api.NewRouter(services)
 
+	// 注册 /metrics 端点（无需 token 鉴权，供 Prometheus 抓取）
+	router.GET("/metrics", func(c *gin.Context) {
+		metrics.Handler().ServeHTTP(c.Writer, c.Request)
+	})
+
 	// 启动时自动启动网关，让客户端打开即可直接使用代理，
 	// 无需手动点击"启动网关"。若端口被占用等导致失败，仅记录错误，
 	// 不阻塞 API 服务，用户仍可在界面中手动重试。
@@ -113,6 +120,10 @@ func main() {
 	// 链路自动健康管理：对启用的链路定时探测，连续失败达阈值自动停用。
 	chainHealthMgr := chainhealth.New(st, poolMgr, busc, cfg)
 	go chainHealthMgr.Start(ctx)
+
+	// Prometheus 指标收集与 /metrics 端点
+	metricsMgr := metrics.NewManager(poolMgr, sel, gw, chainHealthMgr, st, col, busc)
+	metricsMgr.Start()
 
 	// API 监听端口：被占用时向后顺延（与网关端口顺延一致），实际端口通过
 	// stdout 的 PROXYPILOT_API 告诉 Electron，由前端按实际地址访问。
