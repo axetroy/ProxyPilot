@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { NavLink, Navigate, Routes, Route, useLocation } from 'react-router-dom'
-import { GitBranch, LayoutDashboard, Network, Rss, ScrollText, Settings, Workflow } from 'lucide-react'
+import { GitBranch, LayoutDashboard, Network, Rss, ScrollText, Settings, Workflow, BarChart2 } from 'lucide-react'
 import { Badge, Box, Group, Stack, Text, ThemeIcon } from '@mantine/core'
 import { useStatusStore } from '@/stores/status'
 import { useLogStore } from '@/stores/logs'
@@ -15,6 +15,7 @@ import Subscriptions from '@/views/Subscriptions'
 import Logs from '@/views/Logs'
 import Rules from '@/views/Rules'
 import SettingsView from '@/views/Settings'
+import Metrics from '@/views/Metrics'
 
 const navItems = [
   { to: '/dashboard', label: '仪表盘', icon: LayoutDashboard },
@@ -22,6 +23,7 @@ const navItems = [
   { to: '/egress', label: '出口路由', icon: GitBranch },
   { to: '/rules', label: '智能分流', icon: Workflow },
   { to: '/subscriptions', label: '订阅', icon: Rss },
+  { to: '/metrics', label: '指标', icon: BarChart2 },
   { to: '/logs', label: '日志', icon: ScrollText },
   { to: '/settings', label: '设置', icon: Settings },
 ]
@@ -32,6 +34,7 @@ const titles: Record<string, string> = {
   '/egress': '出口路由',
   '/rules': '智能分流',
   '/subscriptions': '订阅',
+  '/metrics': '指标',
   '/logs': '日志',
   '/settings': '设置',
 }
@@ -128,6 +131,7 @@ function App() {
             <Route path="/egress" element={<Egress />} />
             <Route path="/rules" element={<Rules />} />
             <Route path="/subscriptions" element={<Subscriptions />} />
+            <Route path="/metrics" element={<Metrics />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/settings" element={<SettingsView />} />
           </Routes>
