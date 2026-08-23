@@ -376,6 +376,7 @@ func (s *Services) pinProxy(c *gin.Context) {
 	}
 	s.Selector.Pin(payload.ID)
 	// 指定固定出口后策略同步为 fixed（由 Pin 内部处理），此处持久化便于重启恢复。
+	// 固定出口以用户指定为准：无论节点当前是否存活都立即生效，不做额外检测。
 	if err := s.Store.SetSetting(config.KeyPinnedProxy, strconv.FormatInt(payload.ID, 10)); err != nil {
 		s.Bus.Error("persist pinned proxy failed: " + err.Error())
 	}

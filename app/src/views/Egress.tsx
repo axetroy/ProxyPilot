@@ -786,7 +786,7 @@ export default function Egress() {
 
             {pinnedNode?.status !== 'alive' && (
               <Alert color="yellow">
-                固定节点当前不可用，流量已临时回退智能加权策略；存活后自动恢复固定出口
+                固定节点当前不可用，但按你的指定仍会直接使用该节点（连接可能失败）；如需避免请改回其它策略
               </Alert>
             )}
 

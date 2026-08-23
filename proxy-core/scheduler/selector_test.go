@@ -449,28 +449,28 @@ func TestUnpinRestoresAutoSelect(t *testing.T) {
 	}
 }
 
-func TestPinIgnoresDeadNode(t *testing.T) {
+func TestPinUsesNodeEvenWhenDead(t *testing.T) {
 	checker := &mockChecker{fail: map[int64]bool{}}
 	m := newTestPoolWithChecker(t, checker)
 	a := addAlive(t, m, "a", 90, 100)
-	b := addAlive(t, m, "b", 50, 100)
+	_ = addAlive(t, m, "b", 50, 100)
 
 	s := NewSelector(m)
 	s.Pin(a.ID)
 
-	// a 检测失败变 dead 后，指定节点不可用，应回退自动选择 b
+	// 固定节点即便检测失败变 dead，仍以用户指定为准直接使用 a（不回退加权策略）。
 	checker.fail[a.ID] = true
 	m.CheckNode(a)
 
-	if got := s.Next(); got == nil || got.ID != b.ID {
-		t.Fatalf("expected fallback to b when pinned node dead, got %+v", got)
+	if got := s.Next(); got == nil || got.ID != a.ID {
+		t.Fatalf("expected pinned node a (even dead) to be used, got %+v", got)
 	}
 	// 指定仍然保留（等节点复活后恢复），不自动清除
 	if s.PinnedID() != a.ID {
 		t.Errorf("PinnedID() = %d, want still %d", s.PinnedID(), a.ID)
 	}
 
-	// 节点复活后恢复固定使用 a
+	// 节点复活后依然固定使用 a
 	delete(checker.fail, a.ID)
 	m.CheckNode(a)
 	if got := s.Next(); got == nil || got.ID != a.ID {
@@ -658,6 +658,41 @@ func TestStrategyInvalidIgnored(t *testing.T) {
 	s.SetStrategy("nonsense")
 	if s.Strategy() != StrategyWeighted {
 		t.Fatalf("invalid strategy changed selector to %s", s.Strategy())
+	}
+}
+
+// TestSetStrategyClearsSticky 切换策略应清空域名粘性绑定，
+// 使新策略立即对全部分流目标生效（否则旧策略遗留的粘性绑定会让"切换策略未立即生效"）。
+func TestSetStrategyClearsSticky(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	addAlive(t, m, "b", 50, 100)
+
+	s := NewSelector(m)
+	// 预置一个粘性绑定（模拟之前策略下已绑定的域名）
+	s.mu.Lock()
+	s.sticky["example.com"] = stickyEntry{nodeID: a.ID, expiresAt: time.Now().Add(stickyWindow)}
+	s.mu.Unlock()
+	if len(s.sticky) != 1 {
+		t.Fatalf("precondition: sticky bindings = %d, want 1", len(s.sticky))
+	}
+
+	// 切换到 best：粘性绑定应被清空
+	s.SetStrategy(StrategyBest)
+	if len(s.sticky) != 0 {
+		t.Fatalf("SetStrategy should clear sticky bindings, got %d", len(s.sticky))
+	}
+
+	// 再次切换策略仍应保持清空（不残留）
+	s.SetStrategy(StrategyRoundRobin)
+	if len(s.sticky) != 0 {
+		t.Fatalf("sticky should remain cleared after another switch, got %d", len(s.sticky))
+	}
+
+	// 相同策略不触发清空逻辑（保持幂等，且无副作用）
+	s.SetStrategy(StrategyRoundRobin)
+	if len(s.sticky) != 0 {
+		t.Fatalf("idempotent strategy switch should keep empty sticky, got %d", len(s.sticky))
 	}
 }
 
@@ -945,5 +980,36 @@ func TestSelectChainWeightedAllZeroScore(t *testing.T) {
 	}
 	if nodes[0].ID == nodes[1].ID {
 		t.Fatalf("duplicate node in degraded weighted chain: %d", nodes[0].ID)
+	}
+}
+
+// TestPinUsesNewNodeImmediately 固定尚未存活（刚导入为 new）的节点时，
+// 固定出口以用户指定为准、立即生效，不进行健康检测、也不回退到其它节点。
+func TestPinUsesNewNodeImmediately(t *testing.T) {
+	m := newTestPool(t)
+	a := addAlive(t, m, "a", 90, 100)
+	// 节点 b 处于 new 状态（尚未检测）；主机用可解析的 IP 避免 resolveGeo 触发真实 DNS 阻塞测试。
+	b := &model.ProxyNode{
+		Host:     "127.0.0.1",
+		Port:     8080,
+		Protocol: model.ProtocolHTTP,
+		Score:    50,
+		Latency:  100,
+		Status:   model.StatusNew,
+	}
+	if m.AddNodes([]*model.ProxyNode{b}) != 1 {
+		t.Fatalf("failed to add node b")
+	}
+	_ = a
+
+	s := NewSelector(m)
+	s.Pin(b.ID)
+
+	// 尚未存活的固定节点也应立即作为固定出口生效（不触发检测、不回退）。
+	if got := s.Next(); got == nil || got.ID != b.ID {
+		t.Fatalf("expected pinned new node b to be used immediately, got %+v", got)
+	}
+	if p := s.Pinned(); p == nil || p.ID != b.ID {
+		t.Fatalf("Pinned() = %+v, want node b", p)
 	}
 }

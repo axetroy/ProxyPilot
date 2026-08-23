@@ -133,14 +133,29 @@ func (s *Selector) Strategy() Strategy {
 }
 
 // SetStrategy 设置出口策略。非法策略会被忽略（保持当前策略）。
+// 策略真正变化时会清空域名粘性绑定，使新策略立即对全部分流目标生效，
+// 避免旧策略遗留的 10 分钟粘性绑定继续把流量送往原节点（表现为"切换策略未立即生效"）。
 func (s *Selector) SetStrategy(str Strategy) {
-	if ValidStrategy(string(str)) {
-		s.strategy.Store(str)
+	if !ValidStrategy(string(str)) {
+		return
 	}
+	if s.Strategy() == str {
+		return
+	}
+	s.strategy.Store(str)
+	s.clearSticky()
+}
+
+// clearSticky 清空全部域名粘性绑定（切换策略时调用），使新策略立即对全部分流目标生效。
+func (s *Selector) clearSticky() {
+	s.mu.Lock()
+	s.sticky = make(map[string]stickyEntry)
+	s.mu.Unlock()
 }
 
 // Pin 指定固定出口节点（id > 0），并自动把策略切换为 fixed。
-// 之后节点存活时所有协议流量固定走该节点；id <= 0 等价于 Unpin。
+// 之后无论该节点当前是否存活，所有协议流量都固定走它（以用户指定为准）；
+// 节点不可达时由连接层报错，不再静默回退到其它节点，保证"指定节点立即生效"。
 func (s *Selector) Pin(id int64) {
 	s.pinID.Store(id)
 	if id > 0 {
@@ -253,8 +268,9 @@ func (s *Selector) NextForHost(protocol model.ProxyProtocol, host string) *model
 	return node
 }
 
-// pinnedNode 返回固定策略下应使用的节点：指定了固定节点且存活时返回该节点。
-// 指定节点已被删除或淘汰时自动取消固定（dead 节点不取消，等其恢复后自动生效）。
+// pinnedNode 返回固定策略下应使用的节点：只要指定的节点仍在池中（未被删除）即返回，
+// 不论其当前存活状态——固定出口以用户指定为准，节点不可达时由连接层报错，
+// 不静默回退到其它节点，从而保证"指定节点立即生效"。
 func (s *Selector) pinnedNode() *model.ProxyNode {
 	id := s.pinID.Load()
 	if id <= 0 {
@@ -262,14 +278,11 @@ func (s *Selector) pinnedNode() *model.ProxyNode {
 	}
 	n := s.pool.Get(id)
 	if n == nil {
-		// 指定的节点已被删除或被自动淘汰，固定出口不再有意义，自动取消。
+		// 指定的节点已被删除或淘汰，固定出口不再有意义，自动取消。
 		s.pinID.Store(0)
 		return nil
 	}
-	if n.Status == model.StatusAlive {
-		return n
-	}
-	return nil
+	return n
 }
 
 // pruneSticky 清理粘性绑定：先清过期条目；仍超上限时一次性找出最接近过期的

@@ -253,7 +253,7 @@ export default function Dashboard() {
                     </Text>
                   </Text>
                   {egress.pinnedNode.status !== 'alive' && (
-                    <Text size="sm" c="red">当前不可用，流量临时回退智能加权</Text>
+                    <Text size="sm" c="red">当前不可用（按你的指定仍直接使用该节点，连接可能失败）</Text>
                   )}
                 </Group>
               )}
