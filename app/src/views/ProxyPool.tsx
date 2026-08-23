@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap, ChevronDown } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Gauge, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap, ChevronDown } from 'lucide-react'
 import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
@@ -8,7 +8,7 @@ import { getPlatform, getProxyHistory, type Platform } from '@/api'
 import { buildCommands, proxyUrl, type ProxyCommandSet } from '@/lib/proxy-commands'
 import type { CheckHistory, ProxyNode, Subscription } from '@/types'
 
-type NoticeData = { type: 'success' | 'error'; text: string }
+type NoticeData = { type: 'success' | 'error' | 'info'; text: string }
 
 function statusColor(n: ProxyNode) {
   switch (n.status) {
@@ -62,6 +62,20 @@ function formatTime(v?: string): string {
   return d.toLocaleString()
 }
 
+// formatSpeed 将字节/秒速率格式化为易读速率；0 表示尚未测速。
+function formatSpeed(bps?: number): string {
+  const b = bps ?? 0
+  if (b <= 0) return '未测速'
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']
+  let v = b
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
 // SafetyBadge 在列表中标注节点的连接安全：优先使用真实探测明细分数，
 // 回退到评分明细中的连接安全分数（启发式）；非存活或未评分节点显示占位符。
 // 检出 HTTPS 中间人的节点单独以红色「中间人」徽章标注（安全分已清零）。
@@ -97,6 +111,10 @@ export default function ProxyPool() {
   const loading = usePoolStore((s) => s.loading)
   const checkingIds = usePoolStore((s) => s.checkingIds)
   const checkingAll = usePoolStore((s) => s.checkingAll)
+  const speedTestIds = usePoolStore((s) => s.speedTestIds)
+  const speedTest = usePoolStore((s) => s.speedTest)
+  const speedTestMany = usePoolStore((s) => s.speedTestMany)
+  const speedTestAllAlive = usePoolStore((s) => s.speedTestAllAlive)
   const notice = usePoolStore((s) => s.notice)
   const refresh = usePoolStore((s) => s.refresh)
   const remove = usePoolStore((s) => s.remove)
@@ -141,9 +159,9 @@ export default function ProxyPool() {
   const [viewportHeight, setViewportHeight] = useState(0)
   // 列表 grid 列模板：表头与每行必须使用同一模板，避免拉大窗口时列错位。
   // 固定列 + 主机列最小宽度 + gap + padding 之和为内容最小宽度（确保操作列无需横向滚动即可见）：
-  // 40+60+180+72+70+64+68+62+92 = 708，+8×8 gap +24 padding = 788。
-  const GRID_COLUMNS = '40px 60px minmax(180px, 2.2fr) 72px 70px 64px 68px 62px 92px'
-  const GRID_MIN_WIDTH = 788
+  // 40+60+140+72+70+64+68+62+160 = 736，+8×8 gap +24 padding = 824。
+  const GRID_COLUMNS = '40px 60px minmax(140px, 1.5fr) 72px 70px 64px 68px 62px 160px'
+  const GRID_MIN_WIDTH = 824
 
   useEffect(() => {
     // 首次加载显示 loading，之后定时自动刷新使用静默模式，不触发按钮 loading
@@ -219,6 +237,14 @@ export default function ProxyPool() {
   // 检出中间人的节点数，用于「仅显示不安全节点」按钮的计数徽章
   const mitmCount = useMemo(() => nodes.reduce((c, n) => c + (n.mitmDetected ? 1 : 0), 0), [nodes])
 
+  // 存活节点集合，用于「测速全部存活」按钮（并发有界，后端执行）
+  const aliveIds = useMemo(() => nodes.filter((n) => n.status === 'alive').map((n) => n.id), [nodes])
+  const aliveCount = aliveIds.length
+  const speedTestingAllAlive = useMemo(
+    () => aliveIds.some((id) => speedTestIds.includes(id)),
+    [aliveIds, speedTestIds],
+  )
+
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
@@ -228,8 +254,9 @@ export default function ProxyPool() {
       } else if (subFilter !== 'all' && n.subscriptionId !== Number(subFilter)) {
         return false
       }
-      if (!normalizedFilter) return true
+      // 中间人过滤优先于搜索词：无论是否输入搜索，都先按「仅显示不安全节点」裁剪。
       if (onlyMitm && !n.mitmDetected) return false
+      if (!normalizedFilter) return true
       const subName = subscriptionName(subs, n.subscriptionId) ?? ''
       return `${n.host}:${n.port} ${n.protocol} ${geoText(n)} ${subName}`.toLowerCase().includes(normalizedFilter)
     })
@@ -250,9 +277,16 @@ export default function ProxyPool() {
     window.setTimeout(() => refresh(), 1500)
   }
 
+  async function onSpeedAllAlive() {
+    if (aliveCount === 0) return
+    await speedTestAllAlive()
+    window.setTimeout(() => refresh(), 2000)
+  }
+
   // 当前过滤结果是否全部被选中（用于表头全选/半选状态）
   const allVisibleSelected = list.length > 0 && list.every((n) => selected.has(n.id))
   const checkingSelected = [...selected].some((id) => checkingIds.includes(id))
+  const speedTestingSelected = [...selected].some((id) => speedTestIds.includes(id))
 
   function toggleAll() {
     setSelected((prev) => {
@@ -282,6 +316,14 @@ export default function ProxyPool() {
   async function onCheckSelected() {
     await checkMany([...selected])
     window.setTimeout(() => refresh(), 1500)
+  }
+
+  async function onSpeed(n: ProxyNode) {
+    await speedTest(n.id)
+  }
+
+  async function onSpeedSelected() {
+    await speedTestMany([...selected])
   }
 
   async function onDeleteSelected() {
@@ -324,6 +366,17 @@ export default function ProxyPool() {
           <Group gap="sm" wrap="wrap">
             <Button leftSection={<Zap size={16} />} variant="light" loading={checkingAll} onClick={onCheckAll}>
               {checkingAll ? '检测中...' : '检测新节点'}
+            </Button>
+            <Button
+              leftSection={<Gauge size={16} />}
+              variant="light"
+              color="teal"
+              loading={speedTestingAllAlive}
+              disabled={aliveCount === 0}
+              onClick={onSpeedAllAlive}
+              title={aliveCount === 0 ? '当前没有存活节点' : '对所有存活节点做带宽测速'}
+            >
+              {speedTestingAllAlive ? '测速中...' : `测速全部存活${aliveCount > 0 ? `（${aliveCount}）` : ''}`}
             </Button>
             <Button
               leftSection={<RefreshCw size={16} className={loading ? 'pp-spin' : undefined} />}
@@ -429,7 +482,7 @@ export default function ProxyPool() {
       </Card>
 
       {(notice || localNotice) && (
-        <Alert color={notice?.type === 'success' || localNotice?.type === 'success' ? 'green' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }} style={{ flexShrink: 0 }}>
+        <Alert color={(notice ?? localNotice)?.type === 'success' ? 'green' : (notice ?? localNotice)?.type === 'info' ? 'blue' : 'red'} withCloseButton onClose={() => { clearNotice(); setLocalNotice(null) }} style={{ flexShrink: 0 }}>
           {(notice || localNotice)?.text}
         </Alert>
       )}
@@ -462,6 +515,9 @@ export default function ProxyPool() {
               <Text size="sm" c="dimmed">已选 <Text span fw={700}>{selected.size}</Text> 个节点</Text>
               <Button size="xs" variant="light" leftSection={<Zap size={14} />} disabled={checkingSelected} onClick={onCheckSelected}>
                 {checkingSelected ? '检测中...' : '批量检测'}
+              </Button>
+              <Button size="xs" variant="light" leftSection={<Gauge size={14} />} loading={speedTestingSelected} disabled={speedTestingSelected} onClick={onSpeedSelected}>
+                批量测速
               </Button>
               <Button size="xs" color="red" variant="light" leftSection={<Trash2 size={14} />} onClick={() => setBatchDeleteOpen(true)}>
                 批量删除
@@ -575,7 +631,12 @@ export default function ProxyPool() {
                       </Text>
                     </Box>
                     <Badge variant="light">{n.protocol}</Badge>
-                    <Text size="sm">{n.latency}ms</Text>
+                    <Box>
+                      <Text size="sm">{n.latency > 0 ? `${n.latency}ms` : '—'}</Text>
+                      <Text size="xs" c={n.speed > 0 ? undefined : 'dimmed'} style={{ lineHeight: 1.2 }}>
+                        {speedTestIds.includes(n.id) ? '测速中…' : formatSpeed(n.speed)}
+                      </Text>
+                    </Box>
                     <Tooltip label="查看评分明细">
                       <Button size="xs" variant="subtle" px={4} onClick={() => setScoreTarget(n)}>
                         {n.score}
@@ -583,14 +644,17 @@ export default function ProxyPool() {
                     </Tooltip>
                     <SafetyBadge node={n} />
                     <Badge color={statusColor(n)}>{statusLabel(n)}</Badge>
-                    <Group justify="flex-end" gap={6} wrap="nowrap">
-<Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={6}>
-                    检测
-                  </Button>
+                    <Group justify="flex-end" gap={4} wrap="nowrap">
+                      <Button size="xs" variant="light" leftSection={<Gauge size={14} />} loading={speedTestIds.includes(n.id)} onClick={() => onSpeed(n)} px={4}>
+                        测速
+                      </Button>
+  <Button size="xs" variant="light" loading={checkingIds.includes(n.id)} onClick={() => onCheck(n)} px={4}>
+                      检测
+                    </Button>
                       <Menu position="bottom-end" shadow="md" width={200} withinPortal>
                         <Menu.Target>
                           <Tooltip label="更多操作">
-                            <Button size="xs" variant="subtle" px={6} aria-label="更多操作">
+                            <Button size="xs" variant="subtle" px={4} aria-label="更多操作">
                               <MoreHorizontal size={16} />
                             </Button>
                           </Tooltip>
@@ -607,6 +671,9 @@ export default function ProxyPool() {
                           )}
                           <Menu.Item leftSection={<Info size={14} />} onClick={() => setDetailTarget(n)}>
                             查看详情
+                          </Menu.Item>
+                          <Menu.Item leftSection={<Gauge size={14} />} disabled={speedTestIds.includes(n.id)} onClick={() => onSpeed(n)}>
+                            测速
                           </Menu.Item>
                           <Menu.Item leftSection={<Copy size={14} />} onClick={() => { setCopyTarget(n); setActiveTab(defaultTab) }}>
                             复制代理命令
@@ -850,7 +917,7 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
             <Badge variant="light">{node.protocol}</Badge>
             <Text size="sm" fw={600}>{`${node.host}:${node.port}`}</Text>
           </Group>
-          <Text size="xs" c="dimmed" mt={4}>地区：{geo || '—'} · 延迟 {node.latency}ms</Text>
+          <Text size="xs" c="dimmed" mt={4}>地区：{geo || '—'} · 延迟 {node.latency > 0 ? `${node.latency}ms` : '—'} · 传输速率 {formatSpeed(node.speed)}{node.speedAt ? `（${formatTime(node.speedAt)}）` : ''}</Text>
         </div>
         <div style={{ textAlign: 'right' }}>
           <Text size="xl" fw={700} c={node.score >= 60 ? 'green' : node.score >= 40 ? 'yellow' : 'red'}>{node.score}</Text>
@@ -899,6 +966,10 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
             ) : (
               <Text size="sm" c="dimmed">未检出</Text>
             )}
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">传输速率</Text>
+            <Text size="sm">{formatSpeed(node.speed)}{node.speedAt ? ` · ${formatTime(node.speedAt)}` : ' · 尚未测速'}</Text>
           </Grid.Col>
           <Grid.Col span={6}>
             <Text size="xs" c="dimmed">创建时间</Text>

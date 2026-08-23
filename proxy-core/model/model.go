@@ -51,6 +51,11 @@ type ProxyNode struct {
 	MitmDetected bool `json:"mitmDetected"`
 	// MitmAt 最近一次中间人检测时间（无论结果，用于检测节流与前端展示）。
 	MitmAt time.Time `json:"mitmAt"`
+	// Speed 经节点下载测得的带宽速率（字节/秒），未测速时为 0。
+	// 由带宽测速探测填充（手动「测速」或开启自动测速时的健康检查偶发探测）。
+	Speed int64 `json:"speed"`
+	// SpeedAt 最近一次带宽测速时间（用于测速节流与前端展示）。
+	SpeedAt time.Time `json:"speedAt"`
 }
 
 // ScoreBreakdown 表示一次评分的各维度明细，与 CalculateScore 的权重口径一致。
@@ -58,11 +63,11 @@ type ScoreBreakdown struct {
 	SuccessRate     int     `json:"successRate"`     // 成功率（0-100）
 	LatencyScore    int     `json:"latencyScore"`    // 延迟分（0-100）
 	Stability       int     `json:"stability"`       // 稳定性（0-100）
-	Safety       int     `json:"safety"`       // 连接安全（0-100）
+	Safety          int     `json:"safety"`          // 连接安全（0-100）
 	WeightSuccess   float64 `json:"weightSuccess"`   // 成功率权重
 	WeightLatency   float64 `json:"weightLatency"`   // 延迟权重
 	WeightStability float64 `json:"weightStability"` // 稳定性权重
-	WeightSafety float64 `json:"weightSafety"` // 连接安全权重
+	WeightSafety    float64 `json:"weightSafety"`    // 连接安全权重
 	Score           int     `json:"score"`           // 加权总分（0-100）
 }
 

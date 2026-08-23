@@ -100,6 +100,9 @@ func NewRouter(s *Services, metricsHandler ...http.Handler) *gin.Engine {
 	r.DELETE("/api/chain/:id", s.deleteChain)
 	r.POST("/api/chain/:id/test", s.testChain)
 	r.POST("/api/proxy/check", s.checkProxies)
+	r.POST("/api/proxy/:id/speed", s.speedTestProxy)
+	r.POST("/api/proxy/speed", s.speedTestProxies)
+	r.POST("/api/proxy/speed/all", s.speedTestAllAlive)
 	r.POST("/api/gateway/start", s.startGateway)
 	r.POST("/api/gateway/stop", s.stopGateway)
 	r.GET("/api/pac-config", s.getPACConfig)
@@ -217,24 +220,24 @@ func (s *Services) refreshSubscription(c *gin.Context) {
 }
 
 func (s *Services) updateSubscription(c *gin.Context) {
-    id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-    if err != nil {
-        c.JSON(http.StatusBadRequest, fail(400, "bad id"))
-        return
-    }
-    var payload subscriptionPayload
-    if err := c.ShouldBindJSON(&payload); err != nil {
-        c.JSON(http.StatusBadRequest, fail(400, err.Error()))
-        return
-    }
-    if payload.Interval <= 0 {
-        payload.Interval = 3600
-    }
-    if err := s.Collector.UpdateSubscription(id, payload.Name, payload.URL, payload.Interval, payload.Enabled); err != nil {
-        c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
-        return
-    }
-    c.JSON(http.StatusOK, ok(nil))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, "bad id"))
+		return
+	}
+	var payload subscriptionPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, err.Error()))
+		return
+	}
+	if payload.Interval <= 0 {
+		payload.Interval = 3600
+	}
+	if err := s.Collector.UpdateSubscription(id, payload.Name, payload.URL, payload.Interval, payload.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, ok(nil))
 }
 
 func (s *Services) listProxies(c *gin.Context) {
@@ -445,4 +448,61 @@ func (s *Services) startGateway(c *gin.Context) {
 func (s *Services) stopGateway(c *gin.Context) {
 	s.Gateway.Stop()
 	c.JSON(http.StatusOK, ok(nil))
+}
+
+// speedTestProxy 对单个节点立即做带宽测速（不经自动节流），返回测得的字节/秒速率。
+func (s *Services) speedTestProxy(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, fail(400, "invalid node id"))
+		return
+	}
+	speed, err := s.Pool.SpeedTestNode(id)
+	if err != nil {
+		c.JSON(http.StatusOK, ok(gin.H{"id": id, "speed": 0, "ok": false, "error": err.Error()}))
+		return
+	}
+	c.JSON(http.StatusOK, ok(gin.H{"id": id, "speed": speed, "ok": true}))
+}
+
+// speedTestProxies 批量对指定节点做带宽测速（异步、有界并发，避免阻塞请求）。
+func (s *Services) speedTestProxies(c *gin.Context) {
+	var payload checkPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, fail(400, err.Error()))
+		return
+	}
+	if len(payload.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, fail(400, "ids 为空"))
+		return
+	}
+	ids := payload.IDs
+	go func() {
+		done, failed := s.Pool.SpeedTestNodes(ids)
+		s.Bus.Info(fmt.Sprintf("批量测速完成：%d 成功 / %d 失败（共 %d）", done, failed, len(ids)))
+	}()
+	c.JSON(http.StatusAccepted, ok(gin.H{"started": true, "total": len(ids)}))
+}
+
+// speedTestAllAlive 对全部存活节点做带宽测速（异步、有界并发）。
+// 常用于「评分前先摸清各节点真实带宽」。仅对 status=alive 的节点发起，失败节点不计。
+func (s *Services) speedTestAllAlive(c *gin.Context) {
+	nodes, err := s.Store.ListNodesByStatus(model.StatusAlive)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, fail(1, err.Error()))
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, ok(gin.H{"started": false, "total": 0, "message": "没有存活节点"}))
+		return
+	}
+	go func() {
+		done, failed := s.Pool.SpeedTestNodes(ids)
+		s.Bus.Info(fmt.Sprintf("全部存活节点测速完成：%d 成功 / %d 失败（共 %d）", done, failed, len(ids)))
+	}()
+	c.JSON(http.StatusAccepted, ok(gin.H{"started": true, "total": len(ids)}))
 }

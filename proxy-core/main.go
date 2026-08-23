@@ -62,6 +62,23 @@ func main() {
 	poolMgr.SetExcludeFilter(func(n *model.ProxyNode) bool {
 		return cfg.RuntimeSnapshot().AvoidMITM && n.MitmDetected
 	})
+	// 带宽测速：经节点代理对测速目标做带宽采样以计算速率（字节/秒）。
+	// 测速目标留空时复用检测目标 check_target（节点已证明可达），从根本上避免
+	// 「测速目标经代理不可达导致一直超时」；闭包内读取当前配置，配置变更即时生效。
+	poolMgr.SetSpeedTester(func(n *model.ProxyNode) (int64, error) {
+		rt := cfg.RuntimeSnapshot()
+		target := rt.SpeedTestTarget
+		// 留空，或仍是历史默认（Cloudflare 测速端点，常因网络环境不可达而超时）
+		// 时，复用检测目标 check_target（节点已证明可达），避免测速一直超时。
+		if target == "" ||
+			target == "https://speed.cloudflare.com/__down?bytes=5242880" ||
+			target == "https://speed.cloudflare.com/__down?bytes=3145728" {
+			target = rt.CheckTarget
+		}
+		return validator.SpeedTest(n, target, rt.SpeedTestTimeout, 3<<20)
+	})
+	poolMgr.SetSpeedTestEnabled(cfg.RuntimeSnapshot().SpeedTestOnCheck)
+	poolMgr.SetSpeedTestInterval(cfg.RuntimeSnapshot().SpeedTestInterval)
 
 	col := collector.NewManager(st, busc, poolMgr, cfg.CheckTimeout)
 	sel := scheduler.NewSelector(poolMgr)

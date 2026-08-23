@@ -229,6 +229,30 @@ export async function checkProxies(ids: number[]): Promise<ApiResponse<{ started
   return data
 }
 
+/** 对单个节点立即做带宽测速，返回测得的字节/秒速率。 */
+export async function speedTestProxy(id: number): Promise<ApiResponse<{ id: number; speed: number; ok: boolean; error?: string }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ id: number; speed: number; ok: boolean; error?: string }>>(
+    `/api/proxy/${id}/speed`,
+    {},
+  )
+  return data
+}
+
+/** 批量对指定节点做带宽测速（异步发起）。 */
+export async function speedTestProxies(ids: number[]): Promise<ApiResponse<{ started: boolean }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ started: boolean }>>('/api/proxy/speed', { ids })
+  return data
+}
+
+/** 对全部存活节点做带宽测速（异步发起）。 */
+export async function speedTestAllAlive(): Promise<ApiResponse<{ started: boolean; total: number; message?: string }>> {
+  await ensureApiReady()
+  const { data } = await http.post<ApiResponse<{ started: boolean; total: number; message?: string }>>('/api/proxy/speed/all')
+  return data
+}
+
 export async function listSubscriptions(): Promise<ApiResponse<Subscription[]>> {
   await ensureApiReady()
   const { data } = await http.get<ApiResponse<Subscription[]>>('/api/subscriptions')

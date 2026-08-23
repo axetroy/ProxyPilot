@@ -22,12 +22,12 @@ var Version = "0.1.18"
 // 持久化配置项的 key。
 // APIBind / DBPath / SessionToken 属于启动期固定配置，不支持通过界面修改。
 const (
-	KeyProxyPort         = "proxy_port"
-	KeyCheckTarget       = "check_target"
+	KeyProxyPort      = "proxy_port"
+	KeyCheckTarget    = "check_target"
 	KeyCheckSafetyTgt = "check_safety_target"
-	KeyCheckTimeout      = "check_timeout"
-	KeyCheckConcurr      = "check_concurrency"
-	KeyRefreshPeriod     = "refresh_interval"
+	KeyCheckTimeout   = "check_timeout"
+	KeyCheckConcurr   = "check_concurrency"
+	KeyRefreshPeriod  = "refresh_interval"
 	// 订阅导出相关：enabled/listen 通过前端设置，token 由专门的订阅接口管理
 	// （不进 Settings() 列表，避免与通用设置表单混在一起）。
 	KeySubEnabled = "subscription_enabled"
@@ -50,6 +50,14 @@ const (
 	KeyHistoryRetention = "history_retention_days"
 	// 安全路由：规避检测到 HTTPS 中间人（伪造证书）的节点。
 	KeyAvoidMITM = "avoid_mitm"
+	// 带宽测速：测速目标 URL（默认 Cloudflare 专用测速端点，按 bytes= 决定下载量）。
+	KeySpeedTestTarget = "speed_test_target"
+	// 带宽测速：是否在健康检查中偶发自动测速（0 关闭 / 1 开启，默认关闭以省流量）。
+	KeySpeedTestOnCheck = "speed_test_on_check"
+	// 带宽测速：自动测速节流间隔（如 6h、12h，默认 6h）。
+	KeySpeedTestInterval = "speed_test_interval"
+	// 带宽测速：单次测速总超时（下载阶段，默认 20s，独立于检测超时以免慢节点误报失败）。
+	KeySpeedTestTimeout = "speed_test_timeout"
 	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单
 	// （避免与通用设置表单混在一起），由 /api/pac-config 专门接口管理。
 	KeyPACEnabled    = "pac_enabled"
@@ -93,6 +101,10 @@ func Settings() []SettingDef {
 		{Key: KeySubHost, Default: "", Desc: "对外展示的订阅 IP（监听为 0.0.0.0 时用于生成订阅 URL）", Validate: validateIPOrEmpty},
 		{Key: KeyHistoryRetention, Default: "7", Desc: "检测历史保留天数（瘦身数据库时清理更早的记录）", Validate: validatePositiveInt},
 		{Key: KeyAvoidMITM, Default: "1", Desc: "安全路由：规避检出 HTTPS 中间人的节点（0 关闭 / 1 开启，全部被规避时自动回退以保证可用）", Validate: validateBool},
+		{Key: KeySpeedTestTarget, Default: "", Desc: "带宽测速目标 URL（留空则复用检测目标 check_target，确保节点可达；填一个可返回较大内容的地址可获得更准确速率）", Validate: validateURLOrEmpty},
+		{Key: KeySpeedTestOnCheck, Default: "0", Desc: "健康检查自动测速（0 关闭 / 1 开启，开启后按节流间隔偶发测速，手动「测速」不受此限）", Validate: validateBool},
+		{Key: KeySpeedTestInterval, Default: "6h", Desc: "自动测速节流间隔（如 6h、12h）", Validate: validateDuration},
+		{Key: KeySpeedTestTimeout, Default: "20s", Desc: "单次带宽测速总超时（独立于检测超时，如 15s、30s）", Validate: validateDuration},
 		{Key: KeyChainCheckInterval, Default: "5m", Desc: "链路自动健康检测周期（如 5m、15m，最小 1 分钟，连续失败 2 次自动停用）", Validate: validateDuration},
 		{Key: KeyPACEnabled, Default: "1", Desc: "智能分流开关（0 关闭全部走代理 / 1 开启按规则分流）", Validate: validateBool},
 		{Key: KeyPACMode, Default: "whitelist", Desc: "智能分流模式（whitelist 默认走代理 / blacklist 默认直连）", Validate: validatePACMode},
@@ -118,6 +130,14 @@ func validateURL(v string) error {
 		return fmt.Errorf("必须是 http:// 或 https:// 开头的 URL")
 	}
 	return nil
+}
+
+// validateURLOrEmpty 允许为空：空表示复用检测目标 check_target（保证节点可达，避免测速目标不可达导致超时）。
+func validateURLOrEmpty(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	return validateURL(v)
 }
 
 func validateDuration(v string) error {
@@ -245,23 +265,27 @@ type Config struct {
 	ProxyPort            int    // 代理监听端口（HTTP 与 SOCKS5 共用）
 	SessionToken         string
 	CheckTarget          string
-	CheckSafetyTarget string
+	CheckSafetyTarget    string
 	CheckTimeout         time.Duration
 	CheckConcurrency     int
 	RefreshInterval      time.Duration
-	SubEnabled           bool   // 订阅导出开关
-	SubListen            string // 订阅服务监听地址（默认仅本机，对外暴露需显式配置 0.0.0.0）
-	SubHost              string // 对外展示的订阅 IP（监听为通配地址时用于生成订阅 URL，空则回退 127.0.0.1）
-	SubToken             string // 订阅密钥（独立于 SessionToken，随订阅 URL 提供给外部客户端）
-	HistoryRetentionDays int    // 检测历史保留天数（瘦身数据库时清理更早的记录）
-	AvoidMITM            bool   // 安全路由：规避检出 HTTPS 中间人的节点（全部被规避时回退不过滤）
-	PACEnabled           bool   // 智能分流开关（关闭时全部流量走代理）
-	PACMode              string // 智能分流模式（whitelist / blacklist）
-	PACDirectURLs        string // 直连规则列表 URL（逗号分隔，按序尝试）
-	PACProxyURLs         string // 代理规则列表 URL（逗号分隔，按序尝试）
+	SubEnabled           bool          // 订阅导出开关
+	SubListen            string        // 订阅服务监听地址（默认仅本机，对外暴露需显式配置 0.0.0.0）
+	SubHost              string        // 对外展示的订阅 IP（监听为通配地址时用于生成订阅 URL，空则回退 127.0.0.1）
+	SubToken             string        // 订阅密钥（独立于 SessionToken，随订阅 URL 提供给外部客户端）
+	HistoryRetentionDays int           // 检测历史保留天数（瘦身数据库时清理更早的记录）
+	AvoidMITM            bool          // 安全路由：规避检出 HTTPS 中间人的节点（全部被规避时回退不过滤）
+	SpeedTestTarget      string        // 带宽测速目标 URL（经节点代理下载前若干字节以计算速率）
+	SpeedTestOnCheck     bool          // 健康检查中是否偶发自动测速（默认关闭以省流量，手动测速不受限）
+	SpeedTestInterval    time.Duration // 自动测速节流间隔
+	SpeedTestTimeout     time.Duration // 单次测速总超时（独立于检测超时）
+	PACEnabled           bool          // 智能分流开关（关闭时全部流量走代理）
+	PACMode              string        // 智能分流模式（whitelist / blacklist）
+	PACDirectURLs        string        // 直连规则列表 URL（逗号分隔，按序尝试）
+	PACProxyURLs         string        // 代理规则列表 URL（逗号分隔，按序尝试）
 	PACRefreshInterval   time.Duration // 分流规则自动刷新周期
-	PACCustomDirect      string // 手动直连名单（域名，逗号分隔，匹配优先级最高）
-	PACCustomProxy       string // 手动代理名单（域名，逗号分隔，匹配优先级最高）
+	PACCustomDirect      string        // 手动直连名单（域名，逗号分隔，匹配优先级最高）
+	PACCustomProxy       string        // 手动代理名单（域名，逗号分隔，匹配优先级最高）
 	// 自动链路（auto-chain）策略参数：层数与每层选择策略。
 	ChainHops      int    // 自动链路层数（默认 2）
 	ChainSelection string // 每层选择策略（weighted / random / best，默认 weighted）
@@ -387,6 +411,10 @@ type RuntimeFields struct {
 	HistoryRetentionDays int
 	AvoidMITM            bool
 	ChainCheckInterval   time.Duration
+	SpeedTestTarget      string
+	SpeedTestOnCheck     bool
+	SpeedTestInterval    time.Duration
+	SpeedTestTimeout     time.Duration
 }
 
 // RuntimeSnapshot 返回运行期热更新字段的副本（并发安全）。
@@ -403,6 +431,10 @@ func (c *Config) RuntimeSnapshot() RuntimeFields {
 		HistoryRetentionDays: c.HistoryRetentionDays,
 		AvoidMITM:            c.AvoidMITM,
 		ChainCheckInterval:   c.ChainCheckInterval,
+		SpeedTestTarget:      c.SpeedTestTarget,
+		SpeedTestOnCheck:     c.SpeedTestOnCheck,
+		SpeedTestInterval:    c.SpeedTestInterval,
+		SpeedTestTimeout:     c.SpeedTestTimeout,
 	}
 }
 
@@ -420,6 +452,10 @@ func (c *Config) MutateRuntime(fn func(f *RuntimeFields)) {
 		HistoryRetentionDays: c.HistoryRetentionDays,
 		AvoidMITM:            c.AvoidMITM,
 		ChainCheckInterval:   c.ChainCheckInterval,
+		SpeedTestTarget:      c.SpeedTestTarget,
+		SpeedTestOnCheck:     c.SpeedTestOnCheck,
+		SpeedTestInterval:    c.SpeedTestInterval,
+		SpeedTestTimeout:     c.SpeedTestTimeout,
 	}
 	fn(&f)
 	c.ProxyPort = f.ProxyPort
@@ -431,6 +467,10 @@ func (c *Config) MutateRuntime(fn func(f *RuntimeFields)) {
 	c.HistoryRetentionDays = f.HistoryRetentionDays
 	c.AvoidMITM = f.AvoidMITM
 	c.ChainCheckInterval = f.ChainCheckInterval
+	c.SpeedTestTarget = f.SpeedTestTarget
+	c.SpeedTestOnCheck = f.SpeedTestOnCheck
+	c.SpeedTestInterval = f.SpeedTestInterval
+	c.SpeedTestTimeout = f.SpeedTestTimeout
 }
 
 func New() *Config {
@@ -440,7 +480,7 @@ func New() *Config {
 		ProxyHost:            "127.0.0.1",
 		ProxyPort:            7892,
 		CheckTarget:          "https://www.apple.com/library/test/success.html",
-		CheckSafetyTarget: "https://httpbin.org/anything",
+		CheckSafetyTarget:    "https://httpbin.org/anything",
 		CheckTimeout:         10 * time.Second,
 		CheckConcurrency:     32,
 		RefreshInterval:      15 * time.Minute,
@@ -449,6 +489,10 @@ func New() *Config {
 		SubToken:             generatedSessionToken(),
 		HistoryRetentionDays: 7,
 		AvoidMITM:            true,
+		SpeedTestTarget:      "", // 留空：复用检测目标 check_target，保证节点可达、避免测速目标不可达导致超时
+		SpeedTestOnCheck:     false,
+		SpeedTestInterval:    6 * time.Hour,
+		SpeedTestTimeout:     20 * time.Second,
 		PACEnabled:           true,
 		PACMode:              "whitelist",
 		PACDirectURLs:        DefaultPACDirectURLs,
@@ -596,6 +640,22 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("PROXYPILOT_AVOID_MITM"); v != "" {
 		c.AvoidMITM = v == "1"
 	}
+	if v := os.Getenv("PROXYPILOT_SPEED_TEST_TARGET"); v != "" {
+		c.SpeedTestTarget = v
+	}
+	if v := os.Getenv("PROXYPILOT_SPEED_TEST_ON_CHECK"); v != "" {
+		c.SpeedTestOnCheck = v == "1"
+	}
+	if v := os.Getenv("PROXYPILOT_SPEED_TEST_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.SpeedTestInterval = d
+		}
+	}
+	if v := os.Getenv("PROXYPILOT_SPEED_TEST_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			c.SpeedTestTimeout = d
+		}
+	}
 	if v := os.Getenv("PROXYPILOT_PAC_ENABLED"); v != "" {
 		c.PACEnabled = v == "1"
 	}
@@ -700,6 +760,30 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 	case KeyAvoidMITM:
 		return func(v string) {
 			c.MutateRuntime(func(f *RuntimeFields) { f.AvoidMITM = v == "1" })
+		}, true
+	case KeySpeedTestTarget:
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) { f.SpeedTestTarget = v })
+		}, true
+	case KeySpeedTestOnCheck:
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) { f.SpeedTestOnCheck = v == "1" })
+		}, true
+	case KeySpeedTestInterval:
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if d, err := time.ParseDuration(v); err == nil {
+					f.SpeedTestInterval = d
+				}
+			})
+		}, true
+	case KeySpeedTestTimeout:
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) {
+				if d, err := time.ParseDuration(v); err == nil && d > 0 {
+					f.SpeedTestTimeout = d
+				}
+			})
 		}, true
 	case KeyPACEnabled:
 		return func(v string) { c.MutatePAC(func(f *PACFields) { f.Enabled = v == "1" }) }, true
@@ -827,6 +911,17 @@ func (c *Config) SettingValue(key string) (string, bool) {
 			return "1", true
 		}
 		return "0", true
+	case KeySpeedTestTarget:
+		return c.RuntimeSnapshot().SpeedTestTarget, true
+	case KeySpeedTestOnCheck:
+		if c.RuntimeSnapshot().SpeedTestOnCheck {
+			return "1", true
+		}
+		return "0", true
+	case KeySpeedTestInterval:
+		return c.RuntimeSnapshot().SpeedTestInterval.String(), true
+	case KeySpeedTestTimeout:
+		return c.RuntimeSnapshot().SpeedTestTimeout.String(), true
 	case KeyPACEnabled:
 		if c.PACSnapshot().Enabled {
 			return "1", true

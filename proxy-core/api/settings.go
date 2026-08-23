@@ -83,6 +83,11 @@ func (s *Services) updateSettings(c *gin.Context) {
 		case config.KeyRefreshPeriod:
 			s.Pool.SetRefreshInterval(s.Cfg.RuntimeSnapshot().RefreshInterval)
 			s.Bus.Info("refresh interval updated")
+		case config.KeySpeedTestTarget, config.KeySpeedTestOnCheck, config.KeySpeedTestInterval, config.KeySpeedTestTimeout:
+			// 测速目标/超时由 speedTester 闭包实时读取；此处同步开关与节流间隔。
+			s.Pool.SetSpeedTestEnabled(s.Cfg.RuntimeSnapshot().SpeedTestOnCheck)
+			s.Pool.SetSpeedTestInterval(s.Cfg.RuntimeSnapshot().SpeedTestInterval)
+			s.Bus.Info("speed test config updated")
 		case config.KeyProxyPort:
 			if err := s.restartGatewayIfRunning(); err != nil {
 				s.Bus.Error("gateway restart failed: " + err.Error())

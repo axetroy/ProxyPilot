@@ -1196,3 +1196,75 @@ func TestMigrateAddsMitmColumnsAndSetNodeMitm(t *testing.T) {
 		t.Fatal("mitm flag should be cleared")
 	}
 }
+
+// 旧库迁移补齐 speed/speed_at 列，且 SetNodeSpeed 能正确读写速率与测速时间。
+func TestMigrateAddsSpeedColumnsAndSetNodeSpeed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-speed.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE proxy_nodes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		protocol TEXT NOT NULL,
+		username TEXT NOT NULL DEFAULT '',
+		password TEXT NOT NULL DEFAULT '',
+		latency INTEGER NOT NULL DEFAULT 0,
+		score INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'new',
+		success_count INTEGER NOT NULL DEFAULT 0,
+		fail_count INTEGER NOT NULL DEFAULT 0,
+		last_check DATETIME,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		UNIQUE(host, port, protocol)
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	_, err = legacy.Exec(`INSERT INTO proxy_nodes
+		(host, port, protocol, latency, score, status, created_at, updated_at)
+		VALUES ('1.2.3.4', 443, 'socks5', 10, 99, 'alive', datetime('now'), datetime('now'))`)
+	if err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	st, err := New(path)
+	if err != nil {
+		t.Fatalf("open legacy db with migrate: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	nodes, err := st.ListNode()
+	if err != nil {
+		t.Fatalf("ListNode after migrate: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(nodes))
+	}
+	id := nodes[0].ID
+	if nodes[0].Speed != 0 || !nodes[0].SpeedAt.IsZero() {
+		t.Fatalf("fresh node speed should be zero/empty: %+v", nodes[0])
+	}
+
+	at := time.Date(2026, 5, 6, 7, 8, 9, 0, time.UTC)
+	if err := st.SetNodeSpeed(id, 12_345_678, at); err != nil {
+		t.Fatalf("SetNodeSpeed: %v", err)
+	}
+	got, err := st.GetNode(id)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got.Speed != 12_345_678 {
+		t.Fatalf("speed = %d, want 12345678", got.Speed)
+	}
+	if !got.SpeedAt.Equal(at) {
+		t.Fatalf("speed_at = %v, want %v", got.SpeedAt, at)
+	}
+}

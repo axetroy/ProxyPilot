@@ -73,6 +73,8 @@ func (s *Store) migrate() error {
 			last_check DATETIME,
 			mitm_detected INTEGER NOT NULL DEFAULT 0,
 			mitm_at DATETIME,
+			speed INTEGER NOT NULL DEFAULT 0,
+			speed_at DATETIME,
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL,
 			UNIQUE(host, port, protocol)
@@ -195,6 +197,25 @@ func (s *Store) migrateProxyNodesColumns() error {
 		}
 	}
 	for _, c := range []string{"mitm_at"} {
+		if has(c) {
+			continue
+		}
+		if _, err := s.db.Exec(fmt.Sprintf(
+			`ALTER TABLE proxy_nodes ADD COLUMN %s DATETIME`, c)); err != nil {
+			return err
+		}
+	}
+	// 带宽测速列（speed=经节点下载测得的字节/秒，speed_at=最近测速时间）。
+	for _, c := range []string{"speed"} {
+		if has(c) {
+			continue
+		}
+		if _, err := s.db.Exec(fmt.Sprintf(
+			`ALTER TABLE proxy_nodes ADD COLUMN %s INTEGER NOT NULL DEFAULT 0`, c)); err != nil {
+			return err
+		}
+	}
+	for _, c := range []string{"speed_at"} {
 		if has(c) {
 			continue
 		}
@@ -370,7 +391,7 @@ func (s *Store) updateNodeCredentials(n *model.ProxyNode) error {
 func (s *Store) ListNodesBySubscription(subscriptionID int64) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT p.id, p.host, p.port, p.protocol, p.username, p.password,
 		p.latency, p.score, p.status, p.country, p.province, p.city, p.success_count, p.fail_count, p.last_check,
-		p.mitm_detected, p.mitm_at, p.created_at, p.updated_at,
+		p.mitm_detected, p.mitm_at, p.speed, p.speed_at, p.created_at, p.updated_at,
 		sn.subscription_id
 		FROM proxy_nodes p
 		JOIN subscription_nodes sn ON sn.proxy_id = p.id
@@ -522,6 +543,14 @@ func (s *Store) SetNodeMitm(id int64, detected bool, at time.Time) error {
 	return err
 }
 
+// SetNodeSpeed 写入节点的带宽测速结果（字节/秒）与测速时间，不改动其他列。
+// speed=0 且 at 非零表示本轮测速失败/未产出有效速率（仅刷新测速时间用于节流）。
+func (s *Store) SetNodeSpeed(id int64, speed int64, at time.Time) error {
+	_, err := s.db.Exec(`UPDATE proxy_nodes SET speed=?, speed_at=?, updated_at=? WHERE id=?`,
+		speed, nullTime(at), time.Now().UTC(), id)
+	return err
+}
+
 func (s *Store) DeleteNode(id int64) error {
 	if _, err := s.db.Exec(`DELETE FROM proxy_nodes WHERE id=?`, id); err != nil {
 		return err
@@ -533,7 +562,7 @@ func (s *Store) DeleteNode(id int64) error {
 func (s *Store) GetNode(id int64) (*model.ProxyNode, error) {
 	row := s.db.QueryRow(`SELECT id, host, port, protocol, username, password,
 		latency, score, status, country, province, city, success_count, fail_count, last_check,
-		mitm_detected, mitm_at, created_at, updated_at,
+		mitm_detected, mitm_at, speed, speed_at, created_at, updated_at,
 		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes WHERE id=?`, id)
 	return scanNode(row)
@@ -542,7 +571,7 @@ func (s *Store) GetNode(id int64) (*model.ProxyNode, error) {
 func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
 		latency, score, status, country, province, city, success_count, fail_count, last_check,
-		mitm_detected, mitm_at, created_at, updated_at,
+		mitm_detected, mitm_at, speed, speed_at, created_at, updated_at,
 		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes ORDER BY CASE WHEN status='alive' THEN 0 ELSE 1 END,
 		score DESC, latency ASC, id ASC, host ASC`)
@@ -564,7 +593,7 @@ func (s *Store) ListNode() ([]*model.ProxyNode, error) {
 func (s *Store) ListNodesByStatus(status model.ProxyStatus) ([]*model.ProxyNode, error) {
 	rows, err := s.db.Query(`SELECT id, host, port, protocol, username, password,
 		latency, score, status, country, province, city, success_count, fail_count, last_check,
-		mitm_detected, mitm_at, created_at, updated_at,
+		mitm_detected, mitm_at, speed, speed_at, created_at, updated_at,
 		(SELECT subscription_id FROM subscription_nodes WHERE proxy_id = proxy_nodes.id LIMIT 1)
 		FROM proxy_nodes WHERE status=? ORDER BY score DESC, latency ASC, id ASC, host ASC`, string(status))
 	if err != nil {

@@ -20,7 +20,7 @@ type scanner interface {
 
 func scanNode(sc scanner) (*model.ProxyNode, error) {
 	var n model.ProxyNode
-	var lastCheck, createdAt, updatedAt, mitmAt sql.NullTime
+	var lastCheck, createdAt, updatedAt, mitmAt, speedAt sql.NullTime
 	var subscriptionID sql.NullInt64
 	var mitmDetected int
 	err := sc.Scan(
@@ -29,7 +29,7 @@ func scanNode(sc scanner) (*model.ProxyNode, error) {
 		&n.Country, &n.Province, &n.City,
 		&n.SuccessCount, &n.FailCount,
 		&lastCheck,
-		&mitmDetected, &mitmAt,
+		&mitmDetected, &mitmAt, &n.Speed, &speedAt,
 		&createdAt, &updatedAt, &subscriptionID,
 	)
 	if err != nil {
@@ -41,6 +41,9 @@ func scanNode(sc scanner) (*model.ProxyNode, error) {
 	n.MitmDetected = mitmDetected != 0
 	if mitmAt.Valid {
 		n.MitmAt = mitmAt.Time
+	}
+	if speedAt.Valid {
+		n.SpeedAt = speedAt.Time
 	}
 	if createdAt.Valid {
 		n.CreatedAt = createdAt.Time

@@ -23,6 +23,10 @@ export interface ProxyNode {
   mitmDetected: boolean
   /** 最近一次中间人检测时间 */
   mitmAt: string
+  /** 带宽测速速率（字节/秒），未测速时为 0 */
+  speed: number
+  /** 最近一次带宽测速时间 */
+  speedAt: string
 }
 
 /** 连接安全检测明细，与后端 model.SafetyDetail 对应 */

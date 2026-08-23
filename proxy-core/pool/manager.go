@@ -22,6 +22,9 @@ type nodeChecker interface {
 // MITMDetectFunc 中间人探测函数：返回是否检出 HTTPS 中间人及原因描述（供错误日志）。
 type MITMDetectFunc func(node *model.ProxyNode) (mitm bool, detail string)
 
+// SpeedTestFunc 带宽测速函数：经 node 代理下载并测得字节/秒速率（0 表示未产出有效速率）。
+type SpeedTestFunc func(node *model.ProxyNode) (bytesPerSec int64, err error)
+
 // ExcludeFilter 节点排除过滤器：返回 true 表示该节点不应被自动选用（安全路由）。
 type ExcludeFilter func(n *model.ProxyNode) bool
 
@@ -29,14 +32,21 @@ type ExcludeFilter func(n *model.ProxyNode) bool
 // 避免每次健康检测都额外增加一次 TLS 握手开销。
 const mitmRecheckInterval = 24 * time.Hour
 
+// speedTestRecheckInterval 自动带宽测速节流窗口：同一节点在该时间内不在健康检查中重复测速，
+// 避免高频健康检测反复消耗节点带宽（手动「测速」不受此限制，用户显式触发即测）。
+const speedTestRecheckInterval = 6 * time.Hour
+
+// speedTestConcurrency 批量测速的最大并发数：信号量上限，避免一次性对大量节点同时建连。
+const speedTestConcurrency = 16
+
 type Manager struct {
-	store    *storage.Store
-	checker  atomic.Pointer[nodeChecker]
-	bus      *bus.Bus
-	mx       sync.RWMutex
-	nodes    map[int64]*model.ProxyNode
-	concur   atomic.Int32
-	checking atomic.Bool
+	store     *storage.Store
+	checker   atomic.Pointer[nodeChecker]
+	bus       *bus.Bus
+	mx        sync.RWMutex
+	nodes     map[int64]*model.ProxyNode
+	concur    atomic.Int32
+	checking  atomic.Bool
 	rrCounter atomic.Int64 // 轮询计数器
 
 	// refreshInterval 单位纳秒，RefreshLoop 每轮读取，支持热更新
@@ -47,6 +57,13 @@ type Manager struct {
 	// excludeFilter 安全路由过滤器（nil 表示不过滤）：命中节点不会被自动选用；
 	// 全部存活节点都被过滤时回退为不过滤，保证可用性优先。
 	excludeFilter atomic.Pointer[ExcludeFilter]
+
+	// speedTester 可选带宽测速函数（nil 表示未配置测速）。
+	speedTester atomic.Pointer[SpeedTestFunc]
+	// speedTestEnabled 是否在健康检查中偶发自动测速（用户可在设置中关闭以省流量）。
+	speedTestEnabled atomic.Bool
+	// speedTestInterval 自动测速节流窗口（纳秒），与 speedTestRecheckInterval 默认值一致，可热更新。
+	speedTestInterval atomic.Int64
 }
 
 func NewManager(store *storage.Store, checker nodeChecker, bus *bus.Bus, concurrency int) *Manager {
@@ -101,6 +118,117 @@ func (m *Manager) excluded(n *model.ProxyNode) bool {
 // Excluded 供外部（如调度器粘性绑定校验）判断节点是否被排除过滤器命中。
 func (m *Manager) Excluded(n *model.ProxyNode) bool {
 	return m.excluded(n)
+}
+
+// SetSpeedTester 注入带宽测速函数（nil 关闭测速）。
+func (m *Manager) SetSpeedTester(fn SpeedTestFunc) {
+	if fn == nil {
+		m.speedTester.Store(nil)
+		return
+	}
+	m.speedTester.Store(&fn)
+}
+
+// SetSpeedTestEnabled 热更新「健康检查是否偶发自动测速」。默认关闭，避免消耗节点带宽；
+// 手动「测速」不受该开关影响（用户显式触发即测）。
+func (m *Manager) SetSpeedTestEnabled(enabled bool) {
+	m.speedTestEnabled.Store(enabled)
+}
+
+// SetSpeedTestInterval 热更新自动测速节流窗口（纳秒）。
+func (m *Manager) SetSpeedTestInterval(d time.Duration) {
+	if d <= 0 {
+		d = speedTestRecheckInterval
+	}
+	m.speedTestInterval.Store(int64(d))
+}
+
+// SpeedTestNode 立即对单个节点做带宽测速（手动「测速」入口，不受自动节流限制）。
+// 返回测得的字节/秒速率；失败时返回 error（不覆盖节点已有速率）。
+func (m *Manager) SpeedTestNode(id int64) (int64, error) {
+	fn := m.speedTester.Load()
+	if fn == nil {
+		return 0, fmt.Errorf("未配置带宽测速")
+	}
+	m.mx.RLock()
+	n, ok := m.nodes[id]
+	m.mx.RUnlock()
+	if !ok {
+		return 0, fmt.Errorf("节点不存在")
+	}
+	speed, err := (*fn)(n)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now()
+	if err := m.store.SetNodeSpeed(id, speed, now); err != nil {
+		m.bus.Debug(fmt.Sprintf("persist speed failed: %v", err))
+	}
+	m.mx.Lock()
+	if live, ok := m.nodes[id]; ok {
+		live.Speed = speed
+		live.SpeedAt = now
+	}
+	m.mx.Unlock()
+	return speed, nil
+}
+
+// SpeedTestNodes 并发地对一批节点做带宽测速，返回成功数与失败数。
+// 通过有界信号量限制并发（避免一次性对大量节点同时建连压垮本机或出口），
+// 单个节点失败不影响其余节点；成功结果已逐节点落库并更新内存池。
+func (m *Manager) SpeedTestNodes(ids []int64) (done, failed int) {
+	if len(ids) == 0 {
+		return 0, 0
+	}
+	sem := make(chan struct{}, speedTestConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := m.SpeedTestNode(id); err != nil {
+				m.bus.Debug(fmt.Sprintf("speed test node %d failed: %v", id, err))
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			done++
+			mu.Unlock()
+		}(id)
+	}
+	wg.Wait()
+	return done, failed
+}
+
+// probeSpeed 对节点执行一次带宽测速并落库（自动路径，按节点节流）。
+// 仅在 speedTestEnabled 时由 evalOne 在连通性检测通过后调用；
+// n 为池内节点的副本，速率会写回副本。错误不覆盖节点已有速率。
+func (m *Manager) probeSpeed(n *model.ProxyNode) {
+	fn := m.speedTester.Load()
+	if fn == nil {
+		return
+	}
+	interval := time.Duration(m.speedTestInterval.Load())
+	if interval <= 0 {
+		interval = speedTestRecheckInterval
+	}
+	if !n.SpeedAt.IsZero() && time.Since(n.SpeedAt) < interval {
+		return
+	}
+	speed, err := (*fn)(n)
+	now := time.Now()
+	n.SpeedAt = now
+	if err == nil {
+		n.Speed = speed
+	}
+	if perr := m.store.SetNodeSpeed(n.ID, n.Speed, now); perr != nil {
+		m.bus.Debug(fmt.Sprintf("persist speed failed: %v", perr))
+	}
 }
 
 // SetConcurrency 热更新并发检测数。
@@ -590,6 +718,7 @@ func (m *Manager) pickRandomNotIn(picked map[int64]bool, avoidUnsafe bool) *mode
 	}
 	return cloneNode(chosen)
 }
+
 // 用于选择器等热路径做 O(1) 按 ID 查找，避免整池克隆+排序。
 func (m *Manager) Get(id int64) *model.ProxyNode {
 	m.mx.RLock()
@@ -842,6 +971,11 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 	if result.OK && m.mitmDetector.Load() != nil {
 		m.probeMitm(fresh)
 	}
+	// 连通性通过后做带宽测速（仅在设置开启时偶发自动测速，内部按节点节流）；
+	// 速率仅作为展示指标，不参与评分，故在 CalculateScore 之后执行亦可。
+	if result.OK && m.speedTestEnabled.Load() && m.speedTester.Load() != nil {
+		m.probeSpeed(fresh)
+	}
 	score := CalculateScore(fresh, result)
 
 	status := model.StatusAlive
@@ -881,6 +1015,8 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 		live.City = fresh.City
 		live.MitmDetected = fresh.MitmDetected
 		live.MitmAt = fresh.MitmAt
+		live.Speed = fresh.Speed
+		live.SpeedAt = fresh.SpeedAt
 	}
 	m.mx.Unlock()
 
@@ -942,6 +1078,7 @@ func (m *Manager) RefreshLoop(ctx context.Context) {
 // 优先级：
 //  1. 连接安全探测成功的节点出口 IP（ProxiedIP）——最准确，代表真实代理所在地区；
 //  2. 节点 host（若为 IP 直接查询，若为域名则本地 DNS 解析后查询）。
+//
 // 未命中（如 IPv6 节点、保留地址之外的查找失败）时返回三位空串。
 func resolveGeo(node *model.ProxyNode, result model.CheckResult) (country, province, city string) {
 	if a := result.Safety; a != nil && a.ProxiedIP != "" {
