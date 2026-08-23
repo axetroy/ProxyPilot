@@ -14,8 +14,8 @@ import (
 type subscriptionConfig struct {
 	Enabled bool     `json:"enabled"`
 	Listen  string   `json:"listen"`
-	Host    string   `json:"host"`    // 对外展示的订阅 IP（通配监听时生效，空表示未选择）
-	LANIPs  []string `json:"lanIPs"`  // 本机所有局域网 IP（供前端下拉选择）
+	Host    string   `json:"host"`   // 对外展示的订阅 IP（通配监听时生效，空表示未选择）
+	LANIPs  []string `json:"lanIPs"` // 本机所有局域网 IP（供前端下拉选择）
 	Token   string   `json:"token"`
 	URL     string   `json:"url"`
 }
@@ -33,9 +33,10 @@ func (s *Services) currentSubscription() subscriptionConfig {
 }
 
 // exportProxies 导出存活节点：
-//   GET /api/export?format=json    → 默认，节点 JSON 列表
-//   GET /api/export?format=base64  → 订阅文本（base64 编码，每行一个节点）
-//   GET /api/export?format=plain   → 订阅文本（明文，每行一个节点）
+//
+//	GET /api/export?format=json    → 默认，节点 JSON 列表
+//	GET /api/export?format=base64  → 订阅文本（base64 编码，每行一个节点）
+//	GET /api/export?format=plain   → 订阅文本（明文，每行一个节点）
 func (s *Services) exportProxies(c *gin.Context) {
 	nodes := s.Pool.Alive()
 	switch c.DefaultQuery("format", "json") {

@@ -11,7 +11,8 @@ import (
 )
 
 // FormatProxyLine 将节点序列化为订阅行（与 ParseLine 互逆）：
-//   protocol://user:pass@host:port
+//
+//	protocol://user:pass@host:port
 //
 // 用户名/密码经 URL 编码，IPv6 地址自动加 []，保证往返解析一致。
 func FormatProxyLine(n *model.ProxyNode) string {
