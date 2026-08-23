@@ -115,8 +115,8 @@ func main() {
 	chainHealthMgr := chainhealth.New(st, poolMgr, busc, cfg)
 	go chainHealthMgr.Start(ctx)
 
-	// Prometheus 指标收集与 /metrics 端点
-	metricsMgr := metrics.NewManager(poolMgr, sel, gw, chainHealthMgr, st, col, busc)
+	// Prometheus 指标采集与 /metrics 端点：每 15s 快照代理池/网关/链路/系统状态
+	metricsMgr := metrics.NewManager(poolMgr, sel, gw, st, busc)
 	metricsMgr.Start()
 
 	// API 监听端口：被占用时向后顺延（与网关端口顺延一致），实际端口通过

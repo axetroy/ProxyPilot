@@ -346,6 +346,26 @@ func (g *Gateway) untrackUDP() {
 	g.udpMu.Unlock()
 }
 
+// ActiveConnCount 返回当前正在处理的客户端连接数（CONNECT 隧道 / SOCKS5 会话）。
+func (g *Gateway) ActiveConnCount() int {
+	if g == nil {
+		return 0
+	}
+	g.activeMu.Lock()
+	defer g.activeMu.Unlock()
+	return len(g.activeConns)
+}
+
+// UDPActiveCount 返回当前活跃的 SOCKS5 UDP ASSOCIATE 会话数。
+func (g *Gateway) UDPActiveCount() int {
+	if g == nil {
+		return 0
+	}
+	g.udpMu.Lock()
+	defer g.udpMu.Unlock()
+	return g.udpActive
+}
+
 // dialDirect 智能分流命中「直连」时直接建立 TCP 连接（不经节点池）。
 func (g *Gateway) dialDirect(ctx context.Context, target string) (net.Conn, error) {
 	if g.bus != nil {
