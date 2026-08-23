@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FileUp, Plus, RefreshCw, Trash2 } from 'lucide-react'
-import { Alert, Badge, Button, Card, Group, Modal, NumberInput, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Button, Card, Code, Group, Modal, NumberInput, Paper, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useSubsStore } from '@/stores/subscriptions'
 import type { Subscription } from '@/types'
 
@@ -31,6 +31,39 @@ function FormatCell({ sub }: { sub: Subscription }) {
         </Text>
       )}
     </Group>
+  )
+}
+
+function SubscriptionFormatHelp() {
+  return (
+    <Paper withBorder p="sm" radius="md" bg="var(--mantine-color-default-hover)">
+      <Text size="sm" fw={500} mb={6}>
+        支持的订阅格式（附示例）
+      </Text>
+      <Stack gap={6}>
+        <div>
+          <Text size="xs" c="dimmed">
+            Base64 列表（最常见）
+          </Text>
+          <Code block>{'base64(protocol://user:pass@host:port)'}</Code>
+        </div>
+        <div>
+          <Text size="xs" c="dimmed">
+            明文协议行（每行一个节点）
+          </Text>
+          <Code block>{'http://user:pass@1.2.3.4:8080\nsocks5://5.6.7.8:1080'}</Code>
+        </div>
+        <div>
+          <Text size="xs" c="dimmed">
+            纯 host:port（默认按 HTTP 处理）
+          </Text>
+          <Code block>{'1.2.3.4:8080\n5.6.7.8:1080'}</Code>
+        </div>
+        <Alert color="yellow" variant="light" mt={4}>
+          Clash / V2Ray / Sing-box / SSR / SS 已能识别格式，但当前版本暂未解析，节点数为 0。
+        </Alert>
+      </Stack>
+    </Paper>
   )
 }
 
@@ -183,6 +216,7 @@ export default function Subscriptions() {
             选择本地文件
           </Button>
           <NumberInput label="刷新间隔（秒）" min={60} step={300} value={form.interval} onChange={(value) => setForm({ ...form, interval: Number(value ?? 3600) })} />
+          <SubscriptionFormatHelp />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setOpenEdit(false)}>
               取消
@@ -206,6 +240,7 @@ export default function Subscriptions() {
             选择本地文件
           </Button>
           <NumberInput label="刷新间隔（秒）" min={60} step={300} value={form.interval} onChange={(value) => setForm({ ...form, interval: Number(value ?? 3600) })} />
+          <SubscriptionFormatHelp />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setOpen(false)}>
               取消
