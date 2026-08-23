@@ -31,6 +31,28 @@ HTTP / HTTPS / SOCKS5 本地代理出口。
 - 📡 **实时监控**：日志与进度 WebSocket 实时推送
 - 🔄 **自动更新**：内置 GitHub Release 自动更新
 
+## 界面预览
+
+> 以下截图均为演示数据，不含真实订阅地址、密钥与节点凭据。
+
+### Dashboard
+
+![Dashboard](./docs/screenshots/dashboard.png)
+
+代理池总览、当前出口与实时状态。
+
+### 代理池
+
+![代理池](./docs/screenshots/proxy_pool.png)
+
+节点列表：可用性检测、质量评分、带宽测速，以及行菜单「指定为固定出口」。
+
+### 订阅
+
+![订阅](./docs/screenshots/subscriptions.png)
+
+导入订阅源、定时同步与多格式识别。
+
 ## 本地代理使用
 
 网关启动后，将本机应用的代理指向本地端口（默认 HTTP 与 SOCKS5 共用 `127.0.0.1:7892`）：
