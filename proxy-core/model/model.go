@@ -46,6 +46,11 @@ type ProxyNode struct {
 	// SafetyDetail 连接安全检测明细（探测成功时填充，不持久化），
 	// 供评分明细展示与 Breakdown 还原使用。
 	SafetyDetail *SafetyDetail `json:"safetyDetail,omitempty"`
+	// MitmDetected 检测到该节点存在 HTTPS 中间人行为（向客户端返回伪造的目标站点证书）。
+	// 持久化字段；被标记的节点在「安全路由」开启时不会被自动选用。
+	MitmDetected bool `json:"mitmDetected"`
+	// MitmAt 最近一次中间人检测时间（无论结果，用于检测节流与前端展示）。
+	MitmAt time.Time `json:"mitmAt"`
 }
 
 // ScoreBreakdown 表示一次评分的各维度明细，与 CalculateScore 的权重口径一致。
@@ -180,5 +185,7 @@ type SafetyDetail struct {
 	RotatingIP bool `json:"rotatingIp,omitempty"`
 	// ReqIssues 连接信息问题（请求被改写等）。
 	ReqIssues []string `json:"reqIssues,omitempty"`
-	Score     int      `json:"score"` // 连接安全子评分（0-100）
+	// Mitm 是否检测到 HTTPS 中间人行为（伪造目标站点证书）。
+	Mitm  bool `json:"mitm,omitempty"`
+	Score int  `json:"score"` // 连接安全子评分（0-100）
 }

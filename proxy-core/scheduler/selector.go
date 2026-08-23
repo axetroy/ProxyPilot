@@ -322,8 +322,10 @@ func (s *Selector) stickyNode(key string) *model.ProxyNode {
 
 	// 校验绑定的节点是否仍然可用。
 	// 按 ID 直接查找（O(1)），避免每次请求都对整个存活池做克隆+排序。
+	// 安全路由命中（如检出 HTTPS 中间人）的节点视为失效：清除绑定并重新选路，
+	// 避免粘性窗口内继续把流量送往已标记的不安全节点。
 	n := s.pool.Get(entry.nodeID)
-	if n != nil && n.Status == model.StatusAlive {
+	if n != nil && n.Status == model.StatusAlive && !s.pool.Excluded(n) {
 		return n
 	}
 	// 节点已失效，清除绑定，让下一次请求重新选择。

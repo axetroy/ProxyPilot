@@ -19,6 +19,10 @@ export interface ProxyNode {
   subscriptionId?: number
   scoreBreakdown?: ScoreBreakdown
   safetyDetail?: SafetyDetail
+  /** 是否检出 HTTPS 中间人（伪造目标站点证书），检出后安全路由开启期间不会被自动选用 */
+  mitmDetected: boolean
+  /** 最近一次中间人检测时间 */
+  mitmAt: string
 }
 
 /** 连接安全检测明细，与后端 model.SafetyDetail 对应 */
@@ -33,6 +37,8 @@ export interface SafetyDetail {
   rotatingIp?: boolean
   /** 连接信息问题（请求被代理改写，如回显 URL/Host 与目标不一致） */
   reqIssues?: string[]
+  /** 是否检出 HTTPS 中间人行为（伪造目标站点证书） */
+  mitm?: boolean
   /** 连接安全子评分（0-100） */
   score: number
 }

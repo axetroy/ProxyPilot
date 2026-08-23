@@ -1115,3 +1115,84 @@ func TestMigrateAddsGeoColumnsToLegacyDB(t *testing.T) {
 		t.Fatalf("geo fields after migrate: %+v", got)
 	}
 }
+
+// 旧版数据库（没有中间人标记列）打开时应自动补列，SetNodeMitm 写入后可回读。
+func TestMigrateAddsMitmColumnsAndSetNodeMitm(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-mitm.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE proxy_nodes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		protocol TEXT NOT NULL,
+		username TEXT NOT NULL DEFAULT '',
+		password TEXT NOT NULL DEFAULT '',
+		latency INTEGER NOT NULL DEFAULT 0,
+		score INTEGER NOT NULL DEFAULT 0,
+		status TEXT NOT NULL DEFAULT 'new',
+		success_count INTEGER NOT NULL DEFAULT 0,
+		fail_count INTEGER NOT NULL DEFAULT 0,
+		last_check DATETIME,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL,
+		UNIQUE(host, port, protocol)
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	_, err = legacy.Exec(`INSERT INTO proxy_nodes
+		(host, port, protocol, latency, score, status, created_at, updated_at)
+		VALUES ('8.8.8.8', 443, 'socks5', 10, 99, 'alive', datetime('now'), datetime('now'))`)
+	if err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	st, err := New(path)
+	if err != nil {
+		t.Fatalf("open legacy db with migrate: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	nodes, err := st.ListNode()
+	if err != nil {
+		t.Fatalf("ListNode after migrate: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(nodes))
+	}
+	id := nodes[0].ID
+	if nodes[0].MitmDetected {
+		t.Fatal("fresh node should not be marked as MITM")
+	}
+
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := st.SetNodeMitm(id, true, at); err != nil {
+		t.Fatalf("SetNodeMitm(true): %v", err)
+	}
+	got, err := st.GetNode(id)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if !got.MitmDetected || got.MitmAt.IsZero() {
+		t.Fatalf("mitm mark not persisted: %+v", got)
+	}
+
+	// 未检出时仅刷新检测时间，标记应被清除（节点恢复正常时允许撤销标记）
+	if err := st.SetNodeMitm(id, false, at.Add(time.Hour)); err != nil {
+		t.Fatalf("SetNodeMitm(false): %v", err)
+	}
+	got, err = st.GetNode(id)
+	if err != nil {
+		t.Fatalf("GetNode after clear: %v", err)
+	}
+	if got.MitmDetected {
+		t.Fatal("mitm flag should be cleared")
+	}
+}

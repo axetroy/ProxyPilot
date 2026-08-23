@@ -19,6 +19,16 @@ type nodeChecker interface {
 	Check(node *model.ProxyNode) (model.CheckResult, error)
 }
 
+// MITMDetectFunc 中间人探测函数：返回是否检出 HTTPS 中间人及原因描述（供错误日志）。
+type MITMDetectFunc func(node *model.ProxyNode) (mitm bool, detail string)
+
+// ExcludeFilter 节点排除过滤器：返回 true 表示该节点不应被自动选用（安全路由）。
+type ExcludeFilter func(n *model.ProxyNode) bool
+
+// mitmRecheckInterval 中间人检测节流窗口：同一节点在该时间内不重复探测，
+// 避免每次健康检测都额外增加一次 TLS 握手开销。
+const mitmRecheckInterval = 24 * time.Hour
+
 type Manager struct {
 	store    *storage.Store
 	checker  atomic.Pointer[nodeChecker]
@@ -31,6 +41,12 @@ type Manager struct {
 
 	// refreshInterval 单位纳秒，RefreshLoop 每轮读取，支持热更新
 	refreshInterval atomic.Int64
+
+	// mitmDetector 可选中的人检测函数（nil 表示未启用中间人探测）。
+	mitmDetector atomic.Pointer[MITMDetectFunc]
+	// excludeFilter 安全路由过滤器（nil 表示不过滤）：命中节点不会被自动选用；
+	// 全部存活节点都被过滤时回退为不过滤，保证可用性优先。
+	excludeFilter atomic.Pointer[ExcludeFilter]
 }
 
 func NewManager(store *storage.Store, checker nodeChecker, bus *bus.Bus, concurrency int) *Manager {
@@ -51,6 +67,40 @@ func NewManager(store *storage.Store, checker nodeChecker, bus *bus.Bus, concurr
 // SetChecker 热更新节点检测器（target/timeout 变化时由配置更新触发）。
 func (m *Manager) SetChecker(c nodeChecker) {
 	m.checker.Store(&c)
+}
+
+// SetMITMDetector 注入 HTTPS 中间人探测函数（nil 关闭探测）。
+// 探测在节点连通性检测通过后进行，检出时写错误日志并持久化标记。
+func (m *Manager) SetMITMDetector(fn MITMDetectFunc) {
+	if fn == nil {
+		m.mitmDetector.Store(nil)
+		return
+	}
+	m.mitmDetector.Store(&fn)
+}
+
+// SetExcludeFilter 注入安全路由过滤器（nil 表示不过滤）。
+// 命中过滤器的节点不会被任何自动选路策略选中；
+// 全部候选都被过滤时自动回退为不过滤，保证可用性优先于安全性。
+func (m *Manager) SetExcludeFilter(fn ExcludeFilter) {
+	if fn == nil {
+		m.excludeFilter.Store(nil)
+		return
+	}
+	m.excludeFilter.Store(&fn)
+}
+
+// excluded 报告节点是否命中当前排除过滤器。
+func (m *Manager) excluded(n *model.ProxyNode) bool {
+	if fn := m.excludeFilter.Load(); fn != nil {
+		return (*fn)(n)
+	}
+	return false
+}
+
+// Excluded 供外部（如调度器粘性绑定校验）判断节点是否被排除过滤器命中。
+func (m *Manager) Excluded(n *model.ProxyNode) bool {
+	return m.excluded(n)
 }
 
 // SetConcurrency 热更新并发检测数。
@@ -176,14 +226,27 @@ func sortNodes(nodes []*model.ProxyNode) {
 
 // Alive returns nodes currently marked alive.
 // 返回结果同样按 分数 → 延迟 → ID → host 排序，与 List 口径一致。
+// 安全路由开启时自动跳过被排除的节点；全部存活节点都被排除时回退为不过滤（可用性优先）。
 func (m *Manager) Alive() []*model.ProxyNode {
+	out := m.alive(true)
+	if len(out) == 0 {
+		return m.alive(false)
+	}
+	return out
+}
+
+func (m *Manager) alive(avoidUnsafe bool) []*model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var out []*model.ProxyNode
 	for _, n := range m.nodes {
-		if n.Status == model.StatusAlive {
-			out = append(out, cloneNode(n))
+		if n.Status != model.StatusAlive {
+			continue
 		}
+		if avoidUnsafe && m.excluded(n) {
+			continue
+		}
+		out = append(out, cloneNode(n))
 	}
 	sortNodes(out)
 	return out
@@ -191,13 +254,23 @@ func (m *Manager) Alive() []*model.ProxyNode {
 
 // PickBest 返回评分最高（按原始分数、延迟、ID、host 排序）的存活节点。
 // 单次遍历 O(n)，不克隆也不全量排序，适合热路径（如网关选路）。
-// 返回的节点为副本，调用方可安全修改。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤。返回副本。
 func (m *Manager) PickBest() *model.ProxyNode {
+	if best := m.pickBest(true); best != nil {
+		return best
+	}
+	return m.pickBest(false)
+}
+
+func (m *Manager) pickBest(avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var best *model.ProxyNode
 	for _, n := range m.nodes {
 		if n.Status != model.StatusAlive {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		if best == nil {
@@ -233,13 +306,24 @@ func (m *Manager) PickBest() *model.ProxyNode {
 
 // PickRandom 随机返回一个存活节点。
 // 使用水塘采样，单次遍历 O(n)，无需构建完整切片。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤。
 func (m *Manager) PickRandom() *model.ProxyNode {
+	if n := m.pickRandom(true); n != nil {
+		return n
+	}
+	return m.pickRandom(false)
+}
+
+func (m *Manager) pickRandom(avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var chosen *model.ProxyNode
 	count := 0
 	for _, n := range m.nodes {
 		if n.Status != model.StatusAlive {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		count++
@@ -257,13 +341,25 @@ func (m *Manager) PickRandom() *model.ProxyNode {
 // PickRoundRobin 按 ID 顺序轮询返回存活节点。
 // 使用原子计数器保证并发安全，单次遍历 O(n) 收集存活节点 ID，
 // 再按 ID 排序取模，避免全量克隆+排序。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤。
 func (m *Manager) PickRoundRobin() *model.ProxyNode {
+	if n := m.pickRoundRobin(true); n != nil {
+		return n
+	}
+	return m.pickRoundRobin(false)
+}
+
+func (m *Manager) pickRoundRobin(avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	var aliveIDs []int64
 	for id, n := range m.nodes {
-		if n.Status == model.StatusAlive {
-			aliveIDs = append(aliveIDs, id)
+		if n.Status != model.StatusAlive {
+			continue
 		}
+		if avoidUnsafe && m.excluded(n) {
+			continue
+		}
+		aliveIDs = append(aliveIDs, id)
 	}
 	m.mx.RUnlock()
 	if len(aliveIDs) == 0 {
@@ -279,12 +375,23 @@ func (m *Manager) PickRoundRobin() *model.ProxyNode {
 // PickByProtocol 返回指定协议族中评分最高的存活节点（单次遍历）。
 // protocol: SOCKS5 只匹配 SOCKS5；HTTP/HTTPS 匹配两者；空=不筛选。
 // 供 NextStrict 等热路径使用，避免 Alive()+filterByProtocol 双重遍历。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤（UDP 场景同样优先保证可用）。
 func (m *Manager) PickByProtocol(protocol model.ProxyProtocol) *model.ProxyNode {
+	if n := m.pickByProtocol(protocol, true); n != nil {
+		return n
+	}
+	return m.pickByProtocol(protocol, false)
+}
+
+func (m *Manager) pickByProtocol(protocol model.ProxyProtocol, avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var best *model.ProxyNode
 	for _, n := range m.nodes {
 		if n.Status != model.StatusAlive {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		// 协议筛选
@@ -332,7 +439,15 @@ func (m *Manager) PickByProtocol(protocol model.ProxyProtocol) *model.ProxyNode 
 // 权重 = 有效分数 / 延迟（有效分数 = 原始分数，不含 selector 的失败惩罚；
 // 失败惩罚由 selector 层在 sortCandidates 中应用，此处仅做基础加权）。
 // 单次遍历 O(n)，用于 SelectChain weighted 策略。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤。
 func (m *Manager) PickWeightedNotIn(picked map[int64]bool) *model.ProxyNode {
+	if n := m.pickWeightedNotIn(picked, true); n != nil {
+		return n
+	}
+	return m.pickWeightedNotIn(picked, false)
+}
+
+func (m *Manager) pickWeightedNotIn(picked map[int64]bool, avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	type candidate struct {
@@ -346,6 +461,9 @@ func (m *Manager) PickWeightedNotIn(picked map[int64]bool) *model.ProxyNode {
 			continue
 		}
 		if picked[n.ID] {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		// 基础权重：分数/延迟，避免除零
@@ -388,6 +506,13 @@ func (m *Manager) AliveIDs() []int64 {
 
 // PickBestNotIn 返回评分最高且未在 picked 中的存活节点（单次遍历）。
 func (m *Manager) PickBestNotIn(picked map[int64]bool) *model.ProxyNode {
+	if n := m.pickBestNotIn(picked, true); n != nil {
+		return n
+	}
+	return m.pickBestNotIn(picked, false)
+}
+
+func (m *Manager) pickBestNotIn(picked map[int64]bool, avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var best *model.ProxyNode
@@ -396,6 +521,9 @@ func (m *Manager) PickBestNotIn(picked map[int64]bool) *model.ProxyNode {
 			continue
 		}
 		if picked[n.ID] {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		if best == nil {
@@ -429,7 +557,15 @@ func (m *Manager) PickBestNotIn(picked map[int64]bool) *model.ProxyNode {
 }
 
 // PickRandomNotIn 随机返回一个未在 picked 中的存活节点（水塘采样）。
+// 安全路由开启时跳过被排除节点；全部被排除时回退为不过滤。
 func (m *Manager) PickRandomNotIn(picked map[int64]bool) *model.ProxyNode {
+	if n := m.pickRandomNotIn(picked, true); n != nil {
+		return n
+	}
+	return m.pickRandomNotIn(picked, false)
+}
+
+func (m *Manager) pickRandomNotIn(picked map[int64]bool, avoidUnsafe bool) *model.ProxyNode {
 	m.mx.RLock()
 	defer m.mx.RUnlock()
 	var chosen *model.ProxyNode
@@ -439,6 +575,9 @@ func (m *Manager) PickRandomNotIn(picked map[int64]bool) *model.ProxyNode {
 			continue
 		}
 		if picked[n.ID] {
+			continue
+		}
+		if avoidUnsafe && m.excluded(n) {
 			continue
 		}
 		count++
@@ -698,6 +837,11 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 			result.Error = err.Error()
 		}
 	}
+	// 连通性通过后做中间人探测（内部按节点节流），检出时写错误日志并持久化标记；
+	// 必须在 CalculateScore 之前执行，保证本轮评分的安全分清零立即生效。
+	if result.OK && m.mitmDetector.Load() != nil {
+		m.probeMitm(fresh)
+	}
 	score := CalculateScore(fresh, result)
 
 	status := model.StatusAlive
@@ -735,6 +879,8 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 		live.Country = fresh.Country
 		live.Province = fresh.Province
 		live.City = fresh.City
+		live.MitmDetected = fresh.MitmDetected
+		live.MitmAt = fresh.MitmAt
 	}
 	m.mx.Unlock()
 
@@ -743,6 +889,30 @@ func (m *Manager) evalOne(node *model.ProxyNode) model.CheckResult {
 			node.Key(), status, result.Error))
 	}
 	return result
+}
+
+// probeMitm 对节点执行一次 HTTPS 中间人探测并落库标记。
+// 按节点节流（mitmRecheckInterval 内不重复探测）；检出时输出错误日志。
+// 调用方保证仅在节点连通性检测通过后调用；n 为池内节点的副本，标记会写回副本。
+func (m *Manager) probeMitm(n *model.ProxyNode) {
+	if !n.MitmAt.IsZero() && time.Since(n.MitmAt) < mitmRecheckInterval {
+		return
+	}
+	fn := m.mitmDetector.Load()
+	if fn == nil {
+		return
+	}
+	detected, detail := (*fn)(n)
+	now := time.Now()
+	n.MitmAt = now
+	if detected && !n.MitmDetected {
+		n.MitmDetected = true
+		m.bus.Error(fmt.Sprintf("检测到 HTTPS 中间人：节点 %s 在访问目标站点时返回伪造证书（%s），"+
+			"已标记为不安全节点，安全路由开启期间不再自动选用", n.Key(), detail))
+	}
+	if err := m.store.SetNodeMitm(n.ID, n.MitmDetected, now); err != nil {
+		m.bus.Debug(fmt.Sprintf("persist mitm mark failed: %v", err))
+	}
 }
 
 // RefreshLoop periodically validates nodes until ctx is cancelled.

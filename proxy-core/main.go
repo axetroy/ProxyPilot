@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/axetroy/ProxyPilot/proxy-core/config"
 	"github.com/axetroy/ProxyPilot/proxy-core/gateway"
 	"github.com/axetroy/ProxyPilot/proxy-core/metrics"
+	"github.com/axetroy/ProxyPilot/proxy-core/model"
 	"github.com/axetroy/ProxyPilot/proxy-core/pool"
 	"github.com/axetroy/ProxyPilot/proxy-core/rule"
 	"github.com/axetroy/ProxyPilot/proxy-core/scheduler"
@@ -45,6 +47,21 @@ func main() {
 		os.Exit(1)
 	}
 	poolMgr.SetRefreshInterval(cfg.RefreshInterval)
+
+	// HTTPS 中间人探测：节点连通性检测通过后，经节点与探测域名完成 TLS 握手并校验证书，
+	// 直连基线复核通过才定罪；检出时写错误日志并持久化标记（按节点 24h 节流）。
+	// 探测域名取检测目标的主机名（公信 CA 签发且多数网络环境直连可达，保证基线可用）。
+	mitmProbeHost := validator.DefaultMITMProbeHost
+	if u, err := url.Parse(cfg.RuntimeSnapshot().CheckTarget); err == nil && u.Hostname() != "" {
+		mitmProbeHost = u.Hostname()
+	}
+	poolMgr.SetMITMDetector(func(n *model.ProxyNode) (bool, string) {
+		return validator.DetectMITM(n, mitmProbeHost, cfg.RuntimeSnapshot().CheckTimeout)
+	})
+	// 安全路由：开启时自动选路跳过已标记中间人的节点（全部被规避时回退不过滤）。
+	poolMgr.SetExcludeFilter(func(n *model.ProxyNode) bool {
+		return cfg.RuntimeSnapshot().AvoidMITM && n.MitmDetected
+	})
 
 	col := collector.NewManager(st, busc, poolMgr, cfg.CheckTimeout)
 	sel := scheduler.NewSelector(poolMgr)

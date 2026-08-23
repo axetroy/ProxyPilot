@@ -48,6 +48,8 @@ const (
 	KeyChainCheckInterval = "chain_check_interval"
 	// 检测历史保留天数：手动瘦身数据库时，早于该天数的检测历史会被清理。
 	KeyHistoryRetention = "history_retention_days"
+	// 安全路由：规避检测到 HTTPS 中间人（伪造证书）的节点。
+	KeyAvoidMITM = "avoid_mitm"
 	// 智能分流相关：开关/模式/规则源/刷新周期。不进 Settings() 通用表单
 	// （避免与通用设置表单混在一起），由 /api/pac-config 专门接口管理。
 	KeyPACEnabled    = "pac_enabled"
@@ -90,6 +92,7 @@ func Settings() []SettingDef {
 		{Key: KeySubListen, Default: "127.0.0.1:17891", Desc: "订阅服务监听地址（如需局域网设备订阅改为 0.0.0.0:17891）", Validate: validateHostPort},
 		{Key: KeySubHost, Default: "", Desc: "对外展示的订阅 IP（监听为 0.0.0.0 时用于生成订阅 URL）", Validate: validateIPOrEmpty},
 		{Key: KeyHistoryRetention, Default: "7", Desc: "检测历史保留天数（瘦身数据库时清理更早的记录）", Validate: validatePositiveInt},
+		{Key: KeyAvoidMITM, Default: "1", Desc: "安全路由：规避检出 HTTPS 中间人的节点（0 关闭 / 1 开启，全部被规避时自动回退以保证可用）", Validate: validateBool},
 		{Key: KeyChainCheckInterval, Default: "5m", Desc: "链路自动健康检测周期（如 5m、15m，最小 1 分钟，连续失败 2 次自动停用）", Validate: validateDuration},
 		{Key: KeyPACEnabled, Default: "1", Desc: "智能分流开关（0 关闭全部走代理 / 1 开启按规则分流）", Validate: validateBool},
 		{Key: KeyPACMode, Default: "whitelist", Desc: "智能分流模式（whitelist 默认走代理 / blacklist 默认直连）", Validate: validatePACMode},
@@ -251,6 +254,7 @@ type Config struct {
 	SubHost              string // 对外展示的订阅 IP（监听为通配地址时用于生成订阅 URL，空则回退 127.0.0.1）
 	SubToken             string // 订阅密钥（独立于 SessionToken，随订阅 URL 提供给外部客户端）
 	HistoryRetentionDays int    // 检测历史保留天数（瘦身数据库时清理更早的记录）
+	AvoidMITM            bool   // 安全路由：规避检出 HTTPS 中间人的节点（全部被规避时回退不过滤）
 	PACEnabled           bool   // 智能分流开关（关闭时全部流量走代理）
 	PACMode              string // 智能分流模式（whitelist / blacklist）
 	PACDirectURLs        string // 直连规则列表 URL（逗号分隔，按序尝试）
@@ -381,6 +385,7 @@ type RuntimeFields struct {
 	CheckConcurrency     int
 	RefreshInterval      time.Duration
 	HistoryRetentionDays int
+	AvoidMITM            bool
 	ChainCheckInterval   time.Duration
 }
 
@@ -396,6 +401,7 @@ func (c *Config) RuntimeSnapshot() RuntimeFields {
 		CheckConcurrency:     c.CheckConcurrency,
 		RefreshInterval:      c.RefreshInterval,
 		HistoryRetentionDays: c.HistoryRetentionDays,
+		AvoidMITM:            c.AvoidMITM,
 		ChainCheckInterval:   c.ChainCheckInterval,
 	}
 }
@@ -412,6 +418,7 @@ func (c *Config) MutateRuntime(fn func(f *RuntimeFields)) {
 		CheckConcurrency:     c.CheckConcurrency,
 		RefreshInterval:      c.RefreshInterval,
 		HistoryRetentionDays: c.HistoryRetentionDays,
+		AvoidMITM:            c.AvoidMITM,
 		ChainCheckInterval:   c.ChainCheckInterval,
 	}
 	fn(&f)
@@ -422,6 +429,7 @@ func (c *Config) MutateRuntime(fn func(f *RuntimeFields)) {
 	c.CheckConcurrency = f.CheckConcurrency
 	c.RefreshInterval = f.RefreshInterval
 	c.HistoryRetentionDays = f.HistoryRetentionDays
+	c.AvoidMITM = f.AvoidMITM
 	c.ChainCheckInterval = f.ChainCheckInterval
 }
 
@@ -440,6 +448,7 @@ func New() *Config {
 		SubListen:            "127.0.0.1:17891",
 		SubToken:             generatedSessionToken(),
 		HistoryRetentionDays: 7,
+		AvoidMITM:            true,
 		PACEnabled:           true,
 		PACMode:              "whitelist",
 		PACDirectURLs:        DefaultPACDirectURLs,
@@ -584,6 +593,9 @@ func (c *Config) ApplyEnv() {
 			c.HistoryRetentionDays = n
 		}
 	}
+	if v := os.Getenv("PROXYPILOT_AVOID_MITM"); v != "" {
+		c.AvoidMITM = v == "1"
+	}
 	if v := os.Getenv("PROXYPILOT_PAC_ENABLED"); v != "" {
 		c.PACEnabled = v == "1"
 	}
@@ -684,6 +696,10 @@ func (c *Config) settingKey(key string) (func(string), bool) {
 					f.HistoryRetentionDays = n
 				}
 			})
+		}, true
+	case KeyAvoidMITM:
+		return func(v string) {
+			c.MutateRuntime(func(f *RuntimeFields) { f.AvoidMITM = v == "1" })
 		}, true
 	case KeyPACEnabled:
 		return func(v string) { c.MutatePAC(func(f *PACFields) { f.Enabled = v == "1" }) }, true
@@ -806,6 +822,11 @@ func (c *Config) SettingValue(key string) (string, bool) {
 		return c.SubSnapshot().Host, true
 	case KeyHistoryRetention:
 		return strconv.Itoa(c.RuntimeSnapshot().HistoryRetentionDays), true
+	case KeyAvoidMITM:
+		if c.RuntimeSnapshot().AvoidMITM {
+			return "1", true
+		}
+		return "0", true
 	case KeyPACEnabled:
 		if c.PACSnapshot().Enabled {
 			return "1", true

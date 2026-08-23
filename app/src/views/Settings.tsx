@@ -435,7 +435,11 @@ export default function Settings() {
                             key={s.key}
                             label={s.desc}
                             description={
-                              s.key === 'proxy_port' ? '端口被占用会自动顺延，实际端口见「应用」页地址；HTTP 与 SOCKS5 共用此端口' : undefined
+                              s.key === 'proxy_port'
+                                ? '端口被占用会自动顺延，实际端口见「应用」页地址；HTTP 与 SOCKS5 共用此端口'
+                                : s.key === 'avoid_mitm'
+                                  ? '安全路由：开启后，检出 HTTPS 中间人（伪造证书）的节点不会被自动选用。被标记节点在「代理池」页以红色高亮并带「中间人」徽章。全部节点都不安全时自动回退，保证可用'
+                                  : undefined
                             }
                             value={draft[s.key] ?? ''}
                             onChange={(e) => {

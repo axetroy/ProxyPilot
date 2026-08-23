@@ -150,6 +150,11 @@ func CalculateScore(node *model.ProxyNode, result model.CheckResult) ScoreResult
 //   - 出口 IP 轮换：两次经代理采样出口 IP 不同 → +5（轮换代理难以关联同一用户）；
 //   - 连接信息问题：请求被代理改写（回显 URL/Host 与目标不一致）每项扣 10。
 func calculateSafety(node *model.ProxyNode, probe *model.SafetyProbe) (int, *model.SafetyDetail) {
+	// 已检出 HTTPS 中间人的节点：无论探测结果如何，连接安全直接判 0 分。
+	// 中间人意味着代理可以伪造任意目标站点证书并解密流量，属于最严重的安全问题。
+	if node.MitmDetected {
+		return 0, &model.SafetyDetail{Mitm: true, Score: 0}
+	}
 	if probe == nil {
 		safety := 80
 		if node.Protocol == model.ProtocolSOCKS5 {
@@ -270,7 +275,9 @@ func Breakdown(node *model.ProxyNode) *model.ScoreBreakdown {
 	// 连接安全：优先使用最近一次检测的探测明细（由 evalOne 写入节点），
 	// 无明细时回退到按协议类型的启发式估算，与 CalculateScore 口径一致。
 	safety := 80
-	if node.SafetyDetail != nil {
+	if node.MitmDetected {
+		safety = 0
+	} else if node.SafetyDetail != nil {
 		safety = node.SafetyDetail.Score
 	} else {
 		if node.Protocol == model.ProtocolSOCKS5 {

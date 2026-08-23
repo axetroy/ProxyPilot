@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap, ChevronDown } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Info, MoreHorizontal, Pin, PinOff, RefreshCw, Search, Trash2, Zap, ChevronDown } from 'lucide-react'
 import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Code, Grid, Group, Menu, Modal, Progress, Stack, Tabs, Text, TextInput, Tooltip } from '@mantine/core'
 import { usePoolStore } from '@/stores/pool'
 import { useStatusStore } from '@/stores/status'
@@ -64,9 +64,17 @@ function formatTime(v?: string): string {
 
 // SafetyBadge 在列表中标注节点的连接安全：优先使用真实探测明细分数，
 // 回退到评分明细中的连接安全分数（启发式）；非存活或未评分节点显示占位符。
+// 检出 HTTPS 中间人的节点单独以红色「中间人」徽章标注（安全分已清零）。
 function SafetyBadge({ node }: { node: ProxyNode }) {
   const d = node.safetyDetail
   const score = d?.score ?? node.scoreBreakdown?.safety
+  if (node.mitmDetected) {
+    return (
+      <Tooltip label={`检出 HTTPS 中间人：该节点返回伪造的目标站点证书，安全路由开启期间不会被自动选用${node.mitmAt ? `（检测于 ${formatTime(node.mitmAt)}）` : ''}`}>
+        <Badge color="red" variant="light">中间人</Badge>
+      </Tooltip>
+    )
+  }
   if (node.status !== 'alive' || score === undefined) {
     return <Text size="xs" c="dimmed">—</Text>
   }
@@ -100,6 +108,8 @@ export default function ProxyPool() {
   const unpin = usePoolStore((s) => s.unpin)
   // 当前指定的固定出口（由 App 每秒轮询 /api/status 更新）
   const pinnedNode = useStatusStore((s) => s.status.pinnedNode)
+  // 最近一次实际出网所选用点（weighted/random/best/udp 等自动策略下随连接变化；fixed 下等于固定出口）
+  const currentNode = useStatusStore((s) => s.status.currentNode)
   // 订阅列表：节点详情展示「来自哪个订阅」时用于关联 subscriptionId → 名称
   const subs = useSubsStore((s) => s.subs)
   const refreshSubs = useSubsStore((s) => s.refresh)
@@ -108,6 +118,8 @@ export default function ProxyPool() {
   const deferredFilter = useDeferredValue(filter)
   // 订阅分组过滤：'all' 全部 / 'none' 未分组（手动添加的节点）/ String(订阅 id)
   const [subFilter, setSubFilter] = useState<string>('all')
+  // 仅显示检出 HTTPS 中间人的节点（安全路由规避的目标）
+  const [onlyMitm, setOnlyMitm] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const [pending, setPending] = useState<ProxyNode | null>(null)
   const [copyTarget, setCopyTarget] = useState<ProxyNode | null>(null)
@@ -204,6 +216,9 @@ export default function ProxyPool() {
     return { counts, none }
   }, [nodes])
 
+  // 检出中间人的节点数，用于「仅显示不安全节点」按钮的计数徽章
+  const mitmCount = useMemo(() => nodes.reduce((c, n) => c + (n.mitmDetected ? 1 : 0), 0), [nodes])
+
   const list = useMemo(() => {
     // 排序由 proxy-core 完成（分数 → 延迟 → ID → host），前端只做过滤
     const normalizedFilter = deferredFilter.trim().toLowerCase()
@@ -214,10 +229,11 @@ export default function ProxyPool() {
         return false
       }
       if (!normalizedFilter) return true
+      if (onlyMitm && !n.mitmDetected) return false
       const subName = subscriptionName(subs, n.subscriptionId) ?? ''
       return `${n.host}:${n.port} ${n.protocol} ${geoText(n)} ${subName}`.toLowerCase().includes(normalizedFilter)
     })
-  }, [nodes, deferredFilter, subs, subFilter])
+  }, [nodes, deferredFilter, subs, subFilter, onlyMitm])
 
   const totalHeight = list.length * ROW_HEIGHT
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
@@ -327,6 +343,16 @@ export default function ProxyPool() {
             onChange={(e) => setFilter(e.currentTarget.value)}
             style={{ width: 260, flexShrink: 0 }}
           />
+          <Button
+            variant={onlyMitm ? 'filled' : 'default'}
+            color={onlyMitm ? 'red' : undefined}
+            leftSection={<AlertTriangle size={16} />}
+            onClick={() => setOnlyMitm((v) => !v)}
+            disabled={mitmCount === 0}
+            title={mitmCount === 0 ? '当前没有检出中间人的节点' : '仅显示检出 HTTPS 中间人的节点'}
+          >
+            中间人{mitmCount > 0 ? `（${mitmCount}）` : ''}
+          </Button>
           {/* 订阅分组视图：按订阅分组过滤，每个 Tab 显示该订阅节点数 */}
           <Tabs value={subFilter} onChange={(v) => setSubFilter(v ?? 'all')} style={{ flex: 1, minWidth: 0 }}>
             <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto' }}>
@@ -389,6 +415,16 @@ export default function ProxyPool() {
               )}
             </Tabs.List>
           </Tabs>
+        </Group>
+        <Group gap="md" mt="xs" wrap="nowrap" style={{ alignItems: 'center' }}>
+          <Group gap={6} wrap="nowrap">
+            <Box style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--mantine-color-blue-6)' }} />
+            <Text size="xs" c="dimmed">蓝色：当前出口节点</Text>
+          </Group>
+          <Group gap={6} wrap="nowrap">
+            <Box style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--mantine-color-red-6)' }} />
+            <Text size="xs" c="dimmed">红色：检出 HTTPS 中间人</Text>
+          </Group>
         </Group>
       </Card>
 
@@ -500,6 +536,17 @@ export default function ProxyPool() {
                       padding: '0 12px',
                       height: ROW_HEIGHT,
                       borderBottom: '1px solid var(--mantine-color-default-border)',
+                      ...(n.mitmDetected
+                        ? {
+                            background: 'var(--mantine-color-red-light)',
+                            boxShadow: 'inset 3px 0 0 var(--mantine-color-red-6)',
+                          }
+                        : currentNode?.id === n.id
+                          ? {
+                              background: 'var(--mantine-color-blue-light)',
+                              boxShadow: 'inset 3px 0 0 var(--mantine-color-blue-6)',
+                            }
+                          : {}),
                     }}
                   >
                     <Checkbox
@@ -513,9 +560,16 @@ export default function ProxyPool() {
                       style={{ cursor: 'pointer', minWidth: 0 }}
                       onClick={() => setDetailTarget(n)}
                     >
-                      <Tooltip label="查看节点详情" position="top-start">
-                        <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
-                      </Tooltip>
+                      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+                        <Tooltip label="查看节点详情" position="top-start">
+                          <Text size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${n.host}:${n.port}`}</Text>
+                        </Tooltip>
+                        {currentNode?.id === n.id && (
+                          <Tooltip label={pinnedNode?.id === n.id ? '固定出口节点，当前正在承载流量' : '最近一次出网流量所经节点（随连接变化）'}>
+                            <Badge color="blue" size="xs" variant="filled">出口</Badge>
+                          </Tooltip>
+                        )}
+                      </Group>
                       <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {geoText(n) || '—'}
                       </Text>
@@ -665,6 +719,9 @@ export default function ProxyPool() {
 }
 
 function safetyHint(node: ProxyNode, value: number): string {
+  if (node.mitmDetected) {
+    return '检出 HTTPS 中间人（伪造目标站点证书），连接安全强制记 0 分'
+  }
   const d = node.safetyDetail
   if (!d) {
     // 无探测明细：回退说明
@@ -758,6 +815,9 @@ function LatencySparkline({ history }: { history: CheckHistory[] }) {
 function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[] }) {
   const subName = subscriptionName(subs, node.subscriptionId)
   const geo = geoText(node)
+  // 当前实际出口节点 / 固定出口节点（由 App 每秒轮询 /api/status 更新），用于标注「当前出口」
+  const currentNode = useStatusStore((s) => s.status.currentNode)
+  const pinnedNode = useStatusStore((s) => s.status.pinnedNode)
   const [history, setHistory] = useState<CheckHistory[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
 
@@ -778,6 +838,12 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
 
   return (
     <Stack gap="md">
+      {node.mitmDetected && (
+        <Alert color="red" variant="light" icon={<AlertTriangle size={16} />} title="检出 HTTPS 中间人">
+          该节点在访问目标站点时会返回伪造证书（解密流量），属于不安全代理。安全路由开启时不会被自动选用。
+          {node.mitmAt ? ` 最近检测于 ${formatTime(node.mitmAt)}。` : ''}
+        </Alert>
+      )}
       <Group justify="space-between" align="flex-start" wrap="wrap">
         <div>
           <Group gap="xs">
@@ -800,7 +866,19 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
           </Grid.Col>
           <Grid.Col span={6}>
             <Text size="xs" c="dimmed">状态</Text>
-            <Badge color={statusColor(node)}>{statusLabel(node)}</Badge>
+              <Group gap="xs">
+                <Badge color={statusColor(node)}>{statusLabel(node)}</Badge>
+                {currentNode?.id === node.id && (
+                  <Tooltip label={pinnedNode?.id === node.id ? '固定出口节点，当前正在承载流量' : '最近一次出网流量所经节点（随连接变化）'}>
+                    <Badge color="blue">当前出口</Badge>
+                  </Tooltip>
+                )}
+                {node.mitmDetected && (
+                  <Tooltip label={`检出 HTTPS 中间人（伪造目标站点证书），安全路由开启期间不会被自动选用${node.mitmAt ? `，检测于 ${formatTime(node.mitmAt)}` : ''}`}>
+                    <Badge color="red" variant="light">中间人</Badge>
+                  </Tooltip>
+                )}
+              </Group>
           </Grid.Col>
           <Grid.Col span={6}>
             <Text size="xs" c="dimmed">认证</Text>
@@ -813,6 +891,14 @@ function NodeDetailModal({ node, subs }: { node: ProxyNode; subs: Subscription[]
           <Grid.Col span={6}>
             <Text size="xs" c="dimmed">最近检测</Text>
             <Text size="sm">{formatTime(node.lastCheck)}</Text>
+          </Grid.Col>
+          <Grid.Col span={6}>
+            <Text size="xs" c="dimmed">中间人检测</Text>
+            {node.mitmDetected ? (
+              <Badge color="red" variant="light">检出伪造证书</Badge>
+            ) : (
+              <Text size="sm" c="dimmed">未检出</Text>
+            )}
           </Grid.Col>
           <Grid.Col span={6}>
             <Text size="xs" c="dimmed">创建时间</Text>
