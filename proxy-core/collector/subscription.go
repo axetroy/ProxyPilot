@@ -212,8 +212,14 @@ func (m *Manager) refresh(ctx context.Context, sub *model.Subscription) (*FetchR
 		return nil, fmt.Errorf("%w: %v", ErrFetch, err)
 	}
 	nodes := parser.ParseSubscriptionBody(body)
+	// 嗅探并记录订阅格式，便于在前端展示与排查"为何 0 节点"。
+	format := parser.DetectSubscriptionFormat(body)
+	if err := m.store.UpdateSubscriptionFormat(sub.ID, format); err != nil {
+		m.bus.Warn(fmt.Sprintf("subscription %s record format failed: %v", sub.Name, err))
+	}
+	sub.Format = format
 	if len(nodes) == 0 {
-		m.bus.Warn(fmt.Sprintf("subscription %s returned no nodes", sub.Name))
+		m.bus.Warn(fmt.Sprintf("subscription %s returned no nodes (format=%s)", sub.Name, format))
 	}
 	for _, node := range nodes {
 		node.SubscriptionID = sub.ID

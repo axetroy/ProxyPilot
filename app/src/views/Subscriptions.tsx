@@ -1,8 +1,38 @@
 import { useEffect, useState } from 'react'
 import { FileUp, Plus, RefreshCw, Trash2 } from 'lucide-react'
-import { Alert, Button, Card, Group, Modal, NumberInput, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Button, Card, Group, Modal, NumberInput, Stack, Switch, Table, Text, TextInput } from '@mantine/core'
 import { useSubsStore } from '@/stores/subscriptions'
 import type { Subscription } from '@/types'
+
+// 订阅格式展示元数据：当前仅 base64/明文可被解析提取节点，其余识别后暂未解析。
+const FORMAT_META: Record<string, { label: string; color: string }> = {
+  base64: { label: 'Base64 列表', color: 'green' },
+  raw: { label: '明文列表', color: 'green' },
+  clash: { label: 'Clash', color: 'yellow' },
+  v2ray: { label: 'V2Ray', color: 'yellow' },
+  singbox: { label: 'Sing-box', color: 'yellow' },
+  ssr: { label: 'SSR', color: 'yellow' },
+  ss: { label: 'SS', color: 'yellow' },
+  unknown: { label: '未知', color: 'gray' },
+}
+
+function FormatCell({ sub }: { sub: Subscription }) {
+  const meta = FORMAT_META[sub.format ?? 'unknown'] ?? FORMAT_META.unknown
+  // 后端可直接解析的仅有 base64 / 明文列表；其余识别到但暂未解析，0 节点时提示。
+  const unsupported = sub.format !== 'base64' && sub.format !== 'raw'
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Badge variant="light" color={meta.color}>
+        {meta.label}
+      </Badge>
+      {unsupported && (sub.proxyCount ?? 0) === 0 && (
+        <Text size="xs" c="red">
+          未解析
+        </Text>
+      )}
+    </Group>
+  )
+}
 
 export default function Subscriptions() {
   const subs = useSubsStore((s) => s.subs)
@@ -89,6 +119,7 @@ export default function Subscriptions() {
               <Table.Th>间隔</Table.Th>
               <Table.Th>启用</Table.Th>
               <Table.Th>代理数</Table.Th>
+              <Table.Th>格式</Table.Th>
               <Table.Th>上次抓取</Table.Th>
               <Table.Th style={{ textAlign: 'right' }}>操作</Table.Th>
             </Table.Tr>
@@ -96,7 +127,7 @@ export default function Subscriptions() {
           <Table.Tbody>
             {subs.length === 0 ? (
                 <Table.Tr>
-                  <Table.Td colSpan={7} style={{ textAlign: 'center', color: 'var(--mantine-color-dimmed)' }}>
+                  <Table.Td colSpan={8} style={{ textAlign: 'center', color: 'var(--mantine-color-dimmed)' }}>
                     暂无订阅
                   </Table.Td>
                 </Table.Tr>
@@ -118,6 +149,9 @@ export default function Subscriptions() {
                     />
                   </Table.Td>
                   <Table.Td>{sub.proxyCount ?? '-'}</Table.Td>
+                  <Table.Td>
+                    <FormatCell sub={sub} />
+                  </Table.Td>
                   <Table.Td>{sub.lastFetch ? new Date(sub.lastFetch).toLocaleString() : '-'}</Table.Td>
                   <Table.Td style={{ textAlign: 'right' }}>
                     <Group justify="flex-end" gap="xs">

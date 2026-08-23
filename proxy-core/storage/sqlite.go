@@ -86,7 +86,8 @@ func (s *Store) migrate() error {
 			interval INTEGER NOT NULL DEFAULT 3600,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			last_fetch DATETIME,
-			created_at DATETIME NOT NULL
+			created_at DATETIME NOT NULL,
+			format TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS check_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,7 +134,25 @@ func (s *Store) migrate() error {
 		return err
 	}
 	// 已有数据库升级：为 proxy_chains 补充健康检测列（链路自动健康管理）。
-	return s.migrateProxyChainsColumns()
+	if err := s.migrateProxyChainsColumns(); err != nil {
+		return err
+	}
+	// 已有数据库升级：为 subscriptions 补充 format 列（订阅格式识别）。
+	return s.migrateSubscriptionsColumns()
+}
+
+// migrateSubscriptionsColumns 为旧版 subscriptions 表补齐 format 列。
+func (s *Store) migrateSubscriptionsColumns() error {
+	cols, err := s.tableColumns("subscriptions")
+	if err != nil {
+		return err
+	}
+	if _, ok := cols["format"]; !ok {
+		if _, err := s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN format TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateProxyChainsColumns 为旧版 proxy_chains 表补齐健康检测列。
@@ -664,13 +683,15 @@ func (s *Store) UpsertSubscription(sub *model.Subscription) error {
 // GetSubscription 按 ID 查询单个订阅（返回 nil 表示不存在）。
 func (s *Store) GetSubscription(id int64) (*model.Subscription, error) {
 	row := s.db.QueryRow(`SELECT s.id, s.name, s.url, s.interval, s.enabled, s.last_fetch, s.created_at, 
-		(SELECT COUNT(*) FROM subscription_nodes sn WHERE sn.subscription_id = s.id) as proxy_count
+		(SELECT COUNT(*) FROM subscription_nodes sn WHERE sn.subscription_id = s.id) as proxy_count,
+		s.format
 		FROM subscriptions s WHERE s.id = ?`, id)
 	var sub model.Subscription
 	var enabled int
 	var lastFetch, createdAt sql.NullTime
 	var proxyCount int
-	if err := row.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.Interval, &enabled, &lastFetch, &createdAt, &proxyCount); err != nil {
+	var format string
+	if err := row.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.Interval, &enabled, &lastFetch, &createdAt, &proxyCount, &format); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -684,12 +705,14 @@ func (s *Store) GetSubscription(id int64) (*model.Subscription, error) {
 	}
 	sub.Enabled = enabled == 1
 	sub.ProxyCount = proxyCount
+	sub.Format = model.SubscriptionFormat(format)
 	return &sub, nil
 }
 
 func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {
 	rows, err := s.db.Query(`SELECT s.id, s.name, s.url, s.interval, s.enabled, s.last_fetch, s.created_at, 
-		(SELECT COUNT(*) FROM subscription_nodes sn WHERE sn.subscription_id = s.id) as proxy_count
+		(SELECT COUNT(*) FROM subscription_nodes sn WHERE sn.subscription_id = s.id) as proxy_count,
+		s.format
 		FROM subscriptions s ORDER BY s.id`)
 	if err != nil {
 		return nil, err
@@ -701,7 +724,8 @@ func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {
 		var enabled int
 		var lastFetch, createdAt sql.NullTime
 		var proxyCount int
-		if err := rows.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.Interval, &enabled, &lastFetch, &createdAt, &proxyCount); err != nil {
+		var format string
+		if err := rows.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.Interval, &enabled, &lastFetch, &createdAt, &proxyCount, &format); err != nil {
 			return nil, err
 		}
 		if lastFetch.Valid {
@@ -712,6 +736,7 @@ func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {
 		}
 		sub.Enabled = enabled == 1
 		sub.ProxyCount = proxyCount
+		sub.Format = model.SubscriptionFormat(format)
 		out = append(out, &sub)
 	}
 	return out, rows.Err()
@@ -719,6 +744,12 @@ func (s *Store) ListSubscriptions() ([]*model.Subscription, error) {
 
 func (s *Store) UpdateSubscriptionFetch(id int64, t time.Time) error {
 	_, err := s.db.Exec(`UPDATE subscriptions SET last_fetch=? WHERE id=?`, t, id)
+	return err
+}
+
+// UpdateSubscriptionFormat 记录订阅抓取时嗅探到的格式。
+func (s *Store) UpdateSubscriptionFormat(id int64, format model.SubscriptionFormat) error {
+	_, err := s.db.Exec(`UPDATE subscriptions SET format=? WHERE id=?`, string(format), id)
 	return err
 }
 

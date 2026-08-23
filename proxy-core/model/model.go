@@ -84,6 +84,34 @@ type Subscription struct {
 	LastFetch  time.Time `json:"lastFetch"`
 	CreatedAt  time.Time `json:"createdAt"`
 	ProxyCount int       `json:"proxyCount,omitempty"`
+	// Format 订阅内容的识别格式（抓取时嗅探得到，用于展示与排查"为何 0 节点"）。
+	Format SubscriptionFormat `json:"format,omitempty"`
+}
+
+// SubscriptionFormat 订阅内容的格式（用于识别与展示）。
+type SubscriptionFormat string
+
+const (
+	SubFormatUnknown SubscriptionFormat = "unknown" // 无法识别
+	SubFormatBase64  SubscriptionFormat = "base64"  // base64 编码的节点列表（解码后为行式）
+	SubFormatRawList SubscriptionFormat = "raw"     // 明文 protocol://... 或 host:port 列表
+	SubFormatClash   SubscriptionFormat = "clash"   // Clash / Clash.Meta（YAML）
+	SubFormatV2Ray   SubscriptionFormat = "v2ray"   // V2RayN / NekoBox（JSON）
+	SubFormatSingBox SubscriptionFormat = "singbox" // Sing-box（JSON）
+	SubFormatSSR     SubscriptionFormat = "ssr"     // ssr:// 列表
+	SubFormatSS      SubscriptionFormat = "ss"      // ss:// 列表
+)
+
+// Supported 当前后端能否直接解析（提取节点）该格式。
+// 仅 base64 编码列表与明文行式可被现有解析器提取节点；
+// Clash/V2Ray/Sing-box/SSR/SS 虽可识别，但暂未实现解析，识别到仍为 0 节点。
+func (f SubscriptionFormat) Supported() bool {
+	switch f {
+	case SubFormatBase64, SubFormatRawList:
+		return true
+	default:
+		return false
+	}
 }
 
 // ProxyChain 代理链路：客户端 → n0 → n1 → … → 目标服务器。

@@ -69,6 +69,9 @@ export interface Subscription {
   lastFetch: string
   createdAt: string
   proxyCount?: number
+  // 订阅内容识别出的格式（base64/raw/clash/v2ray/singbox/ssr/ss/unknown）；
+  // 仅 base64 与 raw 可被当前版本解析提取节点。
+  format?: string
 }
 
 export interface SystemStatus {
